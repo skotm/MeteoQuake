@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.5h";
+const APP_VERSION = "1.2.5i";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2940,13 +2940,21 @@ function tsunamiGradeInfo(grade) {
 // (0.2〜1m=注意報色、1〜3m=警報色、3m以上=大津波警報色、それ未満・未観測は薄グレー)。
 // 「観測点」欄の丸は今どれくらいの実況かが一目で分かるように、という考え方。
 const TSUNAMI_DOT_DEFAULT_COLOR = "#B9B9C0"; // 観測なし・微弱の間の薄グレー
-function tsunamiHeightBandColor(heightM) {
-  if (heightM == null) return TSUNAMI_DOT_DEFAULT_COLOR;
+// 観測された津波の高さ(m)から、相当する警報グレードのキーを求める
+// (0.2m未満はnull=グレード相当なし)。地図の観測点の丸・バーの色分けと、
+// 右上の凡例のラダー表示(TsunamiGradeLegend)の両方で、しきい値を1箇所に
+// まとめておくために使う。
+function tsunamiHeightBandGrade(heightM) {
+  if (heightM == null) return null;
   const abs = Math.abs(heightM);
-  if (abs >= 3) return tsunamiGradeInfo("MajorWarning").color;
-  if (abs >= 1) return tsunamiGradeInfo("Warning").color;
-  if (abs >= 0.2) return tsunamiGradeInfo("Watch").color;
-  return TSUNAMI_DOT_DEFAULT_COLOR;
+  if (abs >= 3) return "MajorWarning";
+  if (abs >= 1) return "Warning";
+  if (abs >= 0.2) return "Watch";
+  return null;
+}
+function tsunamiHeightBandColor(heightM) {
+  const grade = tsunamiHeightBandGrade(heightM);
+  return grade ? tsunamiGradeInfo(grade).color : TSUNAMI_DOT_DEFAULT_COLOR;
 }
 
 // tsunami-areas.json(津波予報区の海岸線)の各featureは properties.name に
@@ -7182,17 +7190,33 @@ function QuakeIntensityLegend({ maxIntensity, legacyIntensityScale }) {
 
 /* ─────────────────────────────────────────────────────
    TSUNAMI GRADE LEGEND — QuakeIntensityLegendと全く同じ見た目
-   (横一列に並んだ隙間の詰まった色バー)にした版。震度のような連続した
-   尺度が無いため、「1〜最大」ではなく、現在地図に塗っている予報区
-   (areas)に実際に含まれるgradeだけを、危険度が低い順に並べる。
-   最も危険度が高いバーだけ枠線で強調する。画面右上に浮かべて使う想定。
+   (横一列に並んだ隙間の詰まった色バー)にした版。
+   「一番下(津波予報)〜一番上」までのラダー表示にする。一番上に来るグレードは、
+   (a) 実際に発表されている予報区の中で一番高いグレード と
+   (b) 観測された津波の最大波から相当するグレード
+   のうち、高い方を採用する(例: 警報が出ていても、大津波警報相当の高さが
+   観測されていれば、大津波警報の色まで表示する)。
    ───────────────────────────────────────────────────── */
-function TsunamiGradeLegend({ areas }) {
+function TsunamiGradeLegend({ areas, tsunamiHeightByStation = {} }) {
   const { tokens } = useContext(ThemeContext);
-  const gradesPresent = [...new Set((areas || []).map(a => a.grade))]
-    .sort((a, b) => tsunamiGradeInfo(a).weight - tsunamiGradeInfo(b).weight);
+  const gradesPresent = [...new Set((areas || []).map(a => a.grade))];
   if (gradesPresent.length === 0) return null;
-  const maxWeight = Math.max(...gradesPresent.map(g => tsunamiGradeInfo(g).weight));
+
+  const declaredMaxWeight = Math.max(...gradesPresent.map(g => tsunamiGradeInfo(g).weight));
+
+  // 観測された津波の最大波(全観測点の中で一番高いもの)から相当グレードを求める。
+  const heights = Object.values(tsunamiHeightByStation).map(h => Math.abs(h));
+  const maxObservedHeight = heights.length > 0 ? Math.max(...heights) : null;
+  const observedGrade = tsunamiHeightBandGrade(maxObservedHeight);
+  const observedWeight = observedGrade ? tsunamiGradeInfo(observedGrade).weight : 0;
+
+  const maxWeight = Math.max(declaredMaxWeight, observedWeight);
+  // 「津波予報」(weight=1)から maxWeight まで、順番にすべて並べる(ラダー)。
+  const ladderGrades = Object.entries(TSUNAMI_GRADE_INFO)
+    .filter(([key, info]) => key !== "Unknown" && info.weight >= 1 && info.weight <= maxWeight)
+    .sort((a, b) => a[1].weight - b[1].weight)
+    .map(([key]) => key);
+  if (ladderGrades.length === 0) return null;
 
   return (
     <Glass
@@ -7206,7 +7230,7 @@ function TsunamiGradeLegend({ areas }) {
         gap: 2,
         padding: "8px 9px",
       }}>
-        {gradesPresent.map(grade => {
+        {ladderGrades.map(grade => {
           const info = tsunamiGradeInfo(grade);
           const isMax = info.weight === maxWeight;
           return (
@@ -11845,7 +11869,7 @@ export default function App() {
             right: 16,
             zIndex: 30,
           }}>
-            <TsunamiGradeLegend areas={tsunamiAreasForMap}/>
+            <TsunamiGradeLegend areas={tsunamiAreasForMap} tsunamiHeightByStation={tsunamiHeightByStation}/>
           </div>
         )}
 
