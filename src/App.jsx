@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.5i";
+const APP_VERSION = "1.2.5j";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7211,9 +7211,16 @@ function TsunamiGradeLegend({ areas, tsunamiHeightByStation = {} }) {
   const observedWeight = observedGrade ? tsunamiGradeInfo(observedGrade).weight : 0;
 
   const maxWeight = Math.max(declaredMaxWeight, observedWeight);
-  // 「津波予報」(weight=1)から maxWeight まで、順番にすべて並べる(ラダー)。
+  // 「津波予報」〜maxWeightまでを順番に並べる(ラダー)。ただし「津波予報」
+  // (NonEffective)は、実際にどこかの予報区で発表されている時だけ含める
+  // (観測やmaxWeightの都合だけで機械的に一番下へ足さない)。
   const ladderGrades = Object.entries(TSUNAMI_GRADE_INFO)
-    .filter(([key, info]) => key !== "Unknown" && info.weight >= 1 && info.weight <= maxWeight)
+    .filter(([key, info]) => {
+      if (key === "Unknown") return false;
+      if (info.weight < 1 || info.weight > maxWeight) return false;
+      if (key === "NonEffective" && !gradesPresent.includes("NonEffective")) return false;
+      return true;
+    })
     .sort((a, b) => a[1].weight - b[1].weight)
     .map(([key]) => key);
   if (ladderGrades.length === 0) return null;
