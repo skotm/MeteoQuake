@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.6e";
+const APP_VERSION = "1.2.6f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -4680,7 +4680,7 @@ function PanelDragHandoffCard({ onHandoffToPanelDrag, children }) {
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
-      style={{ touchAction: "pan-x" }} // 縦方向のブラウザ標準スクロールは奪い、判定はJS側(上記)に任せる
+      style={{ touchAction: "none" }} // QuakeListToolbarと同じ(縦横ともブラウザ標準ジェスチャーを完全に無効化し、途中でpointercancelされるのを防ぐ)
     >
       {children}
     </div>
