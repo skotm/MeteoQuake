@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.6b";
+const APP_VERSION = "1.2.6c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -6661,7 +6661,7 @@ function BottomDock({
               <div style={{ marginTop: 12 }}>
                 <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
               </div>
-            ) : activeTsunami != null && (
+            ) : activeTsunami != null && tsunamiViewMode !== "tidegauge" && (
               <div style={{ marginTop: 12 }}>
                 <StationMarkerToggleButton visible={tideStationMarkersVisible} onClick={onToggleTideStationMarkersVisible}/>
               </div>
@@ -6680,7 +6680,7 @@ function BottomDock({
             <div style={{ marginBottom: 12 }}>
               <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
             </div>
-          ) : activeTsunami != null && (
+          ) : activeTsunami != null && tsunamiViewMode !== "tidegauge" && (
             <div style={{ marginBottom: 12 }}>
               <StationMarkerToggleButton visible={tideStationMarkersVisible} onClick={onToggleTideStationMarkersVisible}/>
             </div>
