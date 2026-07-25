@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.5j";
+const APP_VERSION = "1.2.6";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3501,6 +3501,54 @@ async function fetchRecentQuakes(limit = QUAKE_FETCH_LIMIT_DEFAULT) {
   return dedupeQuakeList(list);
 }
 
+// 「津波を引き起こした地震」検索のフォールバック用。気象庁 震度データベース(eqdb)は
+// 直近の地震(発表から3日程度)がまだ反映されていないことがあるため、その場合の
+// 代わりに、直近の地震情報一覧(P2P地震情報, /history?codes=551)を遡って同じ
+// 時間窓[winStart, winEnd]の地震を探す。fetchRecentQuakesと同じoffsetページング
+// 方式を使う(P2P地震情報のoffsetは「1週間以上古い情報は取得できない場合がある」
+// 仕様のため、3日以内という前提の呼び出しと相性が良い)。
+// 該当する中でМ(マグニチュード)が最大のものを1件返す(無ければnull)。
+async function findCausingQuakeFromP2p(winStart, winEnd) {
+  const winStartMs = winStart.getTime();
+  const winEndMs = winEnd.getTime();
+  let offset = 0;
+  const matches = [];
+  const seenIds = new Set();
+
+  for (let page = 0; page < 10; page++) { // 安全のため最大10ページ(1000件)までで打ち切る
+    const res = await fetch(`${P2PQUAKE_HISTORY_URL_BASE}&limit=${P2PQUAKE_API_PAGE_SIZE}&offset=${offset}`);
+    if (!res.ok) break;
+    const items = await res.json();
+    if (!Array.isArray(items) || items.length === 0) break;
+
+    let sawAnyAtOrAfterWindowStart = false;
+    for (const item of items) {
+      if (item?.id == null || seenIds.has(item.id)) continue;
+      seenIds.add(item.id);
+      const eq = item.earthquake;
+      if (!eq?.hypocenter?.name || !eq?.time) continue;
+      const t = new Date(eq.time).getTime();
+      if (!Number.isFinite(t)) continue;
+      if (t >= winStartMs) sawAnyAtOrAfterWindowStart = true;
+      if (t >= winStartMs && t <= winEndMs) matches.push(item);
+    }
+
+    offset += items.length;
+    if (items.length < P2PQUAKE_API_PAGE_SIZE) break; // これ以上遡れる情報が無い
+    // このページに窓の開始時刻以降のレコードが1件も無かった(=全部それより古かった)
+    // なら、これ以上遡っても窓に入るものは無いので打ち切る。
+    if (!sawAnyAtOrAfterWindowStart) break;
+  }
+
+  if (matches.length === 0) return null;
+  const cards = matches
+    .filter(item => item.earthquake && item.earthquake.hypocenter && item.earthquake.hypocenter.name)
+    .map(toQuakeCard);
+  if (cards.length === 0) return null;
+  cards.sort((a, b) => (b.magnitude ?? -Infinity) - (a.magnitude ?? -Infinity));
+  return cards[0];
+}
+
 /* ─────────────────────────────────────────────────────
    P2P地震情報 WebSocket API (v2)
    wss://api.p2pquake.net/v2/ws
@@ -5751,6 +5799,10 @@ function BottomDock({
         気象庁 震度データベース(eqdb)でこの窓に発生した地震を検索する。
      3. 該当した地震のうち、規模(M)が最大のものを「津波を引き起こした地震」
         と特定する。
+     4. eqdbで見つからず、かつ第1報の発表から3日以内の現象であれば、eqdbへの
+        反映が間に合っていないだけの可能性があるため、代わりにP2P地震情報
+        (直近の地震情報フィード)側から同じ時間窓で探し直す
+        (findCausingQuakeFromP2p参照)。
      ───────────────────────────────────────────────────── */
   // 形: { [tsunamiId]: { status: "loading"|"done"|"notfound"|"error", quake: card|null } }
   const [causingQuakeState, setCausingQuakeState] = useState({});
@@ -5852,18 +5904,32 @@ function BottomDock({
         endDate: dateStr(winEnd), endTime: timeStr(winEnd),
         minMag: 0, maxInt: "1", sort: "S3", epi: "99", // S3: 地震の規模(M)の大きい順
       });
-      if (errMsg || !list || list.length === 0) {
-        setCausingQuakeState(prev => ({ ...prev, [id]: { status: "notfound", quake: null } }));
-        return;
+      if (!errMsg && list && list.length > 0) {
+        const top = list[0]; // 規模が最大の1件
+        const [detail, geo] = await Promise.all([fetchEqdbEventCached(top.id), loadGeoData()]);
+        if (detail) {
+          const card = buildEqdbQuakeCard(detail, top, stations, geo?.areas);
+          setCausingQuakeState(prev => ({ ...prev, [id]: { status: "done", quake: card } }));
+          return;
+        }
       }
-      const top = list[0]; // 規模が最大の1件
-      const [detail, geo] = await Promise.all([fetchEqdbEventCached(top.id), loadGeoData()]);
-      if (!detail) {
-        setCausingQuakeState(prev => ({ ...prev, [id]: { status: "notfound", quake: null } }));
-        return;
+
+      // 気象庁 震度データベース(eqdb)で見つからなかった場合、この現象の発表(第1報)
+      // から3日以内であれば、まだデータベースに反映されていないだけの可能性がある。
+      // その場合は代わりにP2P地震情報(直近の地震情報フィード)側から同じ時間窓で
+      // 探し、見つかればそちらを採用する。
+      const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+      const isRecentEpisode = (Date.now() - winEnd.getTime()) <= THREE_DAYS_MS;
+      if (isRecentEpisode) {
+        const p2pMatch = await findCausingQuakeFromP2p(winStart, winEnd);
+        if (p2pMatch) {
+          const resolvedPoints = resolveStationPoints(p2pMatch.points, stations);
+          setCausingQuakeState(prev => ({ ...prev, [id]: { status: "done", quake: { ...p2pMatch, resolvedPoints } } }));
+          return;
+        }
       }
-      const card = buildEqdbQuakeCard(detail, top, stations, geo?.areas);
-      setCausingQuakeState(prev => ({ ...prev, [id]: { status: "done", quake: card } }));
+
+      setCausingQuakeState(prev => ({ ...prev, [id]: { status: "notfound", quake: null } }));
     } catch (err) {
       console.error("津波を引き起こした地震の検索に失敗:", err);
       setCausingQuakeState(prev => ({ ...prev, [id]: { status: "error", quake: null } }));
