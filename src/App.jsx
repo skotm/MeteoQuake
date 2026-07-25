@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef, useContext, crea
 import { createPortal } from "react-dom";
 
 /* ─────────────────────────────────────────────────────
-   APP VERSION 
+   APP VERSION
    バージョン表記のルール(vMAJOR.MINOR.PATCH):
    - PATCH(3つ目の数字)を更新のたびに1ずつ増やす
    - PATCHが10になったらMINOR(2つ目)を1増やし、PATCHは0に戻す
@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.6f";
+const APP_VERSION = "1.2.7";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -10290,14 +10290,14 @@ function SettingsBody({
   // ライト/ダークモード切り替え用。同じくcontext経由で直接購読する。
   const { mode: themeMode, tokens, modePref: themeModePref, setModePref: onChangeThemeModePref } = useContext(ThemeContext);
 
-  // 「津波警報テスト配信」画面を開いたまま実験的機能がOFFに戻された場合、
-  // 一つ上の階層(実験的・テスト機能メニュー)へ自動的に戻す。
+  // 「津波警報テスト配信」「緊急地震速報テスト配信」画面を開いたまま実験的機能が
+  // OFFに戻された場合、一つ上の階層(実験的・テスト機能メニュー)へ自動的に戻す。
   // (通常はBottomDock側でトグルOFF時にpickモードごと片付けるが、念のためここでも
   // 画面遷移そのものの整合性を保証しておく。setStateはrender中ではなくeffect内で行う。)
   useEffect(() => {
     if (
       path.length >= 2 &&
-      path[path.length - 1] === "tsunamiTestBroadcast" &&
+      (path[path.length - 1] === "tsunamiTestBroadcast" || path[path.length - 1] === "eewTestBroadcast") &&
       path[path.length - 2] === "experimental" &&
       !experimentalFeaturesEnabled
     ) {
@@ -10535,6 +10535,11 @@ function SettingsBody({
               label="津波警報テスト配信"
               onClick={() => onNavigate([...path, "tsunamiTestBroadcast"])}
             />
+            <SettingsCardDivider/>
+            <SettingsMenuRow
+              label="緊急地震速報テスト配信"
+              onClick={() => onNavigate([...path, "eewTestBroadcast"])}
+            />
           </SettingsCard>
         )}
       </>
@@ -10565,6 +10570,23 @@ function SettingsBody({
           candidateHeightStations={candidateHeightStations}
           onAddHeightPick={onAddTsunamiHeightPick}
         />
+      </>
+    );
+  }
+
+  // 実験的機能: 緊急地震速報テスト配信メニュー。中身は未実装(メニューの入口だけ)。
+  if (category === "advanced" && leaf === "experimental" && sub === "eewTestBroadcast") {
+    if (!experimentalFeaturesEnabled) return null;
+    return (
+      <>
+        <SettingsHeader title="緊急地震速報テスト配信"/>
+        <SettingsCard>
+          <div style={{ padding: "20px 16px", textAlign: "center" }}>
+            <span style={{ fontSize: 12.5, color: `rgba(${tokens.ink},0.4)`, lineHeight: 1.8 }}>
+              準備中です。今後実装予定です。
+            </span>
+          </div>
+        </SettingsCard>
       </>
     );
   }
