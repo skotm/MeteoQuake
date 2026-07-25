@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.0a";
+const APP_VERSION = "1.3.0b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -6202,6 +6202,7 @@ function BottomDock({
   experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
   testEew, onBroadcastTestEew, onCancelTestEew, onClearTestEew,
+  eews = EMPTY_EQDB_LIST, eewDetailOpen, onOpenEewDetail, onCloseEewDetail,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
   pickedTsunamiHeights, onChangeTsunamiHeightPick, onRemoveTsunamiHeightPick,
@@ -7062,10 +7063,48 @@ function BottomDock({
   // 少し余白、を常に足し上げているため、ドラッグ中も含めてパネルの高さに追従する。
   const backButtonBottom = currentHeight + NAV_ROW_HEIGHT + 12;
 
+  // 緊急地震速報のFAB/戻るボタンを出すかどうか(取消済みでないEEWが1件でもあるか)。
+  const hasActiveEew = eews.some(e => !e.cancelled);
+
   return (
     <>
       {/* 広い画面では、SideNavRail(タブ部分)はApp側で共有のGlassの中に
           BottomDockと並べて描画するため、ここでは出さない。 */}
+
+      {/* 緊急地震速報のFAB／戻るボタン — 地震タブの戻るボタンと全く同じ高さ
+          (backButtonBottom)に、左側に浮かべる。どのタブを見ていても、EEWが
+          発表されている間はここに出る(タブに依存しない)。 */}
+      {hasActiveEew && (
+        isWide && wideAnchorRect ? createPortal(
+          <div style={{
+            position: "fixed",
+            left: wideAnchorRect.left - 56,
+            top: wideAnchorRect.top + 16,
+            zIndex: 50,
+          }}>
+            {eewDetailOpen ? (
+              <BackToListButton onClick={onCloseEewDetail} label="閉じる"/>
+            ) : (
+              <EewFabButton onClick={onOpenEewDetail}/>
+            )}
+          </div>,
+          document.body
+        ) : (
+        <div style={{
+          position: "absolute",
+          left: 16,
+          bottom: backButtonBottom,
+          transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
+          zIndex: 10,
+        }}>
+          {eewDetailOpen ? (
+            <BackToListButton onClick={onCloseEewDetail} label="閉じる"/>
+          ) : (
+            <EewFabButton onClick={onOpenEewDetail}/>
+          )}
+        </div>
+        )
+      )}
 
       {/* 戻るボタン — 地震を選択している間だけ、パネルのすぐ上に浮かぶ。
           Glass(パネル本体)の兄弟として置くことで、currentHeightの変化
@@ -7337,7 +7376,21 @@ function BottomDock({
           }}
         >
           <div>
-            {active === "quake" ? (
+            {eewDetailOpen ? (
+              <>
+                {/* 緊急地震速報の詳細 — 地震タブのQuakeDetailCardと同じ「フローティング」
+                    (このBottomDockのガラスパネル)にカードを出す。タブの中身を一時的に
+                    置き換えるだけで、閉じれば元のタブ表示にそのまま戻る。 */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "2px 0 8px" }}>
+                  {eews.map(eew => (
+                    <div key={eew.eventId}>
+                      <EewDetailFloatingCard eew={eew}/>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
+              </>
+            ) : active === "quake" ? (
               <>
                 {quakeViewMode !== "search" && quakeStatus === "loading" && quakes.length === 0 && (
                   <div style={{
@@ -11779,11 +11832,12 @@ export default function App() {
   // 押すとtrueになり、専用の「戻る」ボタンで閉じるとfalseに戻る。既存のタブ
   // バー(NAV/activeNav)とは独立させ、どのタブを見ている最中でも割り込んで
   // 開けるようにしている。表示中の全EEWが無くなったら自動的に閉じる。
+  // FAB/戻るボタン自体と、詳細カードの実際の描画はBottomDock側(戻るボタンと
+  // 同じbackButtonBottom基準の高さに出すため)で行う。
   const [eewDetailOpen, setEewDetailOpen] = useState(false);
   useEffect(() => {
     if (eewDetailOpen && effectiveEews.length === 0) setEewDetailOpen(false);
   }, [eewDetailOpen, effectiveEews.length]);
-  const hasActiveEew = effectiveEews.some(e => !e.cancelled);
 
   /* ─────────────────────────────────────────────────────
      実験的機能: 津波警報テスト配信
@@ -12799,50 +12853,6 @@ export default function App() {
 
         {/* ── Layer 2: Glass UI（透明ガラスが地図に浮かぶ） ── */}
 
-        {/* 緊急地震速報FAB — EEWが発表されている間、画面左上に浮かぶ。押すと詳細表示が開く。
-            詳細表示を開いている間はFABの代わりに「戻る」ボタン(同じ丸型Glass)を出す。 */}
-        {!eewDetailOpen && hasActiveEew && (
-          <div style={{
-            position: "absolute",
-            top: "calc(16px + env(safe-area-inset-top))",
-            left: 16,
-            zIndex: 45,
-          }}>
-            <EewFabButton onClick={() => setEewDetailOpen(true)}/>
-          </div>
-        )}
-
-        {/* 緊急地震速報の詳細画面 — 戻るボタン(左上)＋フローティングカード群(中央上寄せ)。
-            既存のタブ(activeNav)には関知せず、どのタブを見ていても最前面に割り込んで開く。 */}
-        {eewDetailOpen && (
-          <>
-            <div style={{
-              position: "absolute",
-              top: "calc(16px + env(safe-area-inset-top))",
-              left: 16,
-              zIndex: 45,
-            }}>
-              <BackToListButton onClick={() => setEewDetailOpen(false)} label="閉じる"/>
-            </div>
-            <div style={{
-              position: "absolute",
-              top: "calc(72px + env(safe-area-inset-top))",
-              left: 0, right: 0, bottom: 90,
-              display: "flex", justifyContent: "center",
-              zIndex: 40, pointerEvents: "none",
-              overflowY: "auto",
-            }}>
-              <div style={{
-                pointerEvents: "auto",
-                display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
-                padding: "0 16px",
-              }}>
-                {effectiveEews.map(eew => <EewDetailFloatingCard key={eew.eventId} eew={eew}/>)}
-              </div>
-            </div>
-          </>
-        )}
-
         {/* アラートピル — 一旦非表示 */}
         {/*
         <div style={{
@@ -12947,6 +12957,10 @@ export default function App() {
                   onBroadcastTestEew={broadcastTestEew}
                   onCancelTestEew={cancelTestEew}
                   onClearTestEew={clearTestEew}
+                  eews={effectiveEews}
+                  eewDetailOpen={eewDetailOpen}
+                  onOpenEewDetail={() => setEewDetailOpen(true)}
+                  onCloseEewDetail={() => setEewDetailOpen(false)}
                   tsunamiAreaPickActive={tsunamiAreaPickActive}
                   onStartTsunamiAreaPick={startTsunamiAreaPick}
                   pickedTsunamiAreas={pickedTsunamiAreas}
@@ -13030,6 +13044,10 @@ export default function App() {
               onBroadcastTestEew={broadcastTestEew}
               onCancelTestEew={cancelTestEew}
               onClearTestEew={clearTestEew}
+              eews={effectiveEews}
+              eewDetailOpen={eewDetailOpen}
+              onOpenEewDetail={() => setEewDetailOpen(true)}
+              onCloseEewDetail={() => setEewDetailOpen(false)}
               tsunamiAreaPickActive={tsunamiAreaPickActive}
               onStartTsunamiAreaPick={startTsunamiAreaPick}
               pickedTsunamiAreas={pickedTsunamiAreas}
