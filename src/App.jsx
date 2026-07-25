@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.7c";
+const APP_VERSION = "1.2.7d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -11707,9 +11707,7 @@ export default function App() {
   const showQuakeMapLayers = activeNav === "quake" || activeNav === "settings" || (activeNav === "tsunami" && causingQuakeCard != null);
 
   // 津波予報区の色分けは、津波タブ・設定タブを見ている間に出す。
-  // ただし実際にどの予報区を塗るかは、下のisViewingActiveTsunami次第で変わる
-  // (「現在進行形で有効な津波情報」を見ている間だけ塗り、他の過去の津波を
-  // 開いている間は消す。詳細はisViewingActiveTsunamiのコメント参照)。
+  // 実際にどの回の予報区を塗るかはtsunamiForMapDisplay(下)が決める。
   const showTsunamiMapLayers = activeNav === "tsunami" || activeNav === "settings";
   const selectedFromRecent = effectiveTsunamis.find(t => t.id === selectedTsunamiId) || null;
   const selectedFromHistory = !selectedFromRecent
@@ -11720,16 +11718,19 @@ export default function App() {
   // 現在進行形で有効な(解除されていない)、一番新しい津波情報。
   const activeTsunami = effectiveTsunamis.find(t => !t.cancelled) || null;
 
-  // 今見ている津波情報が「現在進行形で有効な津波情報(activeTsunami)」そのものか
-  // どうか。何も選んでいない(一覧を見ているだけ)場合は、これまで通り自動追従
-  // させたいのでtrue扱いにする。
-  // これがfalseになる(=直近一覧・履歴を問わず、activeTsunamiとは別の津波情報を
-  // 開いている)間は、海岸線の色分けや潮位観測点(下のshowActiveTsunamiTideStations
-  // 参照)を消す。有効な警報・予報が出ている最中に、他の過去の津波や、その津波を
-  // 引き起こした地震以外の地震情報を開いた時、あたかもそちらが今の警報区域である
-  // かのように見えてしまうのを防ぐため。
+  // 地図に出す海岸線の色分けは「直近一覧・履歴を問わず、何か選んでいればそれを
+  // 最優先」する。選んでいる間は必ずその回の予報区が出る(=他の過去の津波を
+  // 開けば、現在発表中の警報ではなくその回自体が表示される)。何も選んでいない
+  // (一覧を眺めているだけ)時だけ、現在進行形で有効なactiveTsunamiを自動的に
+  // 見せる。
+  const tsunamiForMapDisplay = selectedTsunami || activeTsunami;
+
+  // 今見せているのが「現在進行形で有効な津波情報(activeTsunami)」そのものか
+  // どうか。潮位観測点ピン・観測された津波の高さバー(下のshowActiveTsunamiTideStations
+  // 参照)は、リアルタイム観測データなので、activeTsunami以外(=他の過去の津波を
+  // 見ている間)には出さない。
   const isViewingActiveTsunami =
-    selectedTsunamiId == null || (activeTsunami != null && selectedTsunamiId === activeTsunami.id);
+    activeTsunami != null && (!selectedTsunami || selectedTsunami.id === activeTsunami.id);
 
   // activeTsunamiが属する「一連の現象」の第１報(最初の発表)の時刻。
   // TsunamiTab側の「引き起こした地震」検索(handleFindCausingQuake)と同じ
@@ -11795,16 +11796,10 @@ export default function App() {
     return () => { cancelled = true; };
   }, [activeTsunami?.id]);
 
-  const tsunamiAreasForMap = !showTsunamiMapLayers
-    ? EMPTY_EQDB_LIST
-    : activeTsunami
-    // 現在進行形で有効な津波情報がある間は、それを見ている時だけ塗る。
-    // 別の津波(直近一覧・履歴どちらでも)や、その津波を引き起こした地震以外の
-    // 地震情報を開いている間は、activeTsunamiの区域ではないため消す。
-    ? (isViewingActiveTsunami ? activeTsunami.areas : EMPTY_EQDB_LIST)
-    // 現在有効な津波情報が無い時は、従来通り「過去の津波(履歴)」を選んでいれば
-    // その回の予報区を参考表示できるようにしておく(消し急ぐ必要はないため)。
-    : (selectedFromHistory && !selectedFromHistory.cancelled ? selectedFromHistory.areas : EMPTY_EQDB_LIST);
+  const tsunamiAreasForMap =
+    !showTsunamiMapLayers || !tsunamiForMapDisplay || tsunamiForMapDisplay.cancelled
+      ? EMPTY_EQDB_LIST
+      : tsunamiForMapDisplay.areas;
 
   // 潮位観測点ごとに「一番近い津波予報区」を、都道府県名などのあいまいな情報ではなく、
   // 地図の海岸線描画に実際使っているtsunami-areas.json(座標データ)との距離計算で
@@ -11877,8 +11872,7 @@ export default function App() {
   // 潮位計モード(手動で観測点一覧を見ている間)は、そちらの全件表示が優先されるため
   // ここでは判定しない(下のtideStationPoints算出側でshowTideGaugeLayerを優先している)。
   const showActiveTsunamiTideStations =
-    showTsunamiMapLayers && causingQuakeCard == null && activeTsunami != null
-    && isViewingActiveTsunami && tideStationMarkersVisible;
+    showTsunamiMapLayers && causingQuakeCard == null && isViewingActiveTsunami && tideStationMarkersVisible;
 
   /* ─────────────────────────────────────────────────────
      観測された津波の高さ(地図上のバー表示)。
