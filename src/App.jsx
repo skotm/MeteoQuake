@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.6c";
+const APP_VERSION = "1.2.6d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -1863,6 +1863,10 @@ function MapCanvas({
           };
         });
       source.setData({ type: "FeatureCollection", features });
+      // addImageで登録したばかりのアイコン(=新しく選択された観測点のオレンジ色の
+      // アイコンなど)が、まれに次の描画までパッと反映されないことがあるため、
+      // setData直後に明示的に再描画を促す。
+      map.triggerRepaint();
     }
 
     render(); // データ自体が変わった時は、ズーム段階に関わらず必ず再描画する
@@ -11887,6 +11891,18 @@ export default function App() {
     }));
   }, [tideStationsWithGrade, tsunamiHeightByStation]);
 
+  // 発令中の予報区の観測点一覧(地図の自動表示用)。選択中の観測点は、続報の
+  // 反映タイミング等で一瞬対象予報区から外れても一覧に残すようにする。そうしないと
+  // 選択中の丸が地図から消えてしまい、「タップしても強調されない」ように見えるため。
+  const warnedTideStationsForMap = useMemo(() => {
+    const warned = tideStationsForMap.filter(s => s.activeGrade);
+    if (selectedTideStationCode != null && !warned.some(s => s.code === selectedTideStationCode)) {
+      const selected = tideStationsForMap.find(s => s.code === selectedTideStationCode);
+      if (selected) return [...warned, selected];
+    }
+    return warned;
+  }, [tideStationsForMap, selectedTideStationCode]);
+
   // 地図に描く「観測された津波の高さ」バー。高さ(m)を0〜1に正規化した値(heightT)に
   // しておき、実際のピクセル上のバーの長さはMapCanvas側で決める(ズームで見た目の
   // 長さが変わらないよう、アイコンのピクセルサイズとして描画するため)。色は観測点の
@@ -11938,7 +11954,7 @@ export default function App() {
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
           tideStationPoints={
             showTideGaugeLayer ? tideStationsForMap
-            : showActiveTsunamiTideStations ? tideStationsForMap.filter(s => s.activeGrade)
+            : showActiveTsunamiTideStations ? warnedTideStationsForMap
             : EMPTY_EQDB_LIST
           }
           onSelectTideStation={handleSelectTideStationOnMap}
