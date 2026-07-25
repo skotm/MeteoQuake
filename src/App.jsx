@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.6";
+const APP_VERSION = "1.2.6a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -4013,6 +4013,35 @@ async function fetchTideObs(dateStr, stationCode) {
   const res = await fetch(tideObsUrl(dateStr, stationCode));
   if (!res.ok) throw new Error(`潮位観測値の取得に失敗(HTTP ${res.status})`);
   return res.json();
+}
+
+// 指定地点について、当日を含む直近N日分(デフォルト2日=前日+当日)の観測値を取得し、
+// 1本の連続した配列に結合する。日をまたぐ津波でも0時で表示が途切れないようにするため。
+// 前日ファイルが欠測/取得失敗の場合は、当日から遡って「連続して取得できた分」だけを
+// 採用する(=当日分さえ取れれば、以前と同じ1日分の挙動にフォールバックする)。
+async function fetchTideObsRange(stationCode, days = 2) {
+  const today = new Date();
+  const dateStrs = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    dateStrs.push(toTideDateStr(d));
+  }
+  const settled = await Promise.allSettled(dateStrs.map(ds => fetchTideObs(ds, stationCode)));
+
+  const ordered = [];
+  for (let i = settled.length - 1; i >= 0; i--) {
+    if (settled[i].status !== "fulfilled") break; // 途切れた時点で遡るのをやめる(古い日だけ欠測でもOK)
+    ordered.unshift(settled[i].value);
+  }
+  if (ordered.length === 0) throw new Error("潮位観測値の取得に失敗");
+
+  return {
+    ...ordered[ordered.length - 1], // interval等のメタ情報は当日分を踏襲
+    time: ordered[0].time,          // 一番古い日の開始時刻を全体の起点にする
+    tide: ordered.flatMap(d => Array.isArray(d.tide) ? d.tide : []),
+    departure: ordered.flatMap(d => Array.isArray(d.departure) ? d.departure : []),
+  };
 }
 
 // 観測された津波の高さ(推定)を、潮位観測データから計算する。
@@ -11289,7 +11318,7 @@ export default function App() {
     if (!force && cur && cur.date === dateStr && cur.status === "ready") return; // 通常時は読み込み済みならスキップ
     setTideObsByStation(prev => ({ ...prev, [stationCode]: { date: dateStr, status: "loading", data: null } }));
     try {
-      const data = await fetchTideObs(dateStr, stationCode);
+      const data = await fetchTideObsRange(stationCode, 2); // 前日+当日の2日分
       setTideObsByStation(prev => ({ ...prev, [stationCode]: { date: dateStr, status: "ready", data } }));
     } catch (err) {
       console.error("潮位観測値の取得に失敗:", err);
