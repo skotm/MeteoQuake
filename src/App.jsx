@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.7e";
+const APP_VERSION = "1.3.0";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -470,6 +470,10 @@ function GlobalStyles({ tokens = THEME_TOKENS.dark }) {
         from { opacity:0; transform:translateY(10px) scale(0.97); }
         to   { opacity:1; transform:translateY(0)    scale(1); }
       }
+      @keyframes eewPulseBorder {
+        0%,100% { box-shadow: 0 0 0 1px rgba(255,69,58,0.35), 0 10px 30px rgba(0,0,0,0.35); }
+        50%      { box-shadow: 0 0 0 3px rgba(255,69,58,0.55), 0 10px 30px rgba(0,0,0,0.35); }
+      }
       /* レイヤーパネルはキーフレームではなく transform/opacity の
          トランジションで開閉する（下部アイコンバーへ向けて滑らかに
          スライスイン・アウトできるよう、常時マウントして状態だけ切替える） */
@@ -870,6 +874,7 @@ function MapCanvas({
   tideStationPoints = [], onSelectTideStation, selectedTideStationCode,
   tsunamiHeightBars = [], tideStationBarsMode = false,
   tsunamiAreaPickActive = false, onPickTsunamiArea, pickedTsunamiAreas = [],
+  eews = [],
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -1352,6 +1357,42 @@ function MapCanvas({
             onPickTsunamiAreaRef.current?.(nearest.name);
           });
 
+          // ─────────────────────────────────────────────
+          // 緊急地震速報(EEW): P波・S波の伝播円と震源マーカー。
+          // データは別のuseEffect(下方)がrequestAnimationFrameで頻繁に
+          // setDataするため、ここでは空のソースを用意するだけでよい。
+          // 他のレイヤーより後に追加し、常に最前面に描画されるようにする。
+          map.addSource("eew-pwave", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+          map.addLayer({
+            id: "eew-pwave-fill-layer", type: "fill", source: "eew-pwave",
+            paint: { "fill-color": "#32ADE6", "fill-opacity": 0.08 },
+          });
+          map.addLayer({
+            id: "eew-pwave-line-layer", type: "line", source: "eew-pwave",
+            paint: { "line-color": "#32ADE6", "line-width": 1.5, "line-opacity": 0.8 },
+          });
+
+          map.addSource("eew-swave", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+          map.addLayer({
+            id: "eew-swave-fill-layer", type: "fill", source: "eew-swave",
+            paint: { "fill-color": "#FF453A", "fill-opacity": 0.12 },
+          });
+          map.addLayer({
+            id: "eew-swave-line-layer", type: "line", source: "eew-swave",
+            paint: { "line-color": "#FF453A", "line-width": 2.2, "line-opacity": 0.9 },
+          });
+
+          map.addSource("eew-hypocenter", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+          map.addLayer({
+            id: "eew-hypocenter-symbol", type: "symbol", source: "eew-hypocenter",
+            layout: {
+              "icon-image": "hypocenter-cross",
+              "icon-size": 28 / 36,
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+            },
+          });
+
           setStatus("ready");
           if (onReady) onReady(map);
         });
@@ -1406,6 +1447,61 @@ function MapCanvas({
       : [];
     source.setData({ type: "FeatureCollection", features });
   }, [stationPoints, status, stationMarkersVisible]);
+
+  // 緊急地震速報: P波・S波の伝播円と震源マーカーをリアルタイムに更新する。
+  // eews自体は1秒間隔のstate更新(App側の生存タイマー)にしか追従しないため、
+  // 経過時間から円を滑らかに広げるにはrequestAnimationFrameで独自に回す必要がある。
+  // ただしGeoJSONのsetDataは決して軽くないので、フレームごとではなく
+  // 約180ms間隔に間引いて呼び出す(タブが非表示の間は自動的に止まる)。
+  const eewsRef = useRef(eews);
+  eewsRef.current = eews;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+
+    let frameId = null;
+    let lastTick = 0;
+
+    function tick(ts) {
+      if (ts - lastTick >= 180) {
+        lastTick = ts;
+        const list = eewsRef.current || [];
+        const pFeatures = [];
+        const sFeatures = [];
+        const hypoFeatures = [];
+
+        list.forEach(eew => {
+          if (eew.cancelled || eew.latitude == null || eew.longitude == null) return;
+          hypoFeatures.push({
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [eew.longitude, eew.latitude] },
+            properties: {},
+          });
+          if (eew.isPlum) return; // PLUM法は到達時刻の予測が無いため円は描かない
+          const originMs = eew.originTime ? new Date(eew.originTime.replace(/-/g, "/")).getTime() : NaN;
+          if (!Number.isFinite(originMs)) return;
+          const elapsedSec = (Date.now() - originMs) / 1000;
+          const pRadiusKm = eewWaveSurfaceRadiusKm(elapsedSec, eew.depth, EEW_P_WAVE_SPEED_KM_S);
+          const sRadiusKm = eewWaveSurfaceRadiusKm(elapsedSec, eew.depth, EEW_S_WAVE_SPEED_KM_S);
+          const pRing = eewCirclePolygon(eew.latitude, eew.longitude, pRadiusKm);
+          if (pRing) pFeatures.push({ type: "Feature", geometry: { type: "Polygon", coordinates: [pRing] }, properties: {} });
+          const sRing = eewCirclePolygon(eew.latitude, eew.longitude, sRadiusKm);
+          if (sRing) sFeatures.push({ type: "Feature", geometry: { type: "Polygon", coordinates: [sRing] }, properties: {} });
+        });
+
+        const pSource = map.getSource("eew-pwave");
+        const sSource = map.getSource("eew-swave");
+        const hypoSource = map.getSource("eew-hypocenter");
+        if (pSource) pSource.setData({ type: "FeatureCollection", features: pFeatures });
+        if (sSource) sSource.setData({ type: "FeatureCollection", features: sFeatures });
+        if (hypoSource) hypoSource.setData({ type: "FeatureCollection", features: hypoFeatures });
+      }
+      frameId = requestAnimationFrame(tick);
+    }
+    frameId = requestAnimationFrame(tick);
+
+    return () => { if (frameId != null) cancelAnimationFrame(frameId); };
+  }, [status]);
 
   // 配色スキームが切り替わったら、観測点アイコン(丸+白フチ+数字)を焼き直す。
   // symbolレイヤー側は同じicon-image名を参照し続けるので、updateImageするだけで
@@ -2083,6 +2179,100 @@ function AlertPill({ alert }) {
       </span>
       <div style={{ width: 0.5, height: 13, background: `rgba(${tokens.ink},0.25)`, flexShrink: 0 }}/>
       <Clock/>
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   緊急地震速報パネル — 画面上部中央に浮かぶフローティングカード。
+   複数のEEWが同時に発表された場合は縦に積んで表示する(EEW_MAX_CONCURRENTで
+   件数を制限しているため、実用上は積みすぎて見づらくなることはない)。
+   取消(cancelled)を受信した場合は「取消」表示に切り替わり、一定時間後に
+   一覧から消える(App側のEEW_CANCEL_LINGER_MSタイマーで管理)。
+   ───────────────────────────────────────────────────── */
+function EewPanel({ eews }) {
+  if (!eews || eews.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+      {eews.map(eew => <EewCard key={eew.eventId} eew={eew}/>)}
+    </div>
+  );
+}
+
+function EewCard({ eew }) {
+  const { tokens } = useContext(ThemeContext);
+  const intensityStyle = useIntensityStyle(eew.maxIntensityKey);
+  const isSpecial = ["6-", "6+", "7"].includes(eew.maxIntensityKey); // 特別警報相当(震度6弱以上)の強調表示
+  const accent = eew.cancelled ? tokens.textSecondary : (isSpecial ? "#BF5AF2" : "#FF453A");
+
+  const depthText = eew.depth === 0 ? "ごく浅い" : (eew.depth != null ? `${eew.depth}km` : "不明");
+  const magText = eew.magnitude != null ? eew.magnitude.toFixed(1) : "-.-";
+
+  // 警報対象の地域名。件数が多い場合は先頭3件+「他」に省略する。
+  const areaNames = (eew.areas || []).map(a => a.name).filter(Boolean);
+  const areaDisplay = areaNames.length > 3 ? `${areaNames.slice(0, 3).join("、")} 他${areaNames.length - 3}件` : areaNames.join("、");
+
+  return (
+    <Glass
+      radius={18}
+      style={{
+        width: 320,
+        maxWidth: "calc(100vw - 32px)",
+        padding: "12px 14px",
+        border: `1px solid ${accent}55`,
+        background: eew.cancelled ? undefined : "rgba(120,20,20,0.32)",
+        animation: eew.cancelled ? "appear 0.3s cubic-bezier(.25,1,.5,1)" : "appear 0.3s cubic-bezier(.25,1,.5,1), eewPulseBorder 1.6s ease-in-out infinite",
+        boxShadow: eew.cancelled ? undefined : `0 0 0 1px ${accent}33, 0 10px 30px rgba(0,0,0,0.35)`,
+      }}
+    >
+      {eew.cancelled ? (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: accent }}>【緊急地震速報】取消</div>
+          <div style={{ fontSize: 12, color: tokens.textSecondary, marginTop: 4, lineHeight: 1.6 }}>
+            先ほどの緊急地震速報は取り消されました。
+          </div>
+        </div>
+      ) : (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{
+              width: 48, height: 48, borderRadius: 12, flexShrink: 0,
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              background: intensityStyle.bg, color: intensityStyle.fg,
+            }}>
+              <span style={{ fontSize: 9, fontWeight: 700, opacity: 0.85, lineHeight: 1 }}>最大予測</span>
+              <span style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.3 }}>{intensityStyle.label}</span>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: accent }}>
+                【緊急地震速報】第{eew.serial ?? "-"}報{eew.isPlum ? "(PLUM法)" : ""}
+              </div>
+              <div style={{
+                fontSize: 15, fontWeight: 700, color: tokens.text,
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              }}>
+                {eew.place}
+              </div>
+              <div style={{ fontSize: 12, color: tokens.textSecondary }}>
+                M{magText} ／ 深さ{depthText}
+              </div>
+            </div>
+          </div>
+          <div style={{ marginTop: 8, fontSize: 12, fontWeight: 700, color: "#FF453A" }}>
+            強い揺れに警戒してください
+          </div>
+          {areaDisplay && (
+            <div style={{ marginTop: 4, fontSize: 12, fontWeight: 600, color: "#FFD60A" }}>
+              対象地域: {areaDisplay}
+            </div>
+          )}
+          {eew.isPlum && (
+            <div style={{ marginTop: 4, fontSize: 11, color: tokens.textSecondary }}>
+              ※観測点の揺れの実測から予測しています(到達時刻は未提供)。
+            </div>
+          )}
+        </div>
+      )}
     </Glass>
   );
 }
@@ -3563,11 +3753,119 @@ async function findCausingQuakeFromP2p(winStart, winEnd) {
 }
 
 /* ─────────────────────────────────────────────────────
+   緊急地震速報(警報) (P2P地震情報 EEW, code:556)
+   https://api.p2pquake.net/v2/history?codes=556 相当のスキーマがWebSocketで届く。
+   気象庁の「緊急地震速報(警報)」の内容そのものであり、本アプリではこれを
+   ライブ受信のみで扱う(過去ログを一覧表示する意味が薄いため /history は叩かない)。
+
+   P2P地震情報のEEWスキーマには、kmoni直叩き版(index.html)にあった
+   report_num・is_final・alertflgに相当するフィールドが無い。そのため:
+     ・「第◯報」相当は issue.serial をそのまま使う
+     ・「最終報」の判定はできないため、一定時間(EEW_STALE_MS)続報が
+       来なければ自動的に消すタイムアウト方式でライフサイクルを管理する
+     ・警報級以外(予報のみ)のEEWはこのAPIには流れてこないため、
+       kmoni版にあった「警報/予報」の区別は行わない(常に警報級として扱う)
+   ───────────────────────────────────────────────────── */
+const EEW_STALE_MS = 20000;        // この時間、続報も取消も来なければ自動的にパネル・地図から消す
+const EEW_CANCEL_LINGER_MS = 8000; // 取消受信後、この時間はパネルに「取消」表示を残してから消す
+const EEW_MAX_CONCURRENT = 3;      // 同時に画面へ出すEEWの最大件数(UIが煩雑にならないよう抑える)
+const EEW_P_WAVE_SPEED_KM_S = 6.0; // P波の伝播速度(kmoni版index.htmlと同じ簡易値)
+const EEW_S_WAVE_SPEED_KM_S = 3.5; // S波の伝播速度
+
+// areas[]のscaleFrom/scaleToから、この地震の「最大予測震度」をINTENSITY_LABELの
+// キー形式に変換する。99("〜程度以上")は震度7相当として扱う。
+function eewMaxScaleKey(areas) {
+  let max = -Infinity;
+  for (const a of areas) {
+    const s = typeof a.scaleTo === "number" ? a.scaleTo : (typeof a.scaleFrom === "number" ? a.scaleFrom : null);
+    if (s != null && s > max) max = s;
+  }
+  if (max === -Infinity || max < 0) return "?";
+  if (max >= 99) return "7";
+  return maxScaleToIntensityKey(max);
+}
+
+// P2P地震情報APIの1レコード(EEW, code:556)を、アプリ内で使う形に変換する
+function toEewCard(item) {
+  const eq = item.earthquake || {};
+  const hypo = eq.hypocenter || {};
+  const areas = Array.isArray(item.areas) ? item.areas.map(a => ({
+    pref: a.pref || "",
+    name: a.name || "",
+    scaleFrom: typeof a.scaleFrom === "number" ? a.scaleFrom : null,
+    scaleTo: typeof a.scaleTo === "number" ? a.scaleTo : null,
+    // kindCode: 10/11=通常(到達予測あり)、19=PLUM法(主要動の到達予想なし)
+    isPlum: a.kindCode === "19",
+  })) : [];
+
+  return {
+    id: item.id,
+    // eventId(issue.eventId)を同一地震の識別キーとして使う。続報は同じeventIdで届く。
+    eventId: item.issue?.eventId || item.id,
+    serial: item.issue?.serial || null,
+    cancelled: !!item.cancelled,
+    isTraining: !!item.test,
+    originTime: eq.originTime || null,
+    arrivalTime: eq.arrivalTime || null,
+    isAssumedHypocenter: eq.condition === "仮定震源要素",
+    place: hypo.name || "震源地不明",
+    reducedPlace: hypo.reduceName || null,
+    latitude: typeof hypo.latitude === "number" && hypo.latitude !== -200 ? hypo.latitude : null,
+    longitude: typeof hypo.longitude === "number" && hypo.longitude !== -200 ? hypo.longitude : null,
+    depth: typeof hypo.depth === "number" && hypo.depth >= 0 ? Math.round(hypo.depth) : null,
+    magnitude: typeof hypo.magnitude === "number" && hypo.magnitude > 0 ? hypo.magnitude : null,
+    areas,
+    maxIntensityKey: eewMaxScaleKey(areas),
+    // areas[]全件がPLUM法(kindCode:19)の場合のみPLUM法発表とみなす(1件でも通常判定が
+    // 混じっていれば、通常の到達予測ありとして扱う)。areas未着の初回はfalse。
+    isPlum: areas.length > 0 && areas.every(a => a.isPlum),
+  };
+}
+
+// 緯度・経度・半径(km)から、地図に描く円(GeoJSON Polygon)の頂点座標を作る。
+// 球面上の測地線オフセット(標準的な"destination point"の公式)を使っており、
+// 日本周辺の震源から数百km程度の範囲であれば十分な精度で円になる。
+function eewCirclePolygon(lat, lon, radiusKm, steps = 64) {
+  if (!(radiusKm > 0) || lat == null || lon == null) return null;
+  const R = 6371; // 地球の平均半径(km)
+  const latRad = lat * Math.PI / 180;
+  const lonRad = lon * Math.PI / 180;
+  const angularDist = radiusKm / R;
+  const coords = [];
+  for (let i = 0; i <= steps; i++) {
+    const bearing = (i / steps) * 2 * Math.PI;
+    const destLat = Math.asin(
+      Math.sin(latRad) * Math.cos(angularDist) +
+      Math.cos(latRad) * Math.sin(angularDist) * Math.cos(bearing)
+    );
+    const destLon = lonRad + Math.atan2(
+      Math.sin(bearing) * Math.sin(angularDist) * Math.cos(latRad),
+      Math.cos(angularDist) - Math.sin(latRad) * Math.sin(destLat)
+    );
+    coords.push([destLon * 180 / Math.PI, destLat * 180 / Math.PI]);
+  }
+  return coords;
+}
+
+// 発生時刻からの経過秒・震源の深さ・波の伝播速度(km/s)から、
+// 地表面での円の半径(km)を求める(斜距離→水平距離への変換込み)。
+// 経過前(elapsedSec<=0)や、まだ波が地表に届いていない(slant<=depth)場合は0を返す。
+function eewWaveSurfaceRadiusKm(elapsedSec, depthKm, speedKmS) {
+  if (!(elapsedSec > 0)) return 0;
+  const slant = speedKmS * elapsedSec;
+  const depth = depthKm != null && depthKm >= 0 ? depthKm : 10;
+  if (slant <= depth) return 0;
+  return Math.sqrt(slant * slant - depth * depth);
+}
+
+/* ─────────────────────────────────────────────────────
    P2P地震情報 WebSocket API (v2)
    wss://api.p2pquake.net/v2/ws
-   地震情報(code:551)・津波情報(code:552)を含む全情報がリアルタイムでpushされてくる。
-   最新一覧は起動時に /history で1回だけ取得し(履歴はWebSocketでは
+   地震情報(code:551)・津波情報(code:552)・緊急地震速報(code:556)を含む
+   全情報がリアルタイムでpushされてくる。
+   地震・津波の最新一覧は起動時に /history で1回だけ取得し(履歴はWebSocketでは
    遡れないため)、以降はこのWebSocketで届いた新着分だけを一覧に追加していく。
+   緊急地震速報(EEW)は履歴を扱わず、WebSocketのライブ受信のみで管理する。
    ───────────────────────────────────────────────────── */
 const P2PQUAKE_WS_URL = "wss://api.p2pquake.net/v2/ws";
 
@@ -3597,14 +3895,29 @@ function wsMessageToTsunamiCard(raw) {
   return toTsunamiCard(data);
 }
 
+// WebSocketで受信した1件を、緊急地震速報(code:556)であれば変換して返す。
+// test:true(訓練・切替試験の配信)は実際の地震と紛らわしいため対象外にする。
+function wsMessageToEewCard(raw) {
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (data.code !== 556) return null;
+  if (data.test) return null;
+  return toEewCard(data);
+}
+
 /**
  * P2P地震情報のWebSocketに接続し、地震情報(code:551)を受信するたびにonQuakeを、
- * 津波情報(code:552)を受信するたびにonTsunamiを呼ぶ。1本の接続で両方を賄う
+ * 津波情報(code:552)を受信するたびにonTsunamiを、緊急地震速報(code:556)を
+ * 受信するたびにonEewを呼ぶ。1本の接続で全部を賄う
  * (種別ごとに別々の接続を開くと無駄にコネクション数が増えてしまうため)。
  * 接続が切れた場合は一定間隔で自動的に再接続を試みる。
  * 戻り値のclose()を呼ぶと再接続をやめて確実に切断する。
  */
-function connectQuakeWebSocket(onQuake, onTsunami, onStatusChange) {
+function connectQuakeWebSocket(onQuake, onTsunami, onEew, onStatusChange) {
   let ws = null;
   let closedByCaller = false;
   let reconnectTimer = null;
@@ -3621,7 +3934,9 @@ function connectQuakeWebSocket(onQuake, onTsunami, onStatusChange) {
       const quake = wsMessageToQuakeCard(event.data);
       if (quake) { onQuake(quake); return; }
       const tsunami = wsMessageToTsunamiCard(event.data);
-      if (tsunami) onTsunami?.(tsunami);
+      if (tsunami) { onTsunami?.(tsunami); return; }
+      const eew = wsMessageToEewCard(event.data);
+      if (eew) onEew?.(eew);
     };
 
     ws.onerror = (e) => {
@@ -5786,6 +6101,7 @@ function BottomDock({
   stationListDisplayMode, onChangeStationListDisplayMode,
   experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
+  testEew, onBroadcastTestEew, onCancelTestEew, onClearTestEew,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
   pickedTsunamiHeights, onChangeTsunamiHeightPick, onRemoveTsunamiHeightPick,
@@ -7142,6 +7458,10 @@ function BottomDock({
                   onBroadcastTestTsunami={onBroadcastTestTsunami}
                   onCancelTestTsunami={onCancelTestTsunami}
                   onClearTestTsunami={onClearTestTsunami}
+                  testEew={testEew}
+                  onBroadcastTestEew={onBroadcastTestEew}
+                  onCancelTestEew={onCancelTestEew}
+                  onClearTestEew={onClearTestEew}
                   tsunamiAreaPickActive={tsunamiAreaPickActive}
                   onStartTsunamiAreaPick={onStartTsunamiAreaPick}
                   pickedTsunamiAreas={pickedTsunamiAreas}
@@ -9560,6 +9880,86 @@ const TEST_TSUNAMI_GRADE_OPTIONS = [
 // 10で割っている。
 const TSUNAMI_HEIGHT_PICK_OPTIONS = Array.from({ length: 99 }, (_, i) => (i + 2) / 10);
 
+// 実験的機能: 緊急地震速報テスト配信パネル。
+// 「通常」「PLUM法」の2シナリオをボタン一発で配信でき、動作確認用のダミーEEWが
+// EewPanel・地図上のP波S波円・震源マーカーに実際のデータと同様に反映される。
+function EewTestBroadcastPanel({ testEew, onBroadcast, onCancel, onClear }) {
+  const { tokens } = useContext(ThemeContext);
+  return (
+    <>
+      <div style={{ margin: "-4px 14px 10px", fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.7 }}>
+        実際の気象庁発表ではない、動作確認用のダミーデータです。画面上部のアラートパネル・
+        地図上のP波S波円と震源マーカーへの反映が確認できます。「配信を削除」で元に戻ります。
+      </div>
+
+      <SettingsCard>
+        <PressableButton
+          type="button"
+          onClick={() => onBroadcast?.("normal")}
+          style={{
+            width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
+            background: "transparent", textAlign: "center",
+            fontSize: 14, fontWeight: 700, color: "#FF453A",
+          }}
+        >
+          テスト配信する(通常)
+        </PressableButton>
+        <SettingsCardDivider/>
+        <PressableButton
+          type="button"
+          onClick={() => onBroadcast?.("plum")}
+          style={{
+            width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
+            background: "transparent", textAlign: "center",
+            fontSize: 14, fontWeight: 700, color: "#BF5AF2",
+          }}
+        >
+          テスト配信する(PLUM法)
+        </PressableButton>
+        {testEew && !testEew.cancelled && (
+          <>
+            <SettingsCardDivider/>
+            <PressableButton
+              type="button"
+              onClick={onCancel}
+              style={{
+                width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
+                background: "transparent", textAlign: "center",
+                fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.7)`,
+              }}
+            >
+              取消を配信する
+            </PressableButton>
+          </>
+        )}
+        {testEew && (
+          <>
+            <SettingsCardDivider/>
+            <PressableButton
+              type="button"
+              onClick={onClear}
+              style={{
+                width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
+                background: "transparent", textAlign: "center",
+                fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.45)`,
+              }}
+            >
+              配信を削除(片付ける)
+            </PressableButton>
+          </>
+        )}
+      </SettingsCard>
+
+      {testEew && (
+        <div style={{ margin: "6px 14px 10px", fontSize: 11, color: `rgba(${tokens.ink},0.5)`, lineHeight: 1.7 }}>
+          現在配信中: {testEew.place} / M{testEew.magnitude?.toFixed?.(1) ?? "-.-"}
+          {testEew.cancelled ? "(取消済み)" : ""}
+        </div>
+      )}
+    </>
+  );
+}
+
 function TsunamiTestBroadcastPanel({
   testTsunami, onBroadcast, onCancel, onClear,
   tsunamiAreaPickActive, onStartAreaPick, pickedAreas = [], onRemoveAreaPick, onCycleAreaGrade,
@@ -10283,6 +10683,7 @@ function SettingsBody({
   stationListDisplayMode, onChangeStationListDisplayMode,
   experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
+  testEew, onBroadcastTestEew, onCancelTestEew, onClearTestEew,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
   pickedTsunamiHeights, onChangeTsunamiHeightPick, onRemoveTsunamiHeightPick,
@@ -10583,19 +10984,18 @@ function SettingsBody({
     );
   }
 
-  // 実験的機能: 緊急地震速報テスト配信メニュー。中身は未実装(メニューの入口だけ)。
+  // 実験的機能: 緊急地震速報テスト配信メニュー。
   if (category === "advanced" && leaf === "experimental" && sub === "eewTestBroadcast") {
     if (!experimentalFeaturesEnabled) return null;
     return (
       <>
         <SettingsHeader title="緊急地震速報テスト配信"/>
-        <SettingsCard>
-          <div style={{ padding: "20px 16px", textAlign: "center" }}>
-            <span style={{ fontSize: 12.5, color: `rgba(${tokens.ink},0.4)`, lineHeight: 1.8 }}>
-              準備中です。今後実装予定です。
-            </span>
-          </div>
-        </SettingsCard>
+        <EewTestBroadcastPanel
+          testEew={testEew}
+          onBroadcast={onBroadcastTestEew}
+          onCancel={onCancelTestEew}
+          onClear={onClearTestEew}
+        />
       </>
     );
   }
@@ -11184,6 +11584,98 @@ export default function App() {
   const [selectedTsunamiId, setSelectedTsunamiId] = useState(null);
 
   /* ─────────────────────────────────────────────────────
+     緊急地震速報(P2P地震情報 EEW, code:556)。地震・津波情報と同じWebSocket接続を
+     共有する(下のuseEffect参照)。/historyでの初期取得は行わず、ライブ受信のみ。
+     eventIdごとに最新のレコードだけを保持する(続報が来るたびに上書き)。
+     ・取消(cancelled)を一度受信したら、以後に遅れて届く非取消の続報では
+       上書きしない(取消の表示を覆さないため)。
+     ・「最終報」を判定できるフィールドがAPIに無いため、受信のたびに
+       receivedLocalAtを更新し、EEW_STALE_MS間続報が無ければ自動的に一覧から外す
+       (別のuseEffectでタイマー管理。下方)。
+     ───────────────────────────────────────────────────── */
+  const [eews, setEews] = useState([]);
+
+  function handleIncomingEew(newEew) {
+    setEews(prev => {
+      const idx = prev.findIndex(e => e.eventId === newEew.eventId);
+      if (idx === -1) {
+        const withLocal = { ...newEew, receivedLocalAt: Date.now(), cancelledLocalAt: newEew.cancelled ? Date.now() : null };
+        return [withLocal, ...prev].slice(0, EEW_MAX_CONCURRENT);
+      }
+      if (prev[idx].cancelled && !newEew.cancelled) return prev; // 取消済みは以後の続報で覆さない
+      const next = [...prev];
+      next[idx] = {
+        ...newEew,
+        receivedLocalAt: Date.now(),
+        cancelledLocalAt: newEew.cancelled ? (prev[idx].cancelledLocalAt || Date.now()) : null,
+      };
+      return next;
+    });
+  }
+
+  // 続報・取消が一定時間来ないEEWを定期的に取り除く(タイムアウト方式のライフサイクル管理)。
+  useEffect(() => {
+    const id = setInterval(() => {
+      setEews(prev => {
+        const now = Date.now();
+        const next = prev.filter(e => {
+          if (e.cancelled) return now - (e.cancelledLocalAt || 0) < EEW_CANCEL_LINGER_MS;
+          return now - (e.receivedLocalAt || 0) < EEW_STALE_MS;
+        });
+        return next.length === prev.length ? prev : next;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  /* ─────────────────────────────────────────────────────
+     実験的機能: 緊急地震速報テスト配信
+     実際のeews(WebSocketで更新され続ける)とは別のstateに持たせ、本物のデータ更新に
+     巻き込まれて消えてしまわないようにする(津波テスト配信のtestTsunamiと同じ考え方)。
+     ───────────────────────────────────────────────────── */
+  const [testEew, setTestEew] = useState(null);
+
+  function broadcastTestEew(scenario) {
+    const now = new Date();
+    const originTimeStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+    const isPlum = scenario === "plum";
+    const base = {
+      id: `test_${now.getTime()}`,
+      eventId: `test_${now.getTime()}`,
+      serial: "1",
+      cancelled: false,
+      isTraining: false,
+      originTime: originTimeStr,
+      arrivalTime: null,
+      isAssumedHypocenter: false,
+      place: "テスト震源(相模湾)",
+      reducedPlace: "テスト",
+      latitude: 35.2,
+      longitude: 139.3,
+      depth: isPlum ? 30 : 20,
+      magnitude: isPlum ? 6.2 : 5.8,
+      areas: [
+        { pref: "神奈川県", name: "神奈川県東部", scaleFrom: 50, scaleTo: 50, isPlum },
+        { pref: "東京都",   name: "東京都２３区",  scaleFrom: 45, scaleTo: 45, isPlum },
+        { pref: "静岡県",   name: "伊豆",          scaleFrom: 40, scaleTo: 40, isPlum },
+      ],
+      isTest: true,
+    };
+    const card = { ...base, maxIntensityKey: eewMaxScaleKey(base.areas) };
+    setTestEew({ ...card, receivedLocalAt: Date.now(), cancelledLocalAt: null });
+  }
+  function cancelTestEew() {
+    setTestEew(prev => (prev ? { ...prev, cancelled: true, cancelledLocalAt: Date.now() } : null));
+  }
+  function clearTestEew() {
+    setTestEew(null);
+  }
+
+  // テスト配信中は、実際の一覧の先頭にテストデータを合成する。地図・パネルとも、
+  // 以降のEEW関連の判定はこちら(effectiveEews)を使う。
+  const effectiveEews = testEew ? [testEew, ...eews] : eews;
+
+  /* ─────────────────────────────────────────────────────
      実験的機能: 津波警報テスト配信
      設定の「実験的・テスト機能」がONの時だけ使える、UI確認用のダミー津波情報。
      実際のtsunamis(WebSocketで更新され続ける)とは別のstateに持たせ、
@@ -11700,6 +12192,10 @@ export default function App() {
         });
         setTsunamiStatus("ready");
       },
+      (newEew) => {
+        if (cancelled) return;
+        handleIncomingEew(newEew);
+      },
       (status) => { if (!cancelled) setWsStatus(status); }
     );
 
@@ -12085,6 +12581,7 @@ export default function App() {
           tsunamiAreaPickActive={tsunamiAreaPickActive}
           onPickTsunamiArea={handlePickTsunamiArea}
           pickedTsunamiAreas={pickedTsunamiAreas}
+          eews={effectiveEews}
         />
 
         {/* 津波テスト配信「地図タップで選択」中のバナー — 画面上部中央に浮かぶ。
@@ -12192,6 +12689,21 @@ export default function App() {
 
         {/* ── Layer 2: Glass UI（透明ガラスが地図に浮かぶ） ── */}
 
+        {/* 緊急地震速報パネル — 受信中は画面上部中央に最優先で浮かぶ */}
+        {effectiveEews.length > 0 && (
+          <div style={{
+            position: "absolute",
+            top: "calc(16px + env(safe-area-inset-top))",
+            left: 0, right: 0,
+            display: "flex", justifyContent: "center",
+            zIndex: 40, pointerEvents: "none",
+          }}>
+            <div style={{ pointerEvents: "auto" }}>
+              <EewPanel eews={effectiveEews}/>
+            </div>
+          </div>
+        )}
+
         {/* アラートピル — 一旦非表示 */}
         {/*
         <div style={{
@@ -12292,6 +12804,10 @@ export default function App() {
                   onBroadcastTestTsunami={broadcastTestTsunami}
                   onCancelTestTsunami={cancelTestTsunami}
                   onClearTestTsunami={clearTestTsunami}
+                  testEew={testEew}
+                  onBroadcastTestEew={broadcastTestEew}
+                  onCancelTestEew={cancelTestEew}
+                  onClearTestEew={clearTestEew}
                   tsunamiAreaPickActive={tsunamiAreaPickActive}
                   onStartTsunamiAreaPick={startTsunamiAreaPick}
                   pickedTsunamiAreas={pickedTsunamiAreas}
@@ -12371,6 +12887,10 @@ export default function App() {
               onBroadcastTestTsunami={broadcastTestTsunami}
               onCancelTestTsunami={cancelTestTsunami}
               onClearTestTsunami={clearTestTsunami}
+              testEew={testEew}
+              onBroadcastTestEew={broadcastTestEew}
+              onCancelTestEew={cancelTestEew}
+              onClearTestEew={clearTestEew}
               tsunamiAreaPickActive={tsunamiAreaPickActive}
               onStartTsunamiAreaPick={startTsunamiAreaPick}
               pickedTsunamiAreas={pickedTsunamiAreas}
