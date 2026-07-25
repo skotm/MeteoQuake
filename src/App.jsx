@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.7";
+const APP_VERSION = "1.2.7a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2852,6 +2852,12 @@ const TSUNAMI_TEXT = {
   Warning:      { text: "この地震により、津波警報が発表されています。",           color: "#FF453A" },
   MajorWarning: { text: "この地震により、大津波警報が発表されています。",         color: "#FF453A" },
 };
+
+// 「地震情報の津波情報」が実際に意味のある内容(警報・注意報・潮位変動等)を示して
+// いるかどうかの判定に使う。None(心配なし)/Unknown/Checking(調査中)は、
+// 単に情報が無い・分かっていないだけなので対象外。地震タブの地図で津波情報を
+// 表示するかどうかの判定(showTsunamiMapLayers)に使う。
+const TSUNAMI_INFO_MEANINGFUL_KEYS = new Set(["NonEffective", "Watch", "Warning", "MajorWarning"]);
 
 function buildQuakeMessage(quake) {
   const { tokens } = useContext(ThemeContext);
@@ -11706,11 +11712,21 @@ export default function App() {
   // その地震の震源・観測点を地図に出す(causingQuakeCard参照)。
   const showQuakeMapLayers = activeNav === "quake" || activeNav === "settings" || (activeNav === "tsunami" && causingQuakeCard != null);
 
-  // 津波予報区の色分けは、津波タブ・設定タブを見ている間に出す。
+  // 津波予報区の色分けは、津波タブ・設定タブを見ている間は常に出す。地震タブでも、
+  // 現在進行形の津波情報があれば同じように出す(地震と津波は無関係でないことが
+  // 多いため)。ただし地震タブで個別の地震を選んでいる間は、その地震自身の
+  // 「津波情報」(domesticTsunami)が実際に警報・注意報・潮位変動等を示している
+  // 場合を除いて、一旦隠す(無関係な地震を見ている間まで津波の表示が残り続けると
+  // 紛らわしいため)。一覧を見ているだけ・何も選んでいない間は通常どおり出す。
   // 「過去の津波(履歴)」を選んでいる時はその回の予報区を、それ以外(一覧を見て
   // いるだけの時・直近一覧から選んだ時・何も選んでいない時)は、常に「現在進行形で
   // 有効な津波情報」があればその予報区を表示する。
-  const showTsunamiMapLayers = activeNav === "tsunami" || activeNav === "settings";
+  const showTsunamiMapLayers =
+    activeNav === "tsunami" || activeNav === "settings" ||
+    (activeNav === "quake" && (
+      selectedQuakeId == null ||
+      TSUNAMI_INFO_MEANINGFUL_KEYS.has(selectedQuake?.domesticTsunami)
+    ));
   const selectedFromRecent = effectiveTsunamis.find(t => t.id === selectedTsunamiId) || null;
   const selectedFromHistory = !selectedFromRecent
     ? (tsunamiHistory.items.find(t => t.id === selectedTsunamiId) || null)
@@ -11857,8 +11873,12 @@ export default function App() {
   // stationMarkersVisibleがfalseから始まる=causingQuakeCardのuseEffect参照)。
   // 潮位計モード(手動で観測点一覧を見ている間)は、そちらの全件表示が優先されるため
   // ここでは判定しない(下のtideStationPoints算出側でshowTideGaugeLayerを優先している)。
+  // 過去の津波(履歴)を選んでいる間は、その回の表示に専念させたいので、現在進行形の
+  // 津波の観測点は一旦隠す(tsunamiAreasForMapが予報区の塗り分けをselectedFromHistory
+  // 優先にしているのと同じ考え方)。
   const showActiveTsunamiTideStations =
-    showTsunamiMapLayers && causingQuakeCard == null && activeTsunami != null && tideStationMarkersVisible;
+    showTsunamiMapLayers && causingQuakeCard == null && selectedFromHistory == null &&
+    activeTsunami != null && tideStationMarkersVisible;
 
   /* ─────────────────────────────────────────────────────
      観測された津波の高さ(地図上のバー表示)。
