@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.6d";
+const APP_VERSION = "1.2.6e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -4634,6 +4634,60 @@ function AutoFitText({ text, maxFontSize, minFontSize = 13, className, style }) 
 }
 
 /* ─────────────────────────────────────────────────────
+   PANEL DRAG HANDOFF CARD
+   フローティングパネル最上部のカード(地震カード・津波カード)を掴んで縦方向に
+   ドラッグした時、リスト内スクロールではなく、パネル本体の高さ調整
+   (ハンドルのドラッグ)として扱うためのラッパー。QuakeListToolbarの
+   onHandoffToPanelDrag(縦方向優位の動きをパネルドラッグへ引き渡す)と同じ考え方。
+   カード内のボタン等のタップ操作はそのまま素通しするため、判定前は何もしない。
+   ───────────────────────────────────────────────────── */
+function PanelDragHandoffCard({ onHandoffToPanelDrag, children }) {
+  const pointerId = useRef(null);
+  const startX    = useRef(0);
+  const startY    = useRef(0);
+  const decided   = useRef(false);
+
+  function handlePointerDown(e) {
+    if (pointerId.current != null) return; // 複数指の同時操作は無視
+    pointerId.current = e.pointerId;
+    startX.current = e.clientX;
+    startY.current = e.clientY;
+    decided.current = false;
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+  }
+  function handlePointerMove(e) {
+    if (pointerId.current !== e.pointerId || decided.current) return;
+    const dx = e.clientX - startX.current;
+    const dy = e.clientY - startY.current;
+    if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return; // まだ判定するには小さすぎる(タップの可能性)
+    decided.current = true;
+    if (Math.abs(dy) >= Math.abs(dx)) {
+      // 縦方向優位の動き = パネルの高さ調整として引き渡す(ハンドルを掴んだ時と同じ)
+      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+      pointerId.current = null;
+      onHandoffToPanelDrag?.(e);
+    }
+    // 横方向優位の動きは、このラッパーとしては何もしない(カード内の通常操作に任せる)
+  }
+  function handlePointerUp(e) {
+    if (pointerId.current !== e.pointerId) return;
+    pointerId.current = null;
+  }
+
+  return (
+    <div
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      style={{ touchAction: "pan-x" }} // 縦方向のブラウザ標準スクロールは奪い、判定はJS側(上記)に任せる
+    >
+      {children}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    QUAKE DETAIL CARD
    地震リスト/地図で選択した地震の詳細を表示するカード。
    左に「最大震度」バッジ、右にM/深さ・震源地・発生時刻を積む構成。
@@ -6920,7 +6974,9 @@ function BottomDock({
                     }
                     return (
                       <div key={selected.id}>
-                        <QuakeDetailCard quake={selected}/>
+                        <PanelDragHandoffCard onHandoffToPanelDrag={handlePointerDown}>
+                          <QuakeDetailCard quake={selected}/>
+                        </PanelDragHandoffCard>
                         {!selected.isEqdb && <QuakeMessageCard quake={selected}/>}
                         {shouldShowNearbyQuakeButton(selected) && (
                           <div style={{ margin: "2px 14px 8px" }}>
@@ -7021,6 +7077,7 @@ function BottomDock({
                   status={tsunamiStatus}
                   selectedId={selectedTsunamiId}
                   onSelect={handleSelectTsunamiForScroll}
+                  onHandoffToPanelDrag={handlePointerDown}
                   viewMode={tsunamiViewMode}
                   historyItems={tsunamiHistory?.items ?? EMPTY_EQDB_LIST}
                   historyStatus={tsunamiHistory?.status ?? "idle"}
@@ -7846,6 +7903,7 @@ function TsunamiAreaRow({ area, showDivider, observedStations = [], onSelectStat
    ───────────────────────────────────────────────────── */
 function TsunamiTabBody({
   tsunamis, status, selectedId, onSelect,
+  onHandoffToPanelDrag,
   // 「過去」モード関連。viewModeが"history"の間は、直近一覧(tsunamis)の代わりに
   // historyItems(/history APIをoffsetで遡って追加取得した一覧)を表示する。
   // 選択中の詳細は、直近一覧・過去一覧のどちらから選んでも見られるよう両方から探す
@@ -7921,7 +7979,9 @@ function TsunamiTabBody({
 
     return (
       <>
-        <TsunamiDetailCard tsunami={selected} onFindCausingQuake={() => onFindCausingQuake?.(selected)}/>
+        <PanelDragHandoffCard onHandoffToPanelDrag={onHandoffToPanelDrag}>
+          <TsunamiDetailCard tsunami={selected} onFindCausingQuake={() => onFindCausingQuake?.(selected)}/>
+        </PanelDragHandoffCard>
         {showingCausingQuake ? (
           <div style={{ margin: "2px 0 8px" }}>
             <PressableButton
@@ -7961,7 +8021,9 @@ function TsunamiTabBody({
               </div>
             ) : (
               <>
-                <QuakeDetailCard quake={causingState.quake}/>
+                <PanelDragHandoffCard onHandoffToPanelDrag={onHandoffToPanelDrag}>
+                  <QuakeDetailCard quake={causingState.quake}/>
+                </PanelDragHandoffCard>
                 {Array.isArray(causingState.quake.resolvedPoints) && causingState.quake.resolvedPoints.length > 0 && (
                   <StationPointsList
                     points={causingState.quake.resolvedPoints}
