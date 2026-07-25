@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.7d";
+const APP_VERSION = "1.2.7e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -1533,12 +1533,21 @@ function MapCanvas({
   // それぞれの実際の配色で強調レイヤーに反映する。buildTsunamiAreaColorExprは
   // 「(name, grade)の配列→match式」を作る関数で、実際の津波警報表示と全く同じロジックを
   // 使うことで、選択中の色と本番配信時の色が必ず一致するようにしている。
+  // このレイヤーは「テスト配信のピックモード中」だけの一時的な下書き表示のため、
+  // ピックモードを抜けたら(=tsunamiAreaPickActiveがfalseになったら)pickedTsunamiAreas
+  // が配列に残っていても必ず消す。これをしないと、テスト配信で選んだ予報区が
+  // タブを切り替えても地図に残り続け、あたかも本物の警報が出ているように
+  // 見えてしまう。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
     if (!map.getLayer("tsunami-areas-pick-highlight-layer")) return;
-    map.setPaintProperty("tsunami-areas-pick-highlight-layer", "line-color", buildTsunamiAreaColorExpr(pickedTsunamiAreas));
-  }, [pickedTsunamiAreas, status]);
+    map.setPaintProperty(
+      "tsunami-areas-pick-highlight-layer",
+      "line-color",
+      tsunamiAreaPickActive ? buildTsunamiAreaColorExpr(pickedTsunamiAreas) : "rgba(0,0,0,0)"
+    );
+  }, [pickedTsunamiAreas, tsunamiAreaPickActive, status]);
 
   // 選択中の地震(hypocenters)が変わるたびに、震源のバツ印マーカーを更新し、
   // 震源(複数の場合は全件)+周辺の観測点がちょうど収まる範囲へズームする。
