@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.3.0a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -473,6 +473,10 @@ function GlobalStyles({ tokens = THEME_TOKENS.dark }) {
       @keyframes eewPulseBorder {
         0%,100% { box-shadow: 0 0 0 1px rgba(255,69,58,0.35), 0 10px 30px rgba(0,0,0,0.35); }
         50%      { box-shadow: 0 0 0 3px rgba(255,69,58,0.55), 0 10px 30px rgba(0,0,0,0.35); }
+      }
+      @keyframes eewFabPulse {
+        0%,100% { box-shadow: 0 0 0 0 rgba(255,69,58,0.5); }
+        50%      { box-shadow: 0 0 0 8px rgba(255,69,58,0); }
       }
       /* レイヤーパネルはキーフレームではなく transform/opacity の
          トランジションで開閉する（下部アイコンバーへ向けて滑らかに
@@ -2184,94 +2188,190 @@ function AlertPill({ alert }) {
 }
 
 /* ─────────────────────────────────────────────────────
-   緊急地震速報パネル — 画面上部中央に浮かぶフローティングカード。
+   緊急地震速報FABボタン — BackToListButtonと全く同じ丸型Glassの形状・押下演出を
+   使った、ビックリマークのアイコンボタン。EEW発表中は画面左上に浮かび、押すと
+   緊急地震速報の詳細画面(フローティングカード)へ遷移する。
+   ───────────────────────────────────────────────────── */
+function EewFabButton({ onClick }) {
+  const [pressed, setPressed] = useState(false);
+
+  return (
+    <Glass
+      radius={999}
+      style={{
+        width: 44, height: 44,
+        transform: pressed ? "scale(1.16)" : "scale(1)",
+        transformOrigin: "center",
+        transition: "transform 0.18s cubic-bezier(.22,1,.36,1)",
+        animation: "eewFabPulse 1.4s ease-in-out infinite",
+      }}
+    >
+      <button
+        onClick={onClick}
+        onPointerDown={() => setPressed(true)}
+        onPointerUp={() => setPressed(false)}
+        onPointerCancel={() => setPressed(false)}
+        onPointerLeave={() => setPressed(false)}
+        aria-label="緊急地震速報を確認"
+        style={{
+          position: "relative", zIndex: 1,
+          width: "100%", height: "100%",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          color: "#FF453A",
+        }}
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+             stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="12" y1="5" x2="12" y2="14"/>
+          <line x1="12" y1="18.4" x2="12" y2="18.5"/>
+        </svg>
+      </button>
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   緊急地震速報の詳細フローティングカード。
+   地震タブの選択中カード(QuakeDetailCard)と同じ「最大震度バッジ＋震源地／M・
+   深さ／発生時刻」のレイアウトを踏襲しつつ、Glassで包んで地図上に浮かべ、
+   ヘッダーに第◯報・PLUM法バッジ・警戒文言、下段に対象地域を足したもの。
    複数のEEWが同時に発表された場合は縦に積んで表示する(EEW_MAX_CONCURRENTで
    件数を制限しているため、実用上は積みすぎて見づらくなることはない)。
    取消(cancelled)を受信した場合は「取消」表示に切り替わり、一定時間後に
    一覧から消える(App側のEEW_CANCEL_LINGER_MSタイマーで管理)。
    ───────────────────────────────────────────────────── */
-function EewPanel({ eews }) {
-  if (!eews || eews.length === 0) return null;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-      {eews.map(eew => <EewCard key={eew.eventId} eew={eew}/>)}
-    </div>
-  );
-}
-
-function EewCard({ eew }) {
+function EewDetailFloatingCard({ eew }) {
   const { tokens } = useContext(ThemeContext);
-  const intensityStyle = useIntensityStyle(eew.maxIntensityKey);
-  const isSpecial = ["6-", "6+", "7"].includes(eew.maxIntensityKey); // 特別警報相当(震度6弱以上)の強調表示
-  const accent = eew.cancelled ? tokens.textSecondary : (isSpecial ? "#BF5AF2" : "#FF453A");
-
-  const depthText = eew.depth === 0 ? "ごく浅い" : (eew.depth != null ? `${eew.depth}km` : "不明");
-  const magText = eew.magnitude != null ? eew.magnitude.toFixed(1) : "-.-";
-
-  // 警報対象の地域名。件数が多い場合は先頭3件+「他」に省略する。
-  const areaNames = (eew.areas || []).map(a => a.name).filter(Boolean);
-  const areaDisplay = areaNames.length > 3 ? `${areaNames.slice(0, 3).join("、")} 他${areaNames.length - 3}件` : areaNames.join("、");
+  const style = useIntensityStyle(eew.maxIntensityKey);
+  const { num, suffix } = splitIntensityLabel(style.label);
+  const accent = eew.cancelled ? tokens.textSecondary : "#FF453A";
 
   return (
     <Glass
-      radius={18}
+      radius={20}
       style={{
-        width: 320,
+        width: 340,
         maxWidth: "calc(100vw - 32px)",
-        padding: "12px 14px",
+        padding: "12px 0 10px",
         border: `1px solid ${accent}55`,
-        background: eew.cancelled ? undefined : "rgba(120,20,20,0.32)",
-        animation: eew.cancelled ? "appear 0.3s cubic-bezier(.25,1,.5,1)" : "appear 0.3s cubic-bezier(.25,1,.5,1), eewPulseBorder 1.6s ease-in-out infinite",
         boxShadow: eew.cancelled ? undefined : `0 0 0 1px ${accent}33, 0 10px 30px rgba(0,0,0,0.35)`,
+        animation: eew.cancelled ? "appear 0.3s cubic-bezier(.25,1,.5,1)" : "appear 0.3s cubic-bezier(.25,1,.5,1), eewPulseBorder 1.6s ease-in-out infinite",
       }}
     >
+      <div style={{ margin: "0 16px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: accent }}>
+          【緊急地震速報】第{eew.serial ?? "-"}報{eew.isPlum ? "(PLUM法)" : ""}
+        </span>
+        {!eew.cancelled && (
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#FF453A", flexShrink: 0 }}>強い揺れに警戒</span>
+        )}
+      </div>
+
       {eew.cancelled ? (
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 800, color: accent }}>【緊急地震速報】取消</div>
-          <div style={{ fontSize: 12, color: tokens.textSecondary, marginTop: 4, lineHeight: 1.6 }}>
-            先ほどの緊急地震速報は取り消されました。
-          </div>
+        <div style={{ margin: "2px 16px 10px", fontSize: 13, color: tokens.textSecondary, lineHeight: 1.7 }}>
+          この緊急地震速報は取り消されました。
         </div>
       ) : (
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{
-              width: 48, height: 48, borderRadius: 12, flexShrink: 0,
-              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-              background: intensityStyle.bg, color: intensityStyle.fg,
-            }}>
-              <span style={{ fontSize: 9, fontWeight: 700, opacity: 0.85, lineHeight: 1 }}>最大予測</span>
-              <span style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.3 }}>{intensityStyle.label}</span>
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 800, color: accent }}>
-                【緊急地震速報】第{eew.serial ?? "-"}報{eew.isPlum ? "(PLUM法)" : ""}
+        <>
+          {/* ここから先は地震タブのQuakeDetailCardと同じレイアウト構造 */}
+          <div
+            style={{
+              margin: "2px 14px 4px",
+              borderRadius: 16,
+              padding: "7px 16px",
+              display: "flex",
+              alignItems: "center",
+              gap: 14,
+              background: `linear-gradient(135deg, ${style.bg}2E, ${style.bg}14)`,
+              boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0 }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, whiteSpace: "nowrap", lineHeight: 1.1 }}>
+                最大予測震度
+              </span>
+              <div
+                style={{
+                  width: 64, height: 64,
+                  borderRadius: 14,
+                  background: style.bg, color: style.fg,
+                  position: "relative",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                {suffix ? (
+                  <>
+                    <span className="mono" style={{ fontSize: 32, fontWeight: 800, lineHeight: 1 }}>{num}</span>
+                    <span style={{
+                      fontSize: 15, fontWeight: 700, lineHeight: 1,
+                      marginLeft: 2, alignSelf: "flex-end", marginBottom: 14,
+                    }}>{suffix}</span>
+                  </>
+                ) : (
+                  <span className="mono" style={{ fontSize: 32, fontWeight: 800, lineHeight: 1 }}>{num}</span>
+                )}
               </div>
+            </div>
+
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0, lineHeight: 1.1 }}>
+                <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>震源地</span>
+                <AutoFitText
+                  text={eew.place}
+                  maxFontSize={30}
+                  minFontSize={13}
+                  style={{ fontWeight: 800, color: tokens.text, lineHeight: 1.1 }}
+                />
+              </div>
+
+              <div style={{ display: "flex", alignItems: "baseline", gap: 12, lineHeight: 1.1 }}>
+                <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
+                  M<span className="mono" style={{ fontSize: 21, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
+                    {eew.magnitude != null ? eew.magnitude.toFixed(1) : "-"}
+                  </span>
+                </span>
+                <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
+                  深さ<span className="mono" style={{ fontSize: 21, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
+                    {eew.depth != null ? (eew.depth === 0 ? "ごく浅い" : eew.depth) : "-"}
+                  </span>
+                  {eew.depth != null && eew.depth !== 0 && (
+                    <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.6)`, marginLeft: 2, lineHeight: 1.1 }}>km</span>
+                  )}
+                </span>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1 }}>
+                <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>発生時刻</span>
+                <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.1 }}>
+                  {formatQuakeTimeShort(eew.originTime)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* 対象地域 — QuakeMessageCardと同じ「電文カード」風の下段パネルに合わせる */}
+          {eew.areas && eew.areas.length > 0 && (
+            <div style={{ margin: "2px 14px 0" }}>
               <div style={{
-                fontSize: 15, fontWeight: 700, color: tokens.text,
-                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                borderRadius: 12,
+                padding: "10px 12px",
+                background: `rgba(${tokens.ink},0.04)`,
+                boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)`,
               }}>
-                {eew.place}
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#FFD60A" }}>【対象地域】</span>
+                <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.6, marginTop: 2 }}>
+                  {eew.areas.map(a => a.name).join("、")}
+                </div>
               </div>
-              <div style={{ fontSize: 12, color: tokens.textSecondary }}>
-                M{magText} ／ 深さ{depthText}
-              </div>
-            </div>
-          </div>
-          <div style={{ marginTop: 8, fontSize: 12, fontWeight: 700, color: "#FF453A" }}>
-            強い揺れに警戒してください
-          </div>
-          {areaDisplay && (
-            <div style={{ marginTop: 4, fontSize: 12, fontWeight: 600, color: "#FFD60A" }}>
-              対象地域: {areaDisplay}
             </div>
           )}
+
           {eew.isPlum && (
-            <div style={{ marginTop: 4, fontSize: 11, color: tokens.textSecondary }}>
+            <div style={{ margin: "6px 16px 0", fontSize: 11, color: tokens.textSecondary, lineHeight: 1.6 }}>
               ※観測点の揺れの実測から予測しています(到達時刻は未提供)。
             </div>
           )}
-        </div>
+        </>
       )}
     </Glass>
   );
@@ -11675,6 +11775,16 @@ export default function App() {
   // 以降のEEW関連の判定はこちら(effectiveEews)を使う。
   const effectiveEews = testEew ? [testEew, ...eews] : eews;
 
+  // 緊急地震速報の詳細フローティングカードを表示中かどうか。左上のEewFabButtonを
+  // 押すとtrueになり、専用の「戻る」ボタンで閉じるとfalseに戻る。既存のタブ
+  // バー(NAV/activeNav)とは独立させ、どのタブを見ている最中でも割り込んで
+  // 開けるようにしている。表示中の全EEWが無くなったら自動的に閉じる。
+  const [eewDetailOpen, setEewDetailOpen] = useState(false);
+  useEffect(() => {
+    if (eewDetailOpen && effectiveEews.length === 0) setEewDetailOpen(false);
+  }, [eewDetailOpen, effectiveEews.length]);
+  const hasActiveEew = effectiveEews.some(e => !e.cancelled);
+
   /* ─────────────────────────────────────────────────────
      実験的機能: 津波警報テスト配信
      設定の「実験的・テスト機能」がONの時だけ使える、UI確認用のダミー津波情報。
@@ -12689,19 +12799,48 @@ export default function App() {
 
         {/* ── Layer 2: Glass UI（透明ガラスが地図に浮かぶ） ── */}
 
-        {/* 緊急地震速報パネル — 受信中は画面上部中央に最優先で浮かぶ */}
-        {effectiveEews.length > 0 && (
+        {/* 緊急地震速報FAB — EEWが発表されている間、画面左上に浮かぶ。押すと詳細表示が開く。
+            詳細表示を開いている間はFABの代わりに「戻る」ボタン(同じ丸型Glass)を出す。 */}
+        {!eewDetailOpen && hasActiveEew && (
           <div style={{
             position: "absolute",
             top: "calc(16px + env(safe-area-inset-top))",
-            left: 0, right: 0,
-            display: "flex", justifyContent: "center",
-            zIndex: 40, pointerEvents: "none",
+            left: 16,
+            zIndex: 45,
           }}>
-            <div style={{ pointerEvents: "auto" }}>
-              <EewPanel eews={effectiveEews}/>
-            </div>
+            <EewFabButton onClick={() => setEewDetailOpen(true)}/>
           </div>
+        )}
+
+        {/* 緊急地震速報の詳細画面 — 戻るボタン(左上)＋フローティングカード群(中央上寄せ)。
+            既存のタブ(activeNav)には関知せず、どのタブを見ていても最前面に割り込んで開く。 */}
+        {eewDetailOpen && (
+          <>
+            <div style={{
+              position: "absolute",
+              top: "calc(16px + env(safe-area-inset-top))",
+              left: 16,
+              zIndex: 45,
+            }}>
+              <BackToListButton onClick={() => setEewDetailOpen(false)} label="閉じる"/>
+            </div>
+            <div style={{
+              position: "absolute",
+              top: "calc(72px + env(safe-area-inset-top))",
+              left: 0, right: 0, bottom: 90,
+              display: "flex", justifyContent: "center",
+              zIndex: 40, pointerEvents: "none",
+              overflowY: "auto",
+            }}>
+              <div style={{
+                pointerEvents: "auto",
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
+                padding: "0 16px",
+              }}>
+                {effectiveEews.map(eew => <EewDetailFloatingCard key={eew.eventId} eew={eew}/>)}
+              </div>
+            </div>
+          </>
         )}
 
         {/* アラートピル — 一旦非表示 */}
