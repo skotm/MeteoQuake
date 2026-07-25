@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.6a";
+const APP_VERSION = "1.2.6b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -4013,6 +4013,14 @@ async function fetchTideObs(dateStr, stationCode) {
   const res = await fetch(tideObsUrl(dateStr, stationCode));
   if (!res.ok) throw new Error(`潮位観測値の取得に失敗(HTTP ${res.status})`);
   return res.json();
+}
+
+// startDateの暦日〜endDateの暦日までの日数(両端含む)。月またぎ・時刻差は無視して
+// 「YYYYMMDDが何日分あるか」だけを見る(fetchTideObsRangeのdaysにそのまま渡す用)。
+function daysBetweenDates(startDate, endDate) {
+  const s = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  const e = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+  return Math.max(1, Math.round((e.getTime() - s.getTime()) / 86400000) + 1);
 }
 
 // 指定地点について、当日を含む直近N日分(デフォルト2日=前日+当日)の観測値を取得し、
@@ -11305,7 +11313,7 @@ export default function App() {
     if (activeNav !== "tsunami") setSelectedTideStationCode(null);
   }, [activeNav]);
 
-  // 形: { [stationCode]: { date: "YYYYMMDD", status: "loading"|"ready"|"error", data } }
+  // 形: { [stationCode]: { date: "YYYYMMDD", days, status: "loading"|"ready"|"error", data } }
   const [tideObsByStation, setTideObsByStation] = useState({});
   // forceがtrueの時は、すでに読み込み済み(status: "ready")でも取得し直す。
   // 津波の観測値表示(観測点詳細)は1回読めば十分だが、地図上の「観測された津波の
@@ -11315,14 +11323,29 @@ export default function App() {
     const dateStr = toTideDateStr(new Date());
     const cur = tideObsByStation[stationCode];
     if (cur && cur.status === "loading") return; // 進行中なら常にスキップ(forceでも二重発火は防ぐ)
-    if (!force && cur && cur.date === dateStr && cur.status === "ready") return; // 通常時は読み込み済みならスキップ
-    setTideObsByStation(prev => ({ ...prev, [stationCode]: { date: dateStr, status: "loading", data: null } }));
+
+    // 現在有効な津波警報・注意報・予報の対象予報区に属する観測点は、最大波の
+    // 判定に必要な期間を確実にカバーするため、その現象の第１報の日付〜当日までを
+    // 取得する。ただし第１報が当日発表の場合でも、前日分との比較(潮汐の推算誤差
+    // チェック等)のため最低2日分(前日+当日)は必ず取得する。
+    const isWarnedStation = activeTsunami != null &&
+      tideStationsWithGrade.some(st => st.code === stationCode && st.activeGrade);
+    const days = isWarnedStation && activeTsunamiEpisodeStartTime
+      ? Math.max(2, daysBetweenDates(activeTsunamiEpisodeStartTime, new Date()))
+      : 2;
+
+    // 通常時は読み込み済みならスキップ。ただし、以前は非発令(2日分)で読み込んだ
+    // 観測点が新たに発令対象になり、必要な日数が増えた場合は、forceでなくても
+    // 取得し直す(そうしないと第１報以降の古いデータが欠けたままになるため)。
+    if (!force && cur && cur.date === dateStr && cur.status === "ready" && (cur.days || 2) >= days) return;
+
+    setTideObsByStation(prev => ({ ...prev, [stationCode]: { date: dateStr, days, status: "loading", data: null } }));
     try {
-      const data = await fetchTideObsRange(stationCode, 2); // 前日+当日の2日分
-      setTideObsByStation(prev => ({ ...prev, [stationCode]: { date: dateStr, status: "ready", data } }));
+      const data = await fetchTideObsRange(stationCode, days);
+      setTideObsByStation(prev => ({ ...prev, [stationCode]: { date: dateStr, days, status: "ready", data } }));
     } catch (err) {
       console.error("潮位観測値の取得に失敗:", err);
-      setTideObsByStation(prev => ({ ...prev, [stationCode]: { date: dateStr, status: "error", data: null } }));
+      setTideObsByStation(prev => ({ ...prev, [stationCode]: { date: dateStr, days, status: "error", data: null } }));
     }
   }
 
@@ -11609,6 +11632,70 @@ export default function App() {
   // 現在進行形で有効な(解除されていない)、一番新しい津波情報。
   const activeTsunami = effectiveTsunamis.find(t => !t.cancelled) || null;
 
+  // activeTsunamiが属する「一連の現象」の第１報(最初の発表)の時刻。
+  // TsunamiTab側の「引き起こした地震」検索(handleFindCausingQuake)と同じ
+  // ヒューリスティック(隣り合う発表の間隔が24時間以内なら同じ現象とみなす)を使う。
+  // 潮位データの取得範囲・最大波の探索開始時刻の両方の起点として使う
+  // (続報のたびにactiveTsunami.timeは新しくなってしまうため、それをそのまま
+  // 使うと第１報〜続報までの間の最大波を取りこぼす)。
+  //
+  // 直近一覧(effectiveTsunamis、最大50件)だけで24時間以内の間隔が一覧の先頭まで
+  // 途切れず続いていた場合は、現象がその50件より前から続いている可能性がある
+  // (=第１報を取りこぼす)ため、/jma/tsunami の履歴APIをページングして遡って
+  // 本当の第１報を探す(レート制限が厳しいAPIのため、遡るページ数には上限を設ける)。
+  function walkTsunamiEpisodeBack(sortedAsc, idx) {
+    const GAP_LIMIT_MS = 24 * 60 * 60 * 1000; // 24時間以上の空きで別の現象とみなす
+    let episodeStart = new Date(sortedAsc[idx].time);
+    for (let i = idx; i > 0; i--) {
+      const cur = new Date(sortedAsc[i].time);
+      const prevTime = new Date(sortedAsc[i - 1].time);
+      if (cur.getTime() - prevTime.getTime() > GAP_LIMIT_MS) return { episodeStart, reachedBoundary: true };
+      episodeStart = prevTime;
+    }
+    return { episodeStart, reachedBoundary: false }; // 一覧の先頭に達してもなお空きが見つからなかった
+  }
+
+  const effectiveTsunamisRef = useRef(effectiveTsunamis);
+  effectiveTsunamisRef.current = effectiveTsunamis;
+
+  const [activeTsunamiEpisodeStartTime, setActiveTsunamiEpisodeStartTime] = useState(null);
+  useEffect(() => {
+    if (!activeTsunami) { setActiveTsunamiEpisodeStartTime(null); return; }
+    let cancelled = false;
+
+    async function resolve() {
+      let pool = dedupeTsunamiList(effectiveTsunamisRef.current);
+      let sorted = [...pool].sort((a, b) => new Date(a.time) - new Date(b.time));
+      let idx = sorted.findIndex(t => t.id === activeTsunami.id);
+      if (idx < 0) { if (!cancelled) setActiveTsunamiEpisodeStartTime(new Date(activeTsunami.time)); return; }
+
+      let { episodeStart, reachedBoundary } = walkTsunamiEpisodeBack(sorted, idx);
+
+      const MAX_HISTORY_PAGES = 5; // 10リクエスト/分の制限があるAPIなので、遡りすぎないよう上限を設ける
+      let offset = 0;
+      while (!reachedBoundary && !cancelled && offset / TSUNAMI_HISTORY_PAGE_SIZE < MAX_HISTORY_PAGES) {
+        let older;
+        try {
+          older = await fetchTsunamiHistoryPage(offset, TSUNAMI_HISTORY_PAGE_SIZE);
+        } catch {
+          break; // 取得に失敗したら、それまでに分かっている範囲で確定させる
+        }
+        if (!older || older.length === 0) break;
+        const beforeCount = pool.length;
+        pool = dedupeTsunamiList([...pool, ...older]);
+        if (pool.length === beforeCount) break; // 追加分が全部重複だった→これ以上遡っても無駄
+        sorted = [...pool].sort((a, b) => new Date(a.time) - new Date(b.time));
+        idx = sorted.findIndex(t => t.id === activeTsunami.id);
+        if (idx < 0) break;
+        ({ episodeStart, reachedBoundary } = walkTsunamiEpisodeBack(sorted, idx));
+        offset += TSUNAMI_HISTORY_PAGE_SIZE;
+      }
+      if (!cancelled) setActiveTsunamiEpisodeStartTime(episodeStart);
+    }
+    resolve();
+    return () => { cancelled = true; };
+  }, [activeTsunami?.id]);
+
   const tsunamiAreasForMap = !showTsunamiMapLayers
     ? EMPTY_EQDB_LIST
     : selectedFromHistory
@@ -11740,7 +11827,11 @@ export default function App() {
   const TSUNAMI_HEIGHT_NEGLIGIBLE_M = 0.2;
   const tsunamiHeightByStation = useMemo(() => {
     if (!activeTsunami) return {};
-    const startMs = new Date(activeTsunami.time).getTime();
+    const startMs = new Date(activeTsunami.time).getTime(); // テスト配信の手入力値用の近似時刻
+    // 実データの最大波探索は、続報のたびに更新されるactiveTsunami.timeではなく、
+    // 一連の現象の第１報の時刻を起点にする(そうしないと第１報〜続報までの間の
+    // 最大波を取りこぼすため)。
+    const episodeStartMs = activeTsunamiEpisodeStartTime ? activeTsunamiEpisodeStartTime.getTime() : startMs;
     if (!Number.isFinite(startMs)) return {};
     const overrides = activeTsunami.heightOverrides || null; // テスト配信用の手入力値(App側参照)
     const result = {};
@@ -11753,14 +11844,14 @@ export default function App() {
       }
       const obs = tideObsByStation[st.code];
       if (!obs || obs.status !== "ready" || !obs.data) return;
-      const max = computeMaxTsunamiHeightCm(obs.data, startMs);
+      const max = computeMaxTsunamiHeightCm(obs.data, episodeStartMs);
       if (max == null) return;
       const m = max.cm / 100;
       if (Math.abs(m) < TSUNAMI_HEIGHT_NEGLIGIBLE_M) return; // 微弱
       result[st.code] = m;
     });
     return result;
-  }, [activeTsunami, tideStationsWithGrade, tideObsByStation]);
+  }, [activeTsunami, activeTsunamiEpisodeStartTime, tideStationsWithGrade, tideObsByStation]);
 
   // 観測点コードごとの、最大波を観測した時刻(エポックms)。テスト配信の手入力値には
   // 実際の観測時刻が無いため、代わりに配信時刻(activeTsunami.time)を使う
@@ -11769,6 +11860,7 @@ export default function App() {
     if (!activeTsunami) return {};
     const startMs = new Date(activeTsunami.time).getTime();
     if (!Number.isFinite(startMs)) return {};
+    const episodeStartMs = activeTsunamiEpisodeStartTime ? activeTsunamiEpisodeStartTime.getTime() : startMs;
     const overrides = activeTsunami.heightOverrides || null;
     const result = {};
     tideStationsWithGrade.forEach(st => {
@@ -11779,11 +11871,11 @@ export default function App() {
       }
       const obs = tideObsByStation[st.code];
       if (!obs || obs.status !== "ready" || !obs.data) return;
-      const max = computeMaxTsunamiHeightCm(obs.data, startMs);
+      const max = computeMaxTsunamiHeightCm(obs.data, episodeStartMs);
       if (max?.timeMs != null) result[st.code] = max.timeMs;
     });
     return result;
-  }, [activeTsunami, tideStationsWithGrade, tideObsByStation, tsunamiHeightByStation]);
+  }, [activeTsunami, activeTsunamiEpisodeStartTime, tideStationsWithGrade, tideObsByStation, tsunamiHeightByStation]);
 
   // 地図に表示する観測点一覧。丸の色(dotColor)は、予報区の公式グレードではなく
   // 実際に観測された津波の高さ(tsunamiHeightByStation)から決める
