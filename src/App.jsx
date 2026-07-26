@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.0b";
+const APP_VERSION = "1.3.0c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -469,10 +469,6 @@ function GlobalStyles({ tokens = THEME_TOKENS.dark }) {
       @keyframes appear {
         from { opacity:0; transform:translateY(10px) scale(0.97); }
         to   { opacity:1; transform:translateY(0)    scale(1); }
-      }
-      @keyframes eewPulseBorder {
-        0%,100% { box-shadow: 0 0 0 1px rgba(255,69,58,0.35), 0 10px 30px rgba(0,0,0,0.35); }
-        50%      { box-shadow: 0 0 0 3px rgba(255,69,58,0.55), 0 10px 30px rgba(0,0,0,0.35); }
       }
       @keyframes eewFabPulse {
         0%,100% { box-shadow: 0 0 0 0 rgba(255,69,58,0.5); }
@@ -2247,15 +2243,14 @@ function EewDetailFloatingCard({ eew }) {
   const accent = eew.cancelled ? tokens.textSecondary : "#FF453A";
 
   return (
-    <Glass
-      radius={20}
+    <div
       style={{
-        width: 340,
-        maxWidth: "calc(100vw - 32px)",
-        padding: "12px 0 10px",
-        border: `1px solid ${accent}55`,
-        boxShadow: eew.cancelled ? undefined : `0 0 0 1px ${accent}33, 0 10px 30px rgba(0,0,0,0.35)`,
-        animation: eew.cancelled ? "appear 0.3s cubic-bezier(.25,1,.5,1)" : "appear 0.3s cubic-bezier(.25,1,.5,1), eewPulseBorder 1.6s ease-in-out infinite",
+        margin: "2px 14px 8px",
+        borderRadius: 18,
+        padding: "10px 0",
+        border: `1px solid ${accent}40`,
+        background: eew.cancelled ? `rgba(${tokens.ink},0.04)` : "rgba(120,20,20,0.16)",
+        animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
       <div style={{ margin: "0 16px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -2373,7 +2368,7 @@ function EewDetailFloatingCard({ eew }) {
           )}
         </>
       )}
-    </Glass>
+    </div>
   );
 }
 
@@ -7066,19 +7061,35 @@ function BottomDock({
   // 緊急地震速報のFAB/戻るボタンを出すかどうか(取消済みでないEEWが1件でもあるか)。
   const hasActiveEew = eews.some(e => !e.cancelled);
 
+  // 「戻るボタンの位置」(right:16, bottom:backButtonBottom)を、他のタブ固有の
+  // 戻るボタン/切替ボタン群がすでに使っているかどうか。使っている場合だけ、
+  // びっくりボタンをその左側にずらす(同時に2つ出ても重ならないようにする)。
+  // eewDetailOpen中は他タブの戻るボタン自体を出さない(下の各ブロックで
+  // !eewDetailOpen && を付けている)ため、ここでは判定用に元の条件だけを見る。
+  const otherBackSlotOccupied =
+    (active === "quake" && selectedQuakeId != null) ||
+    (active === "tsunami" && (
+      selectedTsunamiId != null ||
+      selectedTideStationCode != null ||
+      (activeTsunami != null && !causingQuakeFound)
+    )) ||
+    (active === "settings" && settingsPath.length > 0);
+
   return (
     <>
       {/* 広い画面では、SideNavRail(タブ部分)はApp側で共有のGlassの中に
           BottomDockと並べて描画するため、ここでは出さない。 */}
 
-      {/* 緊急地震速報のFAB／戻るボタン — 地震タブの戻るボタンと全く同じ高さ
-          (backButtonBottom)に、左側に浮かべる。どのタブを見ていても、EEWが
-          発表されている間はここに出る(タブに依存しない)。 */}
+      {/* 緊急地震速報のFAB／戻るボタン — 通常は地震タブの戻るボタンと全く同じ位置
+          (right:16, backButtonBottom)に出す。詳細表示中(eewDetailOpen)は他タブの
+          戻るボタンを隠すため、この位置を独占できる。詳細表示前(FABの状態)に
+          他タブの戻るボタン等がすでにその位置を使っている場合だけ、びっくりボタンを
+          左にずらして重ならないようにする。 */}
       {hasActiveEew && (
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",
-            left: wideAnchorRect.left - 56,
+            left: (!eewDetailOpen && otherBackSlotOccupied) ? wideAnchorRect.right + 12 + 56 : wideAnchorRect.right + 12,
             top: wideAnchorRect.top + 16,
             zIndex: 50,
           }}>
@@ -7092,9 +7103,9 @@ function BottomDock({
         ) : (
         <div style={{
           position: "absolute",
-          left: 16,
+          right: (!eewDetailOpen && otherBackSlotOccupied) ? 16 + 56 : 16,
           bottom: backButtonBottom,
-          transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
+          transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1), right 0.25s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
           {eewDetailOpen ? (
@@ -7108,8 +7119,10 @@ function BottomDock({
 
       {/* 戻るボタン — 地震を選択している間だけ、パネルのすぐ上に浮かぶ。
           Glass(パネル本体)の兄弟として置くことで、currentHeightの変化
-          (ドラッグ含む)にそのまま追従できるようにしている。 */}
-      {active === "quake" && selectedQuakeId != null && (
+          (ドラッグ含む)にそのまま追従できるようにしている。
+          緊急地震速報の詳細を表示している間は、その位置をびっくりボタン側の
+          「戻る」ボタンが使うため、ここでは出さない。 */}
+      {!eewDetailOpen && active === "quake" && selectedQuakeId != null && (
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",
@@ -7161,7 +7174,7 @@ function BottomDock({
           観測点表示切替ボタンは、「引き起こした地震」を表示している間は震度観測点用
           (stationMarkersVisible)、それ以外で有効な津波情報がある間は潮位観測点用
           (tideStationMarkersVisible)を出す。両方同時に出ることはない。 */}
-      {active === "tsunami" && (
+      {!eewDetailOpen && active === "tsunami" && (
         selectedTsunamiId != null ||
         selectedTideStationCode != null ||
         (activeTsunami != null && !causingQuakeFound)
@@ -7218,7 +7231,7 @@ function BottomDock({
       )}
 
       {/* 設定タブのサブ画面(カテゴリ/項目の中身)を見ている間だけ、同じ戻るボタンを浮かべる。 */}
-      {active === "settings" && settingsPath.length > 0 && (
+      {!eewDetailOpen && active === "settings" && settingsPath.length > 0 && (
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",
@@ -7332,8 +7345,9 @@ function BottomDock({
 
         {/* 地震タブの「一覧⇄検索」切り替えバー — ハンドル直下に固定表示し、
             スクロールしても本体と一緒には動かない(検索/一覧の入口を常に見せておく)。
-            地震を選択してカード表示になっている間は不要なので隠す。 */}
-        {active === "quake" && selectedQuakeId == null && (
+            地震を選択してカード表示になっている間、および緊急地震速報の詳細を
+            表示している間は不要なので隠す。 */}
+        {!eewDetailOpen && active === "quake" && selectedQuakeId == null && (
           <QuakeListToolbar
             mode={quakeViewMode}
             onModeChange={(mode) => { killScrollMomentum(); setQuakeViewMode(mode); }}
@@ -7343,8 +7357,9 @@ function BottomDock({
 
         {/* 津波タブの「一覧⇄過去」切り替えバー — 地震タブと全く同じ考え方。
             津波情報を選択してカード表示になっている間、または(モードを切り替えずに
-            その場で表示している)潮位観測点の詳細を表示している間は不要なので隠す。 */}
-        {active === "tsunami" && selectedTsunamiId == null && selectedTideStationCode == null && (
+            その場で表示している)潮位観測点の詳細を表示している間、および緊急地震速報の
+            詳細を表示している間は不要なので隠す。 */}
+        {!eewDetailOpen && active === "tsunami" && selectedTsunamiId == null && selectedTideStationCode == null && (
           <QuakeListToolbar
             items={TSUNAMI_TOOLBAR_ITEMS}
             mode={tsunamiViewMode}
