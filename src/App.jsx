@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.1a";
+const APP_VERSION = "1.3.1c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2284,9 +2284,14 @@ function EewDetailFloatingCard({ eew }) {
       </div>
 
       {!eew.cancelled && (
-        <div style={{ margin: "0 18px 8px", fontSize: 11, fontWeight: 700, color: accent }}>
-          {isWarnLevel ? "強い揺れに警戒" : "今後強まる可能性"}
-          {eew.isPlum ? "・PLUM法" : ""}
+        <div style={{ margin: "0 18px 10px", display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0 }}>震源地</span>
+          <AutoFitText
+            text={eew.place}
+            maxFontSize={22}
+            minFontSize={14}
+            style={{ fontWeight: 800, color: tokens.text, lineHeight: 1.2 }}
+          />
         </div>
       )}
 
@@ -2338,16 +2343,6 @@ function EewDetailFloatingCard({ eew }) {
             </div>
 
             <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0, lineHeight: 1.1 }}>
-                <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>震源地</span>
-                <AutoFitText
-                  text={eew.place}
-                  maxFontSize={30}
-                  minFontSize={13}
-                  style={{ fontWeight: 800, color: tokens.text, lineHeight: 1.1 }}
-                />
-              </div>
-
               <div style={{ display: "flex", alignItems: "baseline", gap: 12, lineHeight: 1.1 }}>
                 <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
                   M<span className="mono" style={{ fontSize: 21, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
