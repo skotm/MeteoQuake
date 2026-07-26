@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.1f";
+const APP_VERSION = "1.3.2";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2246,7 +2246,7 @@ function EewDetailFloatingCard({ eew }) {
 
   return (
     <>
-      {/* 見出し — 「緊急地震速報(警報)」チップに震源地まで含めて、色付きの
+      {/* 見出し — 「緊急地震速報(警報)」チップと「#報番号」チップを、色付きの
           Glass(すりガラス)で囲う。Glassのstyle.backgroundは背景ブラー層より
           下に敷かれるため、背景色つきの半透明ガラスとして表示される。 */}
       <div style={{ margin: "4px 16px 10px", display: "flex", alignItems: "stretch", gap: 8 }}>
@@ -2255,28 +2255,17 @@ function EewDetailFloatingCard({ eew }) {
           style={{
             flex: 1, minWidth: 0,
             padding: "10px 14px",
-            display: "flex", flexDirection: "column", justifyContent: "center", gap: 4,
+            display: "flex", alignItems: "center",
             background: eew.cancelled ? `rgba(${tokens.ink},0.08)` : `${accent}8C`,
           }}
         >
           <span style={{
-            fontSize: 13, fontWeight: 800, lineHeight: 1.2,
+            fontSize: 16, fontWeight: 800, lineHeight: 1.25,
             color: eew.cancelled ? tokens.text : "#fff",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
           }}>
             緊急地震速報{eew.cancelled ? "(取消)" : (isWarnLevel ? "(警報)" : "(予報)")}
           </span>
-          {!eew.cancelled && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.75)", flexShrink: 0 }}>震源地</span>
-              <AutoFitText
-                text={eew.place}
-                maxFontSize={20}
-                minFontSize={13}
-                style={{ fontWeight: 800, color: "#fff", lineHeight: 1.2 }}
-              />
-            </div>
-          )}
         </Glass>
         {!eew.cancelled && (
           <Glass
@@ -2304,24 +2293,24 @@ function EewDetailFloatingCard({ eew }) {
           <div
             style={{
               margin: "2px 14px 4px",
-              borderRadius: 18,
-              padding: "14px 18px",
+              borderRadius: 16,
+              padding: "7px 16px",
               display: "flex",
               alignItems: "center",
-              gap: 18,
+              gap: 14,
               background: `linear-gradient(135deg, ${style.bg}2E, ${style.bg}14)`,
               boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
               animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
             }}
           >
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flexShrink: 0 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, whiteSpace: "nowrap", lineHeight: 1.1 }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0 }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, whiteSpace: "nowrap", lineHeight: 1.1 }}>
                 最大予測震度
               </span>
               <div
                 style={{
-                  width: 78, height: 78,
-                  borderRadius: 16,
+                  width: 64, height: 64,
+                  borderRadius: 14,
                   background: style.bg, color: style.fg,
                   position: "relative",
                   display: "flex", alignItems: "center", justifyContent: "center",
@@ -2329,38 +2318,48 @@ function EewDetailFloatingCard({ eew }) {
               >
                 {suffix ? (
                   <>
-                    <span className="mono" style={{ fontSize: 38, fontWeight: 800, lineHeight: 1 }}>{num}</span>
+                    <span className="mono" style={{ fontSize: 32, fontWeight: 800, lineHeight: 1 }}>{num}</span>
                     <span style={{
-                      fontSize: 18, fontWeight: 700, lineHeight: 1,
-                      marginLeft: 2, alignSelf: "flex-end", marginBottom: 16,
+                      fontSize: 15, fontWeight: 700, lineHeight: 1,
+                      marginLeft: 2, alignSelf: "flex-end", marginBottom: 14,
                     }}>{suffix}</span>
                   </>
                 ) : (
-                  <span className="mono" style={{ fontSize: 38, fontWeight: 800, lineHeight: 1 }}>{num}</span>
+                  <span className="mono" style={{ fontSize: 32, fontWeight: 800, lineHeight: 1 }}>{num}</span>
                 )}
               </div>
             </div>
 
-            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 14, lineHeight: 1.1 }}>
-                <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
-                  M<span className="mono" style={{ fontSize: 29, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0, lineHeight: 1.1 }}>
+                <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>震源地</span>
+                <AutoFitText
+                  text={eew.place}
+                  maxFontSize={25}
+                  minFontSize={13}
+                  style={{ fontWeight: 800, color: tokens.text, lineHeight: 1.1 }}
+                />
+              </div>
+
+              <div style={{ display: "flex", alignItems: "baseline", gap: 12, lineHeight: 1.1 }}>
+                <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
+                  M<span className="mono" style={{ fontSize: 25, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
                     {eew.magnitude != null ? eew.magnitude.toFixed(1) : "-"}
                   </span>
                 </span>
-                <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
-                  深さ<span className="mono" style={{ fontSize: 29, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
+                <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
+                  深さ<span className="mono" style={{ fontSize: 25, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
                     {eew.depth != null ? (eew.depth === 0 ? "ごく浅い" : eew.depth) : "-"}
                   </span>
                   {eew.depth != null && eew.depth !== 0 && (
-                    <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.6)`, marginLeft: 2, lineHeight: 1.1 }}>km</span>
+                    <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.6)`, marginLeft: 2, lineHeight: 1.1 }}>km</span>
                   )}
                 </span>
               </div>
 
               <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1 }}>
-                <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>発生時刻</span>
-                <span className="mono" style={{ fontSize: 15, fontWeight: 600, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.1 }}>
+                <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>発生時刻</span>
+                <span className="mono" style={{ fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.1 }}>
                   {formatQuakeTimeShort(eew.originTime)}
                 </span>
               </div>
