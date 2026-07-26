@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.1";
+const APP_VERSION = "1.3.1a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2246,18 +2246,49 @@ function EewDetailFloatingCard({ eew }) {
 
   return (
     <>
-      {/* 見出し行 — 地震タブの各カードと同じく、囲みを作らずテキストだけを直接置く */}
-      <div style={{ margin: "4px 16px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 800, color: accent }}>
-          【緊急地震速報】{isWarnLevel ? "(警報)" : "(予報)"}
-          第{eew.serial ?? "-"}報{eew.isFinal ? "(最終)" : ""}{eew.isPlum ? "(PLUM法)" : ""}
-        </span>
-        {!eew.cancelled && (
-          <span style={{ fontSize: 11, fontWeight: 700, color: accent, flexShrink: 0 }}>
-            {isWarnLevel ? "強い揺れに警戒" : "今後強まる可能性"}
+      {/* 見出し — 「緊急地震速報(警報)」チップと「#報番号」チップを、色付きの
+          Glass(すりガラス)で囲う。Glassのstyle.backgroundは背景ブラー層より
+          下に敷かれるため、背景色つきの半透明ガラスとして表示される。 */}
+      <div style={{ margin: "4px 16px 8px", display: "flex", alignItems: "stretch", gap: 8 }}>
+        <Glass
+          radius={14}
+          style={{
+            flex: 1, minWidth: 0,
+            padding: "10px 14px",
+            display: "flex", alignItems: "center",
+            background: eew.cancelled ? `rgba(${tokens.ink},0.08)` : `${accent}8C`,
+          }}
+        >
+          <span style={{
+            fontSize: 16, fontWeight: 800, lineHeight: 1.25,
+            color: eew.cancelled ? tokens.text : "#fff",
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}>
+            緊急地震速報{eew.cancelled ? "(取消)" : (isWarnLevel ? "(警報)" : "(予報)")}
           </span>
+        </Glass>
+        {!eew.cancelled && (
+          <Glass
+            radius={14}
+            style={{
+              flexShrink: 0,
+              padding: "10px 14px",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+          >
+            <span style={{ fontSize: 16, fontWeight: 800, color: tokens.text, whiteSpace: "nowrap" }}>
+              # {eew.serial ?? "-"}{eew.isFinal ? "(最終)" : ""}
+            </span>
+          </Glass>
         )}
       </div>
+
+      {!eew.cancelled && (
+        <div style={{ margin: "0 18px 8px", fontSize: 11, fontWeight: 700, color: accent }}>
+          {isWarnLevel ? "強い揺れに警戒" : "今後強まる可能性"}
+          {eew.isPlum ? "・PLUM法" : ""}
+        </div>
+      )}
 
       {eew.cancelled ? (
         <div style={{ margin: "2px 16px 10px", fontSize: 13, color: tokens.textSecondary, lineHeight: 1.7 }}>
