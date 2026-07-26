@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.0f";
+const APP_VERSION = "1.3.1";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2240,17 +2240,22 @@ function EewDetailFloatingCard({ eew }) {
   const { tokens } = useContext(ThemeContext);
   const style = useIntensityStyle(eew.maxIntensityKey);
   const { num, suffix } = splitIntensityLabel(style.label);
-  const accent = eew.cancelled ? tokens.textSecondary : "#FF453A";
+  const isWarnLevel = eew.isWarnLevel !== false; // 警報級かどうか(Wolfxの予報はfalse)
+  // 警報=赤、予報=amber、取消=グレー、と重要度で色分けする。
+  const accent = eew.cancelled ? tokens.textSecondary : (isWarnLevel ? "#FF453A" : "#FF9F0A");
 
   return (
     <>
       {/* 見出し行 — 地震タブの各カードと同じく、囲みを作らずテキストだけを直接置く */}
       <div style={{ margin: "4px 16px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <span style={{ fontSize: 12.5, fontWeight: 800, color: accent }}>
-          【緊急地震速報】第{eew.serial ?? "-"}報{eew.isPlum ? "(PLUM法)" : ""}
+          【緊急地震速報】{isWarnLevel ? "(警報)" : "(予報)"}
+          第{eew.serial ?? "-"}報{eew.isFinal ? "(最終)" : ""}{eew.isPlum ? "(PLUM法)" : ""}
         </span>
         {!eew.cancelled && (
-          <span style={{ fontSize: 11, fontWeight: 700, color: "#FF453A", flexShrink: 0 }}>強い揺れに警戒</span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: accent, flexShrink: 0 }}>
+            {isWarnLevel ? "強い揺れに警戒" : "今後強まる可能性"}
+          </span>
         )}
       </div>
 
@@ -2383,6 +2388,16 @@ const INTENSITY_LABEL = {
   "5": "5", "5-": "5弱", "5+": "5強", "6": "6", "6-": "6弱", "6+": "6強", "7": "7",
   "?": "?", // 震度が取得できなかった場合(「0」と区別する)
 };
+
+// INTENSITY_LABELの逆引き("5弱"→"5-"等)。Wolfx APIは震度を"5弱"のような
+// 表示用文字列そのもので返してくるため、内部キーへ変換するのに使う。
+const INTENSITY_LABEL_TO_KEY = Object.fromEntries(
+  Object.entries(INTENSITY_LABEL).map(([key, label]) => [label, key])
+);
+function intensityLabelToKey(label) {
+  if (!label) return "?";
+  return INTENSITY_LABEL_TO_KEY[label] ?? "?";
+}
 
 // 観測点マーカーをMapLibreのsymbolレイヤーで描くための下準備。
 // 震度キーは有限個(0〜7,5-,5+,6-,6+,?)しかないので、キーごとに
@@ -3921,6 +3936,13 @@ function toEewCard(item) {
     // areas[]全件がPLUM法(kindCode:19)の場合のみPLUM法発表とみなす(1件でも通常判定が
     // 混じっていれば、通常の到達予測ありとして扱う)。areas未着の初回はfalse。
     isPlum: areas.length > 0 && areas.every(a => a.isPlum),
+    // 複数ソース併用(Wolfx優先)のための出どころ情報。P2P地震情報には「最終報」
+    // フィールドが無いため、isFinalは常にfalse(タイムアウト方式で最終扱いする)。
+    // また、P2P地震情報のEEW(code:556)は警報級しか配信されないため、
+    // isWarnLevelは常にtrue。
+    source: "p2pquake",
+    isFinal: false,
+    isWarnLevel: true,
   };
 }
 
@@ -3975,6 +3997,139 @@ async function fetchLatestFreshEew() {
   if (!Number.isFinite(receivedMs)) return null;
   if (Date.now() - receivedMs > EEW_HISTORY_FRESHNESS_MS) return null; // 既に終わっていそうな古い発表は無視
   return toEewCard(latest);
+}
+
+/* ─────────────────────────────────────────────────────
+   Wolfx Open API — JMA緊急地震速報 (jma_eew)
+   https://wolfx.jp/apidoc
+   P2P地震情報のEEW(code:556)には無い、isFinal(最終報かどうか)・
+   isWarn(警報/予報の区別)・isAssumption(PLUM法かどうか)を直接持っている。
+   そのため、両方を受信しつつWolfxを優先する(同じeventIdについて、Wolfx由来の
+   データがあればP2P地震情報側の更新では上書きしない)方針にしている。
+   実際のJMA配信を中継しているだけの非公式プロジェクトである点はP2P地震情報と
+   同様。専用のWebSocket接続がもう1本必要になる。
+   ───────────────────────────────────────────────────── */
+const WOLFX_EEW_WS_URL = "wss://ws-api.wolfx.jp/jma_eew";
+const WOLFX_EEW_HTTP_URL = "https://api.wolfx.jp/jma_eew.json";
+
+// Wolfxの1レコード(jma_eew)を、アプリ内で使う共通のEEWカード形式(toEewCardと
+// 同じ形)に変換する。WarnArea[]のShindo1/Shindo2・MaxIntensityは"5弱"のような
+// 表示用文字列で来るため、intensityLabelToKey()で内部キーへ変換する。
+function toEewCardFromWolfx(data) {
+  const areas = Array.isArray(data.WarnArea) ? data.WarnArea.map(a => ({
+    pref: "", // Wolfxは都道府県単位を分けて返さないため空にしておく
+    name: a.Chiiki || "",
+    scaleFrom: null, // 内部的にはscaleコードではなくmaxIntensityKeyを直接使うため未使用
+    scaleTo: null,
+    isPlum: !!data.isAssumption,
+  })) : [];
+
+  return {
+    id: `wolfx_${data.EventID}_${data.Serial}`,
+    // EventIDは気象庁が発表した地震そのものの識別子であり、P2P地震情報の
+    // issue.eventIdと同一の値になる(どちらも気象庁の原情報をそのまま中継して
+    // いるため)。これを共通の識別キーとして使い、2つのソースを統合する。
+    eventId: String(data.EventID),
+    serial: data.Serial != null ? String(data.Serial) : null,
+    cancelled: !!data.isCancel,
+    isTraining: !!data.isTraining,
+    originTime: data.OriginTime || null,
+    arrivalTime: null,
+    isAssumedHypocenter: !!data.isAssumption,
+    place: data.Hypocenter || "震源地不明",
+    reducedPlace: null,
+    latitude: typeof data.Latitude === "number" ? data.Latitude : null,
+    longitude: typeof data.Longitude === "number" ? data.Longitude : null,
+    depth: typeof data.Depth === "number" && data.Depth >= 0 ? Math.round(data.Depth) : null,
+    magnitude: typeof data.Magunitude === "number" && data.Magunitude > 0 ? data.Magunitude : null,
+    areas,
+    maxIntensityKey: intensityLabelToKey(data.MaxIntensity),
+    isPlum: !!data.isAssumption,
+    source: "wolfx",
+    // Wolfxは「最終報かどうか」を直接教えてくれる。第1報などisFinal:falseの間は
+    // 通常どおりEEW_STALE_MSのタイムアウトで生存管理されるが、真の最終報が来た
+    // ことが分かっている点が、P2P地震情報だけの場合との一番の違い。
+    isFinal: !!data.isFinal,
+    // isWarn:trueなら警報、falseなら予報。Wolfxは予報段階から配信してくれる
+    // ため、P2P地震情報より早いタイミングで拾える。UI側で警報/予報を出し分ける。
+    isWarnLevel: data.isWarn !== false,
+  };
+}
+
+// WebSocketで受信した1件を、JMA緊急地震速報(type:"jma_eew")であれば変換して返す。
+// 訓練報(isTraining)は対象外。警報・予報のどちらも表示対象とする
+// (Wolfxならではの予報段階の速報も活かすため)。
+function wolfxMessageToEewCard(raw) {
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (data.type !== "jma_eew") return null; // ハートビート等を除外
+  if (data.isTraining) return null;
+  return toEewCardFromWolfx(data);
+}
+
+// 起動時バックフィル用(Wolfx版)。HTTP GETは直近1件のスナップショットを返す
+// ため、それが十分新しければ取り込む。P2P地震情報側のfetchLatestFreshEew()と
+// 同時に叩き、どちらが先に届いてもhandleIncomingEew側のマージロジックが
+// Wolfx優先で正しく解決する。
+async function fetchLatestFreshEewFromWolfx() {
+  const res = await fetch(WOLFX_EEW_HTTP_URL);
+  if (!res.ok) return null;
+  const data = await res.json();
+  if (!data || data.isTraining) return null;
+  const announcedMs = data.AnnouncedTime ? new Date(data.AnnouncedTime.replace(/-/g, "/")).getTime() : NaN;
+  if (!Number.isFinite(announcedMs)) return null;
+  if (Date.now() - announcedMs > EEW_HISTORY_FRESHNESS_MS) return null;
+  return toEewCardFromWolfx(data);
+}
+
+/**
+ * Wolfxの緊急地震速報WebSocketに接続し、受信するたびにonEewを呼ぶ。
+ * P2P地震情報のconnectQuakeWebSocket()とは完全に独立した、別のWebSocket接続。
+ * 接続が切れた場合は一定間隔で自動的に再接続を試みる。
+ * 戻り値のclose()を呼ぶと再接続をやめて確実に切断する。
+ */
+function connectWolfxEewWebSocket(onEew, onStatusChange) {
+  let ws = null;
+  let closedByCaller = false;
+  let reconnectTimer = null;
+
+  function connect() {
+    if (closedByCaller) return;
+    ws = new WebSocket(WOLFX_EEW_WS_URL);
+
+    ws.onopen = () => {
+      onStatusChange?.("open");
+    };
+
+    ws.onmessage = (event) => {
+      const eew = wolfxMessageToEewCard(event.data);
+      if (eew) onEew?.(eew);
+    };
+
+    ws.onerror = (e) => {
+      console.error("Wolfx緊急地震速報WebSocketエラー:", e);
+    };
+
+    ws.onclose = () => {
+      onStatusChange?.("closed");
+      if (closedByCaller) return;
+      reconnectTimer = setTimeout(connect, 5000);
+    };
+  }
+
+  connect();
+
+  return {
+    close() {
+      closedByCaller = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) ws.close();
+    },
+  };
 }
 
 /* ─────────────────────────────────────────────────────
@@ -10105,6 +10260,18 @@ function EewTestBroadcastPanel({ testEew, onBroadcast, onCancel, onClear }) {
         >
           テスト配信する(PLUM法)
         </PressableButton>
+        <SettingsCardDivider/>
+        <PressableButton
+          type="button"
+          onClick={() => onBroadcast?.("forecast")}
+          style={{
+            width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
+            background: "transparent", textAlign: "center",
+            fontSize: 14, fontWeight: 700, color: "#FF9F0A",
+          }}
+        >
+          テスト配信する(予報・Wolfx想定)
+        </PressableButton>
         {testEew && !testEew.cancelled && (
           <>
             <SettingsCardDivider/>
@@ -11791,12 +11958,16 @@ export default function App() {
         const withLocal = { ...newEew, receivedLocalAt: Date.now(), cancelledLocalAt: newEew.cancelled ? Date.now() : null };
         return [withLocal, ...prev].slice(0, EEW_MAX_CONCURRENT);
       }
-      if (prev[idx].cancelled && !newEew.cancelled) return prev; // 取消済みは以後の続報で覆さない
+      const existing = prev[idx];
+      // Wolfxを優先する方針: 既にWolfx由来のデータがある場合、P2P地震情報からの
+      // 更新では上書きしない(Wolfx自身の更新は常に反映する)。
+      if (existing.source === "wolfx" && newEew.source !== "wolfx") return prev;
+      if (existing.cancelled && !newEew.cancelled) return prev; // 取消済みは以後の続報で覆さない
       const next = [...prev];
       next[idx] = {
         ...newEew,
         receivedLocalAt: Date.now(),
-        cancelledLocalAt: newEew.cancelled ? (prev[idx].cancelledLocalAt || Date.now()) : null,
+        cancelledLocalAt: newEew.cancelled ? (existing.cancelledLocalAt || Date.now()) : null,
       };
       return next;
     });
@@ -11828,6 +11999,7 @@ export default function App() {
     const now = new Date();
     const originTimeStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
     const isPlum = scenario === "plum";
+    const isForecast = scenario === "forecast"; // Wolfxで拾える「予報」段階のテスト用
     const base = {
       id: `test_${now.getTime()}`,
       eventId: `test_${now.getTime()}`,
@@ -11842,13 +12014,18 @@ export default function App() {
       latitude: 35.2,
       longitude: 139.3,
       depth: isPlum ? 30 : 20,
-      magnitude: isPlum ? 6.2 : 5.8,
-      areas: [
+      magnitude: isForecast ? 4.5 : (isPlum ? 6.2 : 5.8),
+      areas: isForecast ? [
+        { pref: "神奈川県", name: "神奈川県東部", scaleFrom: 30, scaleTo: 30, isPlum: false },
+      ] : [
         { pref: "神奈川県", name: "神奈川県東部", scaleFrom: 50, scaleTo: 50, isPlum },
         { pref: "東京都",   name: "東京都２３区",  scaleFrom: 45, scaleTo: 45, isPlum },
         { pref: "静岡県",   name: "伊豆",          scaleFrom: 40, scaleTo: 40, isPlum },
       ],
       isTest: true,
+      source: "test",
+      isFinal: false,
+      isWarnLevel: !isForecast,
     };
     const card = { ...base, maxIntensityKey: eewMaxScaleKey(base.areas) };
     setTestEew({ ...card, receivedLocalAt: Date.now(), cancelledLocalAt: null });
@@ -12354,14 +12531,24 @@ export default function App() {
     // 何も表示されないという抜けが起きる。それを防ぐため、/historyを1回だけ見て、
     // 十分新しければ(EEW_HISTORY_FRESHNESS_MS以内)通常のWebSocket受信と同じ経路
     // (handleIncomingEew)に流し込む。以降の続報・取消はWebSocketで通常通り届く。
+    // P2P地震情報・Wolfxの両方から同時に取りに行き、どちらが先に届いても
+    // handleIncomingEew側のマージロジックがWolfx優先で正しく解決する。
     fetchLatestFreshEew()
       .then(eew => {
         if (cancelled || !eew) return;
         handleIncomingEew(eew);
       })
       .catch(err => {
-        console.error("緊急地震速報の起動時取得に失敗:", err);
+        console.error("緊急地震速報の起動時取得(P2P地震情報)に失敗:", err);
         // ここで失敗しても、以降のWebSocketライブ受信には影響しない。
+      });
+    fetchLatestFreshEewFromWolfx()
+      .then(eew => {
+        if (cancelled || !eew) return;
+        handleIncomingEew(eew);
+      })
+      .catch(err => {
+        console.error("緊急地震速報の起動時取得(Wolfx)に失敗:", err);
       });
 
     const socket = connectQuakeWebSocket(
@@ -12416,6 +12603,21 @@ export default function App() {
 
     return () => { cancelled = true; socket.close(); };
   }, [quakeFetchLimit]);
+
+  // Wolfxの緊急地震速報WebSocket。P2P地震情報とは完全に別のドメイン・接続なので、
+  // 専用のuseEffectで独立して繋ぐ(quakeFetchLimitの変更などで無駄に再接続
+  // されないよう、依存配列は空にしている)。
+  useEffect(() => {
+    let cancelled = false;
+    const wolfxSocket = connectWolfxEewWebSocket(
+      (newEew) => {
+        if (cancelled) return;
+        handleIncomingEew(newEew);
+      },
+      () => {} // 接続状態の表示は今のところP2P側(wsStatus)のみを見せているため無視
+    );
+    return () => { cancelled = true; wolfxSocket.close(); };
+  }, []);
 
   // 断層・プレート境界・観測点マーカー・推計震度分布・震央分布など、地震情報に
   // 関する地図表示は、地震タブ・設定タブを見ている間だけ出す。津波・気象・警報
