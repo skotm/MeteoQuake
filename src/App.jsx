@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.2";
+const APP_VERSION = "1.3.2a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2330,7 +2330,7 @@ function EewDetailFloatingCard({ eew }) {
               </div>
             </div>
 
-            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", alignSelf: "flex-start", gap: 1, marginTop: 1 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0, lineHeight: 1.1 }}>
                 <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>震源地</span>
                 <AutoFitText
