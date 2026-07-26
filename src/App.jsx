@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.0d";
+const APP_VERSION = "1.3.0f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3859,11 +3859,20 @@ async function findCausingQuakeFromP2p(winStart, winEnd) {
      ・警報級以外(予報のみ)のEEWはこのAPIには流れてこないため、
        kmoni版にあった「警報/予報」の区別は行わない(常に警報級として扱う)
    ───────────────────────────────────────────────────── */
-const EEW_STALE_MS = 20000;        // この時間、続報も取消も来なければ自動的にパネル・地図から消す
+const EEW_STALE_MS = 90000;        // 最終報(とみなせる、最後に届いた続報)から、この時間表示を残してから自動的に消す
 const EEW_CANCEL_LINGER_MS = 8000; // 取消受信後、この時間はパネルに「取消」表示を残してから消す
 const EEW_MAX_CONCURRENT = 3;      // 同時に画面へ出すEEWの最大件数(UIが煩雑にならないよう抑える)
 const EEW_P_WAVE_SPEED_KM_S = 6.0; // P波の伝播速度(kmoni版index.htmlと同じ簡易値)
 const EEW_S_WAVE_SPEED_KM_S = 3.5; // S波の伝播速度
+
+// 起動直後、既に発表中のEEWがあれば取りこぼさないよう、/historyを1回だけ
+// 見に行くための設定。WebSocketは「接続した後に届いたもの」しか拾えないため、
+// アプリを開いた時点で既に緊急地震速報が発表されていた場合、WebSocketだけでは
+// 次の続報が来るまで何も表示されない、という抜けが起きる。それを防ぐための
+// 起動時バックフィル。ただし本当に「今起きている」ものだけを拾いたいので、
+// 受信時刻がこの新しさ(ミリ秒)以内のものだけを反映し、古いものは無視する。
+const EEW_HISTORY_URL = "https://api.p2pquake.net/v2/history?codes=556&limit=1";
+const EEW_HISTORY_FRESHNESS_MS = 90000;
 
 // areas[]のscaleFrom/scaleToから、この地震の「最大予測震度」をINTENSITY_LABELの
 // キー形式に変換する。99("〜程度以上")は震度7相当として扱う。
@@ -3949,6 +3958,23 @@ function eewWaveSurfaceRadiusKm(elapsedSec, depthKm, speedKmS) {
   const depth = depthKm != null && depthKm >= 0 ? depthKm : 10;
   if (slant <= depth) return 0;
   return Math.sqrt(slant * slant - depth * depth);
+}
+
+// 起動時バックフィル用: /historyから直近のEEWを1件だけ取得し、それが
+// 「十分新しい(EEW_HISTORY_FRESHNESS_MS以内)」場合だけtoEewCard()して返す。
+// 訓練配信(test:true)や、取得自体に失敗した場合、十分新しくない場合はnullを返す。
+async function fetchLatestFreshEew() {
+  const res = await fetch(EEW_HISTORY_URL);
+  if (!res.ok) return null;
+  const list = await res.json();
+  const latest = Array.isArray(list) ? list[0] : null;
+  if (!latest || latest.test) return null;
+  // "time"(受信時刻)は"YYYY/MM/DD HH:mm:ss.SSS"想定だが、念のため"-"区切りも
+  // "/"に正規化してから解釈する(他のJMA系フィールドと表記ゆれがあるため)。
+  const receivedMs = latest.time ? new Date(latest.time.replace(/-/g, "/")).getTime() : NaN;
+  if (!Number.isFinite(receivedMs)) return null;
+  if (Date.now() - receivedMs > EEW_HISTORY_FRESHNESS_MS) return null; // 既に終わっていそうな古い発表は無視
+  return toEewCard(latest);
 }
 
 /* ─────────────────────────────────────────────────────
@@ -12321,6 +12347,21 @@ export default function App() {
         console.error("津波情報の取得に失敗:", err);
         if (cancelled) return;
         setTsunamiStatus("error");
+      });
+
+    // 緊急地震速報の起動時バックフィル。アプリを開いた時点で既にEEWが発表されて
+    // いた場合、WebSocketは「接続後に届いたもの」しか拾えず、次の続報が来るまで
+    // 何も表示されないという抜けが起きる。それを防ぐため、/historyを1回だけ見て、
+    // 十分新しければ(EEW_HISTORY_FRESHNESS_MS以内)通常のWebSocket受信と同じ経路
+    // (handleIncomingEew)に流し込む。以降の続報・取消はWebSocketで通常通り届く。
+    fetchLatestFreshEew()
+      .then(eew => {
+        if (cancelled || !eew) return;
+        handleIncomingEew(eew);
+      })
+      .catch(err => {
+        console.error("緊急地震速報の起動時取得に失敗:", err);
+        // ここで失敗しても、以降のWebSocketライブ受信には影響しない。
       });
 
     const socket = connectQuakeWebSocket(
