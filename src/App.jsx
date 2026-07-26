@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.0c";
+const APP_VERSION = "1.3.0d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2243,17 +2243,9 @@ function EewDetailFloatingCard({ eew }) {
   const accent = eew.cancelled ? tokens.textSecondary : "#FF453A";
 
   return (
-    <div
-      style={{
-        margin: "2px 14px 8px",
-        borderRadius: 18,
-        padding: "10px 0",
-        border: `1px solid ${accent}40`,
-        background: eew.cancelled ? `rgba(${tokens.ink},0.04)` : "rgba(120,20,20,0.16)",
-        animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
-      }}
-    >
-      <div style={{ margin: "0 16px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+    <>
+      {/* 見出し行 — 地震タブの各カードと同じく、囲みを作らずテキストだけを直接置く */}
+      <div style={{ margin: "4px 16px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <span style={{ fontSize: 12.5, fontWeight: 800, color: accent }}>
           【緊急地震速報】第{eew.serial ?? "-"}報{eew.isPlum ? "(PLUM法)" : ""}
         </span>
@@ -2268,7 +2260,7 @@ function EewDetailFloatingCard({ eew }) {
         </div>
       ) : (
         <>
-          {/* ここから先は地震タブのQuakeDetailCardと同じレイアウト構造 */}
+          {/* ここから先は地震タブのQuakeDetailCardと全く同じ構造・スタイル(囲みなし) */}
           <div
             style={{
               margin: "2px 14px 4px",
@@ -2279,6 +2271,7 @@ function EewDetailFloatingCard({ eew }) {
               gap: 14,
               background: `linear-gradient(135deg, ${style.bg}2E, ${style.bg}14)`,
               boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
+              animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
             }}
           >
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0 }}>
@@ -2344,31 +2337,36 @@ function EewDetailFloatingCard({ eew }) {
             </div>
           </div>
 
-          {/* 対象地域 — QuakeMessageCardと同じ「電文カード」風の下段パネルに合わせる */}
+          {/* 対象地域 — QuakeMessageCardと全く同じ「電文カード」風の下段パネル(囲みなし) */}
           {eew.areas && eew.areas.length > 0 && (
-            <div style={{ margin: "2px 14px 0" }}>
+            <div style={{ margin: "2px 14px 8px" }}>
               <div style={{
                 borderRadius: 12,
                 padding: "10px 12px",
+                display: "flex", flexDirection: "column", gap: 8,
                 background: `rgba(${tokens.ink},0.04)`,
                 boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)`,
               }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: "#FFD60A" }}>【対象地域】</span>
-                <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.6, marginTop: 2 }}>
-                  {eew.areas.map(a => a.name).join("、")}
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#FFD60A" }}>
+                    【対象地域】
+                  </span>
+                  <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.5 }}>
+                    {eew.areas.map(a => a.name).join("、")}
+                  </span>
                 </div>
               </div>
             </div>
           )}
 
           {eew.isPlum && (
-            <div style={{ margin: "6px 16px 0", fontSize: 11, color: tokens.textSecondary, lineHeight: 1.6 }}>
+            <div style={{ margin: "0 16px 8px", fontSize: 11, color: tokens.textSecondary, lineHeight: 1.6 }}>
               ※観測点の揺れの実測から予測しています(到達時刻は未提供)。
             </div>
           )}
         </>
       )}
-    </div>
+    </>
   );
 }
 
@@ -7393,17 +7391,14 @@ function BottomDock({
           <div>
             {eewDetailOpen ? (
               <>
-                {/* 緊急地震速報の詳細 — 地震タブのQuakeDetailCardと同じ「フローティング」
-                    (このBottomDockのガラスパネル)にカードを出す。タブの中身を一時的に
-                    置き換えるだけで、閉じれば元のタブ表示にそのまま戻る。 */}
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "2px 0 8px" }}>
-                  {eews.map(eew => (
-                    <div key={eew.eventId}>
-                      <EewDetailFloatingCard eew={eew}/>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
+                {/* 緊急地震速報の詳細 — 地震タブでQuakeDetailCard/QuakeMessageCardが
+                    並ぶのと全く同じように、囲みなしでカードを直接並べる。タブの中身を
+                    一時的に置き換えるだけで、閉じれば元のタブ表示にそのまま戻る。 */}
+                {eews.map(eew => (
+                  <Fragment key={eew.eventId}>
+                    <EewDetailFloatingCard eew={eew}/>
+                  </Fragment>
+                ))}
               </>
             ) : active === "quake" ? (
               <>
