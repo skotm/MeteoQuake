@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.1c";
+const APP_VERSION = "1.3.1d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2246,26 +2246,37 @@ function EewDetailFloatingCard({ eew }) {
 
   return (
     <>
-      {/* 見出し — 「緊急地震速報(警報)」チップと「#報番号」チップを、色付きの
+      {/* 見出し — 「緊急地震速報(警報)」チップに震源地まで含めて、色付きの
           Glass(すりガラス)で囲う。Glassのstyle.backgroundは背景ブラー層より
           下に敷かれるため、背景色つきの半透明ガラスとして表示される。 */}
-      <div style={{ margin: "4px 16px 8px", display: "flex", alignItems: "stretch", gap: 8 }}>
+      <div style={{ margin: "4px 16px 10px", display: "flex", alignItems: "stretch", gap: 8 }}>
         <Glass
           radius={14}
           style={{
             flex: 1, minWidth: 0,
             padding: "10px 14px",
-            display: "flex", alignItems: "center",
+            display: "flex", flexDirection: "column", justifyContent: "center", gap: 4,
             background: eew.cancelled ? `rgba(${tokens.ink},0.08)` : `${accent}8C`,
           }}
         >
           <span style={{
-            fontSize: 16, fontWeight: 800, lineHeight: 1.25,
+            fontSize: 13, fontWeight: 800, lineHeight: 1.2,
             color: eew.cancelled ? tokens.text : "#fff",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
           }}>
             緊急地震速報{eew.cancelled ? "(取消)" : (isWarnLevel ? "(警報)" : "(予報)")}
           </span>
+          {!eew.cancelled && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.75)", flexShrink: 0 }}>震源地</span>
+              <AutoFitText
+                text={eew.place}
+                maxFontSize={20}
+                minFontSize={13}
+                style={{ fontWeight: 800, color: "#fff", lineHeight: 1.2 }}
+              />
+            </div>
+          )}
         </Glass>
         {!eew.cancelled && (
           <Glass
@@ -2282,18 +2293,6 @@ function EewDetailFloatingCard({ eew }) {
           </Glass>
         )}
       </div>
-
-      {!eew.cancelled && (
-        <div style={{ margin: "0 18px 10px", display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0 }}>震源地</span>
-          <AutoFitText
-            text={eew.place}
-            maxFontSize={22}
-            minFontSize={14}
-            style={{ fontWeight: 800, color: tokens.text, lineHeight: 1.2 }}
-          />
-        </div>
-      )}
 
       {eew.cancelled ? (
         <div style={{ margin: "2px 16px 10px", fontSize: 13, color: tokens.textSecondary, lineHeight: 1.7 }}>
@@ -2345,12 +2344,12 @@ function EewDetailFloatingCard({ eew }) {
             <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 12, lineHeight: 1.1 }}>
                 <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
-                  M<span className="mono" style={{ fontSize: 21, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
+                  M<span className="mono" style={{ fontSize: 25, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
                     {eew.magnitude != null ? eew.magnitude.toFixed(1) : "-"}
                   </span>
                 </span>
                 <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
-                  深さ<span className="mono" style={{ fontSize: 21, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
+                  深さ<span className="mono" style={{ fontSize: 25, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
                     {eew.depth != null ? (eew.depth === 0 ? "ごく浅い" : eew.depth) : "-"}
                   </span>
                   {eew.depth != null && eew.depth !== 0 && (
@@ -2361,7 +2360,7 @@ function EewDetailFloatingCard({ eew }) {
 
               <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1 }}>
                 <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>発生時刻</span>
-                <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.1 }}>
+                <span className="mono" style={{ fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.1 }}>
                   {formatQuakeTimeShort(eew.originTime)}
                 </span>
               </div>
