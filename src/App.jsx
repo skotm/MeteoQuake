@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.4a";
+const APP_VERSION = "1.3.4b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -12446,20 +12446,36 @@ export default function App() {
     }
     if (action === "dispatchForm") {
       const { editingId, ...params } = payload;
-      setTestEews(prev => {
-        const idx = editingId ? prev.findIndex(e => e.id === editingId) : -1;
-        if (idx === -1) return [...prev, buildTestEewCard(params)];
-        const next = [...prev];
-        next[idx] = {
-          ...next[idx],
-          ...params,
-          areas: buildTestEewAreas(params.maxIntensityKey, params.isPlum),
-          serial: String((parseInt(next[idx].serial, 10) || 1) + 1),
-          receivedLocalAt: Date.now(),
-        };
-        return next;
-      });
-      setEewTestForm(defaultEewTestForm());
+      // editingIdが現在のtestEewsに実在するかをここで(setState前に)確定させる。
+      // buildTestEewCardのid発行もここで一度だけ行い、そのidをそのままフォームの
+      // editingIdへ書き戻すことで、発報後も「このイベントを編集中」の状態を保つ。
+      // (以前は発報のたびにdefaultEewTestForm()でeditingIdごと消していたため、
+      //  続けて「追加発報」を押すと毎回別イベント扱いになってしまっていた。
+      //  index.html版のシミュレーターがcurrentSimEventIdを発報後も保持し続け、
+      //  同じイベントへの続報として扱っているのと同じ考え方に合わせた)
+      const idx = editingId ? testEews.findIndex(e => e.id === editingId) : -1;
+      let resultId;
+      if (idx === -1) {
+        const card = buildTestEewCard(params);
+        resultId = card.id;
+        setTestEews(prev => [...prev, card]);
+      } else {
+        resultId = testEews[idx].id;
+        setTestEews(prev => {
+          const i = prev.findIndex(e => e.id === editingId);
+          if (i === -1) return prev;
+          const next = [...prev];
+          next[i] = {
+            ...next[i],
+            ...params,
+            areas: buildTestEewAreas(params.maxIntensityKey, params.isPlum),
+            serial: String((parseInt(next[i].serial, 10) || 1) + 1),
+            receivedLocalAt: Date.now(),
+          };
+          return next;
+        });
+      }
+      setEewTestForm(prev => ({ ...prev, editingId: resultId }));
       return;
     }
     if (action === "editLoad") {
