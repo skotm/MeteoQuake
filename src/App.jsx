@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.4c";
+const APP_VERSION = "1.3.4d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -4719,6 +4719,88 @@ function fastDist2(lat1, lon1, lat2, lon2) {
   const dLat = (lat1 - lat2) * latScale;
   const dLon = (lon1 - lon2) * lonScale;
   return dLat * dLat + dLon * dLon;
+}
+
+// ポリゴン(Polygon/MultiPolygon)の外周リング頂点の単純平均から、地域の代表点(概算の中心)を
+// 求める。面積で重み付けした厳密な重心ではないが、震源からの距離を見積もる用途には十分な精度。
+// MultiPolygonは頂点数が最も多い(=主要な陸地側とみなせる)外周リングを代表に使う。
+function polygonRoughCentroid(geometry) {
+  if (!geometry) return null;
+  let ring = null;
+  if (geometry.type === "Polygon") {
+    ring = geometry.coordinates?.[0];
+  } else if (geometry.type === "MultiPolygon") {
+    let bestLen = -1;
+    for (const poly of geometry.coordinates || []) {
+      const r = poly?.[0];
+      if (r && r.length > bestLen) { bestLen = r.length; ring = r; }
+    }
+  }
+  if (!ring || ring.length === 0) return null;
+  let sumLat = 0, sumLon = 0;
+  for (const pt of ring) { sumLon += pt[0]; sumLat += pt[1]; }
+  return { lat: sumLat / ring.length, lon: sumLon / ring.length };
+}
+
+// 計測震度(連続値)を気象庁の震度階級に変換する(「震度を知る」の計測震度→震度階級の対応表)。
+function instrumentalIntensityToScaleKey(i) {
+  if (i < 0.5) return "0";
+  if (i < 1.5) return "1";
+  if (i < 2.5) return "2";
+  if (i < 3.5) return "3";
+  if (i < 4.5) return "4";
+  if (i < 5.0) return "5-";
+  if (i < 5.5) return "5+";
+  if (i < 6.0) return "6-";
+  if (i < 6.5) return "6+";
+  return "7";
+}
+
+// 緊急地震速報テスト配信専用: 震源(緯度・経度・M・深さ)から、細分区域.json(areasGeoJSON)の
+// 各地域の予測最大震度を距離減衰式で計算する。気象庁「緊急地震速報の概要や処理手法に関する
+// 技術的参考資料」(令和6年4月版)の予測震度算出処理と同じ式を使用する:
+//   1. Mjma→Mw変換(宇津[1982]等): Mw = M - 0.171
+//   2. 断層長(宇津[1977]): log10(L) = 0.5*Mw - 1.85 半分を震源球の半径とし、最短距離から差し引く
+//      (下限3km)
+//   3. 司・翠川[1999]の距離減衰式で基準基盤(Vs600m/s)上の最大速度PGV600を算出
+//   4. 基準基盤→工学的基盤の換算(≒0.90倍。気象庁資料の簡略値。地点別の地盤増幅度データは
+//      持たないため1.0とみなす)
+//   5. 翠川ほか[1999]の換算式で計測震度に変換する。この式は震度4〜7の範囲でのみ有効なため、
+//      震度4未満と算出された地域は結果に含めない(=地図の塗り潰しも震度4以上のみになる)
+function calcTestEewAreasByAttenuation(areasGeoJSON, lat, lon, magnitude, depthKm, isPlum) {
+  if (!areasGeoJSON || !Array.isArray(areasGeoJSON.features)) return [];
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(magnitude)) return [];
+  const D = Number.isFinite(depthKm) ? Math.max(0, depthKm) : 10;
+  const Mw = magnitude - 0.171;
+  const faultLengthKm = Math.pow(10, 0.5 * Mw - 1.85);
+  const sourceRadiusKm = faultLengthKm / 2;
+  const codeMap = { "7": 70, "6+": 60, "6-": 55, "6": 54, "5+": 50, "5-": 45, "5": 44, "4": 40 };
+
+  const results = [];
+  for (const feature of areasGeoJSON.features) {
+    const name = feature.properties?.name;
+    if (!name) continue;
+    const center = polygonRoughCentroid(feature.geometry);
+    if (!center) continue;
+
+    const epicentralKm = Math.sqrt(fastDist2(lat, lon, center.lat, center.lon));
+    const hypocentralKm = Math.sqrt(epicentralKm * epicentralKm + D * D);
+    const shortestKm = Math.max(3, hypocentralKm - sourceRadiusKm);
+
+    const logPGV600 = 0.58 * Mw + 0.0038 * D - 1.29
+      - Math.log10(shortestKm + 0.0028 * Math.pow(10, 0.5 * Mw))
+      - 0.002 * shortestKm;
+    const PGV600 = Math.pow(10, logPGV600);
+    const PGVs = PGV600 * 0.9; // 工学的基盤換算(簡易値)。地盤増幅度は考慮しない
+
+    const instrIntensity = 2.68 + 1.72 * Math.log10(PGVs);
+    if (!Number.isFinite(instrIntensity) || instrIntensity < 4) continue;
+
+    const key = instrumentalIntensityToScaleKey(instrIntensity);
+    const code = codeMap[key] ?? 40;
+    results.push({ pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: key, isPlum: !!isPlum });
+  }
+  return results;
 }
 
 // 潮位観測点(1点)から一番近い津波予報区を、tsunami-areas.json(海岸線の座標データ、
@@ -10457,7 +10539,6 @@ const TSUNAMI_HEIGHT_PICK_OPTIONS = Array.from({ length: 99 }, (_, i) => (i + 2)
 // 複数のテストEEWを同時に発報でき、それぞれ独立して「続報」(報番号を1つ進める)・
 // 「最終報」・「取消」・「削除」ができる。動作確認用のダミーデータはEewPanel・
 // 地図上のP波S波円と震源マーカーに、実際のデータと同様に反映される。
-const EEW_TEST_INTENSITY_OPTIONS = ["3", "4", "5-", "5+", "6-", "6+", "7"];
 // 深さ: 0〜600kmを10km刻み。マグニチュード: 3.5〜9.9を0.1刻み
 // (浮動小数点の誤差を避けるため、10倍の整数で回してから/10する)。
 const EEW_TEST_DEPTH_OPTIONS = Array.from({ length: 61 }, (_, i) => i * 10);
@@ -10493,51 +10574,14 @@ function EewTestBroadcastPanel({ testEews, onAction, eewTestForm, eewEpicenterPi
       <div style={{ margin: "-4px 14px 10px", fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.7 }}>
         実際の気象庁発表ではない、動作確認用のダミーデータです。複数を同時に発報して
         重なった時の見え方も確認できます。それぞれ個別に続報・最終報・取消・削除ができるほか、
-        一覧の「編集」から続報の内容を書き換えて発報できます。
+        一覧の「編集」から続報の内容を書き換えて発報できます。各地域の予測震度はM・深さ・
+        震源からの距離をもとにした減衰式で自動計算され、震度4以上の地域だけ地図に塗られます。
       </div>
 
-      {/* プリセット — ワンタップで即発報(フォームや編集中の内容には影響しない) */}
-      <SettingsCard>
-        <PressableButton
-          type="button"
-          onClick={() => onAction?.("addPreset", "normal")}
-          style={{
-            width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
-            background: "transparent", textAlign: "center",
-            fontSize: 14, fontWeight: 700, color: "#FF453A",
-          }}
-        >
-          追加して発報(通常)
-        </PressableButton>
-        <SettingsCardDivider/>
-        <PressableButton
-          type="button"
-          onClick={() => onAction?.("addPreset", "plum")}
-          style={{
-            width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
-            background: "transparent", textAlign: "center",
-            fontSize: 14, fontWeight: 700, color: "#BF5AF2",
-          }}
-        >
-          追加して発報(PLUM法)
-        </PressableButton>
-        <SettingsCardDivider/>
-        <PressableButton
-          type="button"
-          onClick={() => onAction?.("addPreset", "forecast")}
-          style={{
-            width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
-            background: "transparent", textAlign: "center",
-            fontSize: 14, fontWeight: 700, color: "#FF9F0A",
-          }}
-        >
-          追加して発報(予報・Wolfx想定)
-        </PressableButton>
-      </SettingsCard>
-
       {/* カスタムEEWエディタ — 震源は地図タップで指定し(震央地名・緯度・経度は
-          その結果として自動で入る)、深さ・M・最大震度・警報/PLUM法だけ数値・
-          選択肢で指定する。「編集」から呼ばれた場合はeditingIdが立ち、発報時に
+          その結果として自動で入る)、深さ・M・警報/PLUM法だけ数値・選択肢で指定する。
+          各地域の予測最大震度はM・深さ・震源距離による減衰式で発報時に自動計算するため、
+          ここでの手動選択は無い。「編集」から呼ばれた場合はeditingIdが立ち、発報時に
           新規追加ではなく該当イベントへの続報として扱われる。 */}
       <div style={{ margin: "18px 14px 6px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={{ fontSize: 12.5, fontWeight: 700, color: `rgba(${tokens.ink},0.7)` }}>
@@ -10605,14 +10649,6 @@ function EewTestBroadcastPanel({ testEews, onAction, eewTestForm, eewEpicenterPi
               </select>
             </div>
           </div>
-          <div>
-            <label style={labelStyle}>最大震度</label>
-            <select value={f.maxIntensityKey} onChange={e => patchForm({ maxIntensityKey: e.target.value })} style={inputStyle}>
-              {EEW_TEST_INTENSITY_OPTIONS.map(k => (
-                <option key={k} value={k}>{INTENSITY_LABEL[k]}</option>
-              ))}
-            </select>
-          </div>
           <div style={{ display: "flex", gap: 16, marginTop: 2 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: tokens.text, cursor: "pointer" }}>
               <input type="checkbox" checked={f.isWarnLevel} onChange={e => patchForm({ isWarnLevel: e.target.checked })} style={{ accentColor: "#FF453A" }}/>
@@ -10634,7 +10670,7 @@ function EewTestBroadcastPanel({ testEews, onAction, eewTestForm, eewEpicenterPi
             longitude: typeof f.longitude === "number" && !Number.isNaN(f.longitude) ? f.longitude : 139.3,
             depth: typeof f.depth === "number" && !Number.isNaN(f.depth) ? f.depth : 20,
             magnitude: typeof f.magnitude === "number" && !Number.isNaN(f.magnitude) ? f.magnitude : 5.0,
-            maxIntensityKey: f.maxIntensityKey, isWarnLevel: f.isWarnLevel, isPlum: f.isPlum,
+            isWarnLevel: f.isWarnLevel, isPlum: f.isPlum,
           })}
           style={{
             width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
@@ -12381,28 +12417,16 @@ export default function App() {
      ───────────────────────────────────────────────────── */
   const [testEews, setTestEews] = useState([]);
 
-  // 最大震度キー(scale)から、簡易的な対象地域リストを組み立てる
-  // (震源から少し離れた地域ほど1ランク弱い震度、という単純な減衰モデル)。
-  function buildTestEewAreas(maxScaleKey, isPlum) {
-    const order = ["7", "6+", "6-", "6", "5+", "5-", "5", "4", "3", "2", "1", "0"];
-    const idx = Math.max(0, order.indexOf(maxScaleKey));
-    const names = ["神奈川県東部", "東京都２３区", "伊豆"];
-    return names.map((name, i) => {
-      const key = order[Math.min(order.length - 1, idx + i)];
-      const codeMap = { "7": 70, "6+": 60, "6-": 55, "6": 54, "5+": 50, "5-": 45, "5": 44, "4": 40, "3": 30, "2": 20, "1": 10, "0": 0 };
-      const code = codeMap[key] ?? 30;
-      return { pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: key, isPlum: !!isPlum };
-    });
-  }
-
   // カスタムパラメータ(地震タブのカスタムEEWエディタ相当)から1件のテストEEWカードを組み立てる。
-  function buildTestEewCard({ place, latitude, longitude, depth, magnitude, maxIntensityKey, isWarnLevel, isPlum }) {
+  // areas・maxIntensityKeyは呼び出し側で(距離減衰式により)計算済みのものを渡す。
+  // idを指定した場合はそのidを使う(発報後も同じイベントを編集し続けるため、
+  // フォームのeditingIdと一致させる必要がある)。
+  function buildTestEewCard({ id, place, latitude, longitude, depth, magnitude, areas, maxIntensityKey, isWarnLevel, isPlum }) {
     const now = new Date();
     const originTimeStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
-    const areas = buildTestEewAreas(maxIntensityKey, isPlum);
-    const id = `test_${now.getTime()}_${Math.floor(Math.random() * 1000)}`;
+    const resolvedId = id || `test_${now.getTime()}_${Math.floor(Math.random() * 1000)}`;
     return {
-      id, eventId: id,
+      id: resolvedId, eventId: resolvedId,
       serial: "1",
       cancelled: false,
       isTraining: false,
@@ -12425,22 +12449,6 @@ export default function App() {
     };
   }
 
-  // 通常/PLUM法/予報のプリセットシナリオから、すぐ発報できるパラメータを組み立てる。
-  function presetTestEewParams(scenario) {
-    const isPlum = scenario === "plum";
-    const isForecast = scenario === "forecast"; // Wolfxで拾える「予報」段階のテスト用
-    return {
-      place: "テスト震源(相模湾)",
-      latitude: 35.2,
-      longitude: 139.3,
-      depth: isPlum ? 30 : 20,
-      magnitude: isForecast ? 4.5 : (isPlum ? 6.2 : 5.8),
-      maxIntensityKey: isForecast ? "3" : "5-",
-      isWarnLevel: !isForecast,
-      isPlum,
-    };
-  }
-
   // カスタムEEWエディタの初期値・「新規」に戻した時の値。
   function defaultEewTestForm() {
     return {
@@ -12450,7 +12458,6 @@ export default function App() {
       longitude: 139.3,
       depth: 20,
       magnitude: 5.8,
-      maxIntensityKey: "5-",
       isWarnLevel: true,
       isPlum: false,
     };
@@ -12464,10 +12471,10 @@ export default function App() {
   /**
    * テスト配信パネルからの操作を一手に受け付ける単一ディスパッチャ。
    * action:
-   *   "addPreset"    プリセットで即発報(フォームには触れない)
    *   "dispatchForm" 現在のフォーム内容で発報。editingIdがあれば該当イベントへの
    *                  続報(震度・位置などを書き換えつつreportを1つ進める)、
-   *                  無ければ新規イベントとして追加する
+   *                  無ければ新規イベントとして追加する。各地域の予測震度は
+   *                  M・深さ・震源からの距離による減衰式でそのつど計算する
    *   "editLoad"     既存イベント(id)の現在値をフォームに読み込み、続報編集モードにする
    *   "resetForm"    フォームを初期値に戻し、続報編集モードを解除する(「新規」ボタン用)
    *   "startEpicenterPick" / "cancelEpicenterPick"  地図タップでの震源指定モードの開始/終了
@@ -12475,42 +12482,47 @@ export default function App() {
    *   "cancel"(取消を発報) | "remove"(一覧から削除) | "clearAll"(全部削除)
    */
   function handleTestEewAction(action, payload) {
-    if (action === "addPreset") {
-      setTestEews(prev => [...prev, buildTestEewCard(presetTestEewParams(payload))]);
-      return;
-    }
     if (action === "dispatchForm") {
       const { editingId, ...params } = payload;
       // editingIdが現在のtestEewsに実在するかをここで(setState前に)確定させる。
-      // buildTestEewCardのid発行もここで一度だけ行い、そのidをそのままフォームの
-      // editingIdへ書き戻すことで、発報後も「このイベントを編集中」の状態を保つ。
-      // (以前は発報のたびにdefaultEewTestForm()でeditingIdごと消していたため、
-      //  続けて「追加発報」を押すと毎回別イベント扱いになってしまっていた。
-      //  index.html版のシミュレーターがcurrentSimEventIdを発報後も保持し続け、
-      //  同じイベントへの続報として扱っているのと同じ考え方に合わせた)
+      // idもここで一度だけ発行し、そのidをそのままフォームのeditingIdへ書き戻すことで、
+      // 発報後も「このイベントを編集中」の状態を保つ(index.html版のcurrentSimEventIdと
+      // 同じ考え方。以前はdefaultEewTestForm()でeditingIdごと消していたため、続けて
+      // 「追加発報」を押すと毎回別イベント扱いになってしまっていた)。
       const idx = editingId ? testEews.findIndex(e => e.id === editingId) : -1;
-      let resultId;
-      if (idx === -1) {
-        const card = buildTestEewCard(params);
-        resultId = card.id;
-        setTestEews(prev => [...prev, card]);
-      } else {
-        resultId = testEews[idx].id;
-        setTestEews(prev => {
-          const i = prev.findIndex(e => e.id === editingId);
-          if (i === -1) return prev;
-          const next = [...prev];
-          next[i] = {
-            ...next[i],
-            ...params,
-            areas: buildTestEewAreas(params.maxIntensityKey, params.isPlum),
-            serial: String((parseInt(next[i].serial, 10) || 1) + 1),
-            receivedLocalAt: Date.now(),
-          };
-          return next;
-        });
-      }
+      const isNew = idx === -1;
+      const resultId = isNew ? `test_${Date.now()}_${Math.floor(Math.random() * 1000)}` : testEews[idx].id;
       setEewTestForm(prev => ({ ...prev, editingId: resultId }));
+
+      // 各地域の予測最大震度は細分区域.jsonが要るため、距離減衰式の計算自体は
+      // loadGeoData()の解決を待ってから行う(地図表示時に読み込み済みなので、
+      // 実際にはほぼ即座に解決する)。
+      loadGeoData().then(({ areas: areasGeoJSON }) => {
+        const areas = calcTestEewAreasByAttenuation(
+          areasGeoJSON, params.latitude, params.longitude, params.magnitude, params.depth, params.isPlum
+        );
+        const maxIntensityKey = eewMaxScaleKey(areas);
+        if (isNew) {
+          setTestEews(prev => [...prev, buildTestEewCard({ ...params, id: resultId, areas, maxIntensityKey })]);
+        } else {
+          setTestEews(prev => {
+            const i = prev.findIndex(e => e.id === resultId);
+            if (i === -1) return prev;
+            const next = [...prev];
+            next[i] = {
+              ...next[i],
+              ...params,
+              areas,
+              maxIntensityKey,
+              serial: String((parseInt(next[i].serial, 10) || 1) + 1),
+              receivedLocalAt: Date.now(),
+            };
+            return next;
+          });
+        }
+      }).catch(err => {
+        console.error("細分区域データの読み込みに失敗しました(震度分布テスト):", err);
+      });
       return;
     }
     if (action === "editLoad") {
@@ -12523,7 +12535,6 @@ export default function App() {
         longitude: target.longitude,
         depth: target.depth,
         magnitude: target.magnitude,
-        maxIntensityKey: target.maxIntensityKey,
         isWarnLevel: target.isWarnLevel !== false,
         isPlum: !!target.isPlum,
       });
