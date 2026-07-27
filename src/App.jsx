@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.4b";
+const APP_VERSION = "1.3.4c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -1020,6 +1020,27 @@ function MapCanvas({
           cc.stroke();
           map.addImage("hypocenter-cross", cc.getImageData(0, 0, crossSize, crossSize));
 
+          // PLUM法震源(円)アイコン。index.html版の.eew-marker-plum(白フチ付き赤リング)
+          // と同じ考え方で、バツ印と同じキャンバスサイズ・白→赤の二重ストロークにして
+          // 見た目のトーンを揃える。PLUM法は到達時刻を伴わないためバツ印ではなく円で示す。
+          const circleCanvas = document.createElement("canvas");
+          circleCanvas.width = crossSize; circleCanvas.height = crossSize;
+          const rc = circleCanvas.getContext("2d");
+          const circleCenter = crossSize / 2;
+          const circleRadius = 10;
+          rc.lineCap = "round";
+          rc.beginPath();
+          rc.arc(circleCenter, circleCenter, circleRadius, 0, Math.PI * 2);
+          rc.strokeStyle = "#ffffff";
+          rc.lineWidth = 8;
+          rc.stroke();
+          rc.beginPath();
+          rc.arc(circleCenter, circleCenter, circleRadius, 0, Math.PI * 2);
+          rc.strokeStyle = "#FF453A";
+          rc.lineWidth = 5;
+          rc.stroke();
+          map.addImage("hypocenter-plum-circle", rc.getImageData(0, 0, crossSize, crossSize));
+
           // 観測点(震度)マーカー用のアイコン(丸+白フチ+数字)を、
           // 現在の配色スキームに合わせて生成・登録しておく。
           registerStationIcons(map, colorScheme);
@@ -1450,7 +1471,9 @@ function MapCanvas({
           map.addLayer({
             id: "eew-hypocenter-symbol", type: "symbol", source: "eew-hypocenter",
             layout: {
-              "icon-image": "hypocenter-cross",
+              // PLUM法は震源からの距離だけで判定し到達時刻の予測を伴わないため、
+              // バツ印ではなく円のアイコンで区別する(index.html版と同じ考え方)。
+              "icon-image": ["case", ["boolean", ["get", "isPlum"], false], "hypocenter-plum-circle", "hypocenter-cross"],
               "icon-size": 28 / 36,
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
@@ -1539,7 +1562,7 @@ function MapCanvas({
           hypoFeatures.push({
             type: "Feature",
             geometry: { type: "Point", coordinates: [eew.longitude, eew.latitude] },
-            properties: {},
+            properties: { isPlum: !!eew.isPlum },
           });
           if (eew.isPlum) return; // PLUM法は到達時刻の予測が無いため円は描かない
           const originMs = eew.originTime ? new Date(eew.originTime.replace(/-/g, "/")).getTime() : NaN;
