@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.4";
+const APP_VERSION = "1.3.4a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -638,11 +638,13 @@ function loadPlateBoundariesData() {
 // 震央地名(気象庁の震央地名区域)データ。緊急地震速報テスト配信で「地図をタップして
 // 震源を指定」した時に、タップ地点から震源地名を自動判定するためだけに使うので、
 // 断層・プレート境界と同様、実験的機能が実際に使われた時だけ遅延読み込みする。
-// ファイル: public/map/震央地名_geo.json
+// ファイル: public/map/ep.json
+// (以前は震央地名_geo.jsonという漢字入りファイル名だったが、環境によって
+//  URLエンコード周りの問題を起こしうるためep.jsonに変更した)
 let epicenterNamesDataPromise = null;
 function loadEpicenterNamesData() {
   if (epicenterNamesDataPromise) return epicenterNamesDataPromise;
-  epicenterNamesDataPromise = cachedFetchJSON(`${import.meta.env.BASE_URL}map/震央地名_geo.json`);
+  epicenterNamesDataPromise = cachedFetchJSON(`${import.meta.env.BASE_URL}map/ep.json`);
   return epicenterNamesDataPromise;
 }
 
@@ -1379,7 +1381,7 @@ function MapCanvas({
 
           // 緊急地震速報テスト配信「地図をタップして震源を指定」モード中だけ有効になる、
           // 地図全体を対象としたクリック。タップ地点の緯度経度をそのまま震源座標にし、
-          // 震央地名_geo.json(遅延読み込み済みなら同期的に、まだなら取得してから)で
+          // ep.json(遅延読み込み済みなら同期的に、まだなら取得してから)で
           // その地点を含む区域名を調べ、緯度・経度・震源地名をまとめて返す。
           map.on("click", (e) => {
             if (!eewEpicenterPickActiveRef.current) return;
@@ -4965,7 +4967,7 @@ function findAreaCodesByName(areasGeoJSON, name) {
   return fuzzy.map(f => f.properties?.code).filter(c => c != null);
 }
 
-// 震央地名_geo.json(気象庁の震央地名区域)のポリゴンを走査し、点(lat,lon)を
+// ep.json(気象庁の震央地名区域)のポリゴンを走査し、点(lat,lon)を
 // 含む区域の名前(properties.name)を返す。緊急地震速報テスト配信で「地図をタップ
 // して震源を指定」した時、タップ地点から震源地名を自動判定するのに使う。
 // 該当する区域が無い(海洋の詳細区分に含まれない・データ範囲外など)場合はnull。
@@ -12519,13 +12521,14 @@ export default function App() {
   }
 
   // 地図タップで震源が確定した時のハンドラ(MapCanvasのonPickEewEpicenterから呼ばれる)。
-  // 震央地名が判定できなかった場合は地名欄を空のままにする(手がかりが無い海域など)。
+  // 震央地名が判定できなかった場合(ep.jsonの読み込み失敗・データ範囲外など)は、
+  // 前回の値を使い回さず、タップした座標そのものを地名欄に表示する。
   function handlePickEewEpicenter(lat, lon, placeName) {
     setEewTestForm(prev => ({
       ...prev,
       latitude: lat,
       longitude: lon,
-      place: placeName || prev.place,
+      place: placeName || `テスト震源(北緯${lat.toFixed(2)}度 東経${lon.toFixed(2)}度)`,
     }));
     setEewEpicenterPickActive(false);
   }
