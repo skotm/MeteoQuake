@@ -10458,6 +10458,10 @@ const TSUNAMI_HEIGHT_PICK_OPTIONS = Array.from({ length: 99 }, (_, i) => (i + 2)
 // 「最終報」・「取消」・「削除」ができる。動作確認用のダミーデータはEewPanel・
 // 地図上のP波S波円と震源マーカーに、実際のデータと同様に反映される。
 const EEW_TEST_INTENSITY_OPTIONS = ["3", "4", "5-", "5+", "6-", "6+", "7"];
+// 深さ: 0〜600kmを10km刻み。マグニチュード: 3.5〜9.9を0.1刻み
+// (浮動小数点の誤差を避けるため、10倍の整数で回してから/10する)。
+const EEW_TEST_DEPTH_OPTIONS = Array.from({ length: 61 }, (_, i) => i * 10);
+const EEW_TEST_MAGNITUDE_OPTIONS = Array.from({ length: 65 }, (_, i) => Math.round((3.5 + i * 0.1) * 10) / 10);
 
 function EewTestBroadcastPanel({ testEews, onAction, eewTestForm, eewEpicenterPickActive }) {
   const { tokens } = useContext(ThemeContext);
@@ -10578,19 +10582,27 @@ function EewTestBroadcastPanel({ testEews, onAction, eewTestForm, eewEpicenterPi
           <div style={{ display: "flex", gap: 8 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <label style={labelStyle}>深さ(km)</label>
-              <input
-                type="number" step="1" value={f.depth}
-                onChange={e => patchForm({ depth: e.target.value === "" ? "" : parseFloat(e.target.value) })}
+              <select
+                value={f.depth}
+                onChange={e => patchForm({ depth: parseFloat(e.target.value) })}
                 style={inputStyle}
-              />
+              >
+                {EEW_TEST_DEPTH_OPTIONS.map(d => (
+                  <option key={d} value={d}>{d}km</option>
+                ))}
+              </select>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <label style={labelStyle}>M(マグニチュード)</label>
-              <input
-                type="number" step="0.1" value={f.magnitude}
-                onChange={e => patchForm({ magnitude: e.target.value === "" ? "" : parseFloat(e.target.value) })}
+              <select
+                value={f.magnitude}
+                onChange={e => patchForm({ magnitude: parseFloat(e.target.value) })}
                 style={inputStyle}
-              />
+              >
+                {EEW_TEST_MAGNITUDE_OPTIONS.map(m => (
+                  <option key={m} value={m}>{m.toFixed(1)}</option>
+                ))}
+              </select>
             </div>
           </div>
           <div>
