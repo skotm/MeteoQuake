@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.7";
+const APP_VERSION = "1.3.3";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -6402,7 +6402,7 @@ function BottomDock({
   stationListDisplayMode, onChangeStationListDisplayMode,
   experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
-  testEew, onBroadcastTestEew, onCancelTestEew, onClearTestEew,
+  testEews = EMPTY_EQDB_LIST, onTestEewAction,
   eews = EMPTY_EQDB_LIST, eewDetailOpen, onOpenEewDetail, onCloseEewDetail,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
@@ -7829,10 +7829,8 @@ function BottomDock({
                   onBroadcastTestTsunami={onBroadcastTestTsunami}
                   onCancelTestTsunami={onCancelTestTsunami}
                   onClearTestTsunami={onClearTestTsunami}
-                  testEew={testEew}
-                  onBroadcastTestEew={onBroadcastTestEew}
-                  onCancelTestEew={onCancelTestEew}
-                  onClearTestEew={onClearTestEew}
+                  testEews={testEews}
+                  onTestEewAction={onTestEewAction}
                   tsunamiAreaPickActive={tsunamiAreaPickActive}
                   onStartTsunamiAreaPick={onStartTsunamiAreaPick}
                   pickedTsunamiAreas={pickedTsunamiAreas}
@@ -10252,92 +10250,220 @@ const TEST_TSUNAMI_GRADE_OPTIONS = [
 const TSUNAMI_HEIGHT_PICK_OPTIONS = Array.from({ length: 99 }, (_, i) => (i + 2) / 10);
 
 // 実験的機能: 緊急地震速報テスト配信パネル。
-// 「通常」「PLUM法」の2シナリオをボタン一発で配信でき、動作確認用のダミーEEWが
-// EewPanel・地図上のP波S波円・震源マーカーに実際のデータと同様に反映される。
-function EewTestBroadcastPanel({ testEew, onBroadcast, onCancel, onClear }) {
+// 実験的機能: 緊急地震速報テスト配信パネル。
+// プリセット(通常/PLUM法/予報)をワンタップで発報できるほか、地震タブの
+// カスタムEEWエディタ(index.html版)に相当する、震央地名・緯度経度・深さ・M・
+// 最大震度・警報/PLUM法を自由に指定できるフォームも用意している。
+// 複数のテストEEWを同時に発報でき、それぞれ独立して「続報」(報番号を1つ進める)・
+// 「最終報」・「取消」・「削除」ができる。動作確認用のダミーデータはEewPanel・
+// 地図上のP波S波円と震源マーカーに、実際のデータと同様に反映される。
+const EEW_TEST_INTENSITY_OPTIONS = ["3", "4", "5-", "5+", "6-", "6+", "7"];
+
+function EewTestBroadcastPanel({ testEews, onAction }) {
   const { tokens } = useContext(ThemeContext);
+  const [place, setPlace] = useState("テスト震源(相模湾)");
+  const [latitude, setLatitude] = useState(35.2);
+  const [longitude, setLongitude] = useState(139.3);
+  const [depth, setDepth] = useState(20);
+  const [magnitude, setMagnitude] = useState(5.8);
+  const [maxIntensityKey, setMaxIntensityKey] = useState("5-");
+  const [isWarnLevel, setIsWarnLevel] = useState(true);
+  const [isPlum, setIsPlum] = useState(false);
+
+  const inputStyle = {
+    width: "100%", padding: "8px 10px", borderRadius: 8, border: "none",
+    background: `rgba(${tokens.ink},0.08)`, color: tokens.text,
+    fontSize: 13, fontWeight: 600, boxSizing: "border-box",
+  };
+  const labelStyle = {
+    display: "block", fontSize: 11, fontWeight: 600,
+    color: `rgba(${tokens.ink},0.5)`, marginBottom: 4,
+  };
+  function pillBtnStyle(color) {
+    return {
+      padding: "6px 12px", borderRadius: 999, border: `1px solid ${color}55`, cursor: "pointer",
+      background: `${color}1F`, color, fontSize: 12, fontWeight: 700,
+    };
+  }
+
   return (
     <>
       <div style={{ margin: "-4px 14px 10px", fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.7 }}>
-        実際の気象庁発表ではない、動作確認用のダミーデータです。画面上部のアラートパネル・
-        地図上のP波S波円と震源マーカーへの反映が確認できます。「配信を削除」で元に戻ります。
+        実際の気象庁発表ではない、動作確認用のダミーデータです。複数を同時に発報して
+        重なった時の見え方も確認できます。それぞれ個別に続報・最終報・取消・削除ができます。
       </div>
 
+      {/* プリセット — ワンタップで即発報 */}
       <SettingsCard>
         <PressableButton
           type="button"
-          onClick={() => onBroadcast?.("normal")}
+          onClick={() => onAction?.("addPreset", "normal")}
           style={{
             width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
             background: "transparent", textAlign: "center",
             fontSize: 14, fontWeight: 700, color: "#FF453A",
           }}
         >
-          テスト配信する(通常)
+          追加して発報(通常)
         </PressableButton>
         <SettingsCardDivider/>
         <PressableButton
           type="button"
-          onClick={() => onBroadcast?.("plum")}
+          onClick={() => onAction?.("addPreset", "plum")}
           style={{
             width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
             background: "transparent", textAlign: "center",
             fontSize: 14, fontWeight: 700, color: "#BF5AF2",
           }}
         >
-          テスト配信する(PLUM法)
+          追加して発報(PLUM法)
         </PressableButton>
         <SettingsCardDivider/>
         <PressableButton
           type="button"
-          onClick={() => onBroadcast?.("forecast")}
+          onClick={() => onAction?.("addPreset", "forecast")}
           style={{
             width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
             background: "transparent", textAlign: "center",
             fontSize: 14, fontWeight: 700, color: "#FF9F0A",
           }}
         >
-          テスト配信する(予報・Wolfx想定)
+          追加して発報(予報・Wolfx想定)
         </PressableButton>
-        {testEew && !testEew.cancelled && (
-          <>
-            <SettingsCardDivider/>
-            <PressableButton
-              type="button"
-              onClick={onCancel}
-              style={{
-                width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
-                background: "transparent", textAlign: "center",
-                fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.7)`,
-              }}
-            >
-              取消を配信する
-            </PressableButton>
-          </>
-        )}
-        {testEew && (
-          <>
-            <SettingsCardDivider/>
-            <PressableButton
-              type="button"
-              onClick={onClear}
-              style={{
-                width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
-                background: "transparent", textAlign: "center",
-                fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.45)`,
-              }}
-            >
-              配信を削除(片付ける)
-            </PressableButton>
-          </>
-        )}
       </SettingsCard>
 
-      {testEew && (
-        <div style={{ margin: "6px 14px 10px", fontSize: 11, color: `rgba(${tokens.ink},0.5)`, lineHeight: 1.7 }}>
-          現在配信中: {testEew.place} / M{testEew.magnitude?.toFixed?.(1) ?? "-.-"}
-          {testEew.cancelled ? "(取消済み)" : ""}
+      {/* カスタムEEWエディタ — 震央地名・緯度経度・深さ・M・最大震度・警報/PLUM法を
+          自由に指定して発報できる(index.html版のカスタムEEWエディタに相当)。 */}
+      <div style={{ margin: "18px 14px 6px", fontSize: 12.5, fontWeight: 700, color: `rgba(${tokens.ink},0.7)` }}>
+        カスタムEEWエディタ
+      </div>
+      <SettingsCard>
+        <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div>
+            <label style={labelStyle}>震央地名</label>
+            <input
+              type="text" value={place} onChange={e => setPlace(e.target.value)}
+              style={inputStyle} placeholder="震央地名"
+            />
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <label style={labelStyle}>緯度</label>
+              <input
+                type="number" step="any" value={latitude}
+                onChange={e => setLatitude(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <label style={labelStyle}>経度</label>
+              <input
+                type="number" step="any" value={longitude}
+                onChange={e => setLongitude(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <label style={labelStyle}>深さ(km)</label>
+              <input
+                type="number" step="1" value={depth}
+                onChange={e => setDepth(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <label style={labelStyle}>M(マグニチュード)</label>
+              <input
+                type="number" step="0.1" value={magnitude}
+                onChange={e => setMagnitude(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
+          </div>
+          <div>
+            <label style={labelStyle}>最大震度</label>
+            <select value={maxIntensityKey} onChange={e => setMaxIntensityKey(e.target.value)} style={inputStyle}>
+              {EEW_TEST_INTENSITY_OPTIONS.map(k => (
+                <option key={k} value={k}>{INTENSITY_LABEL[k]}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: "flex", gap: 16, marginTop: 2 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: tokens.text, cursor: "pointer" }}>
+              <input type="checkbox" checked={isWarnLevel} onChange={e => setIsWarnLevel(e.target.checked)} style={{ accentColor: "#FF453A" }}/>
+              警報(オフで予報)
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: tokens.text, cursor: "pointer" }}>
+              <input type="checkbox" checked={isPlum} onChange={e => setIsPlum(e.target.checked)} style={{ accentColor: "#BF5AF2" }}/>
+              PLUM法
+            </label>
+          </div>
         </div>
+        <SettingsCardDivider/>
+        <PressableButton
+          type="button"
+          onClick={() => onAction?.("addCustom", {
+            place: place || "テスト震源",
+            latitude: typeof latitude === "number" && !Number.isNaN(latitude) ? latitude : 35.2,
+            longitude: typeof longitude === "number" && !Number.isNaN(longitude) ? longitude : 139.3,
+            depth: typeof depth === "number" && !Number.isNaN(depth) ? depth : 20,
+            magnitude: typeof magnitude === "number" && !Number.isNaN(magnitude) ? magnitude : 5.0,
+            maxIntensityKey, isWarnLevel, isPlum,
+          })}
+          style={{
+            width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
+            background: "transparent", textAlign: "center",
+            fontSize: 14, fontWeight: 700, color: "#30D158",
+          }}
+        >
+          このパラメータで追加発報
+        </PressableButton>
+      </SettingsCard>
+
+      {/* 配信中のテストEEW一覧 — 複数同時発報にそれぞれ個別対応 */}
+      {testEews.length > 0 && (
+        <>
+          <div style={{ margin: "18px 14px 6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: `rgba(${tokens.ink},0.7)` }}>
+              配信中のテストEEW({testEews.length}件)
+            </span>
+            <PressableButton
+              type="button"
+              onClick={() => onAction?.("clearAll")}
+              style={{ padding: "4px 8px", border: "none", cursor: "pointer", background: "transparent", fontSize: 12, fontWeight: 700, color: "#FF453A" }}
+            >
+              全て削除
+            </PressableButton>
+          </div>
+          <SettingsCard>
+            {testEews.map((e, i) => (
+              <Fragment key={e.id}>
+                {i > 0 && <SettingsCardDivider/>}
+                <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: tokens.text }}>
+                    {e.place} ・ 第{e.serial}報{e.isFinal ? "(最終)" : ""}{e.cancelled ? "(取消)" : ""}
+                  </div>
+                  <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.5)` }}>
+                    最大震度{INTENSITY_LABEL[e.maxIntensityKey] ?? "?"} ・ M{e.magnitude?.toFixed?.(1) ?? "-.-"} ・
+                    {e.isWarnLevel === false ? "予報" : "警報"}{e.isPlum ? "・PLUM法" : ""}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {!e.cancelled && (
+                      <>
+                        <PressableButton type="button" onClick={() => onAction?.("update", { id: e.id })} style={pillBtnStyle("#0A84FF")}>続報</PressableButton>
+                        <PressableButton type="button" onClick={() => onAction?.("finalize", { id: e.id })} style={pillBtnStyle("#30D158")}>最終報</PressableButton>
+                        <PressableButton type="button" onClick={() => onAction?.("cancel", { id: e.id })} style={pillBtnStyle("#FF453A")}>取消</PressableButton>
+                      </>
+                    )}
+                    <PressableButton type="button" onClick={() => onAction?.("remove", { id: e.id })} style={pillBtnStyle(`rgba(${tokens.ink},0.55)`)}>削除</PressableButton>
+                  </div>
+                </div>
+              </Fragment>
+            ))}
+          </SettingsCard>
+        </>
       )}
     </>
   );
@@ -11066,7 +11192,7 @@ function SettingsBody({
   stationListDisplayMode, onChangeStationListDisplayMode,
   experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
-  testEew, onBroadcastTestEew, onCancelTestEew, onClearTestEew,
+  testEews = EMPTY_EQDB_LIST, onTestEewAction,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
   pickedTsunamiHeights, onChangeTsunamiHeightPick, onRemoveTsunamiHeightPick,
@@ -11374,10 +11500,8 @@ function SettingsBody({
       <>
         <SettingsHeader title="緊急地震速報テスト配信"/>
         <EewTestBroadcastPanel
-          testEew={testEew}
-          onBroadcast={onBroadcastTestEew}
-          onCancel={onCancelTestEew}
-          onClear={onClearTestEew}
+          testEews={testEews}
+          onAction={onTestEewAction}
         />
       </>
     );
@@ -12019,54 +12143,114 @@ export default function App() {
      実験的機能: 緊急地震速報テスト配信
      実際のeews(WebSocketで更新され続ける)とは別のstateに持たせ、本物のデータ更新に
      巻き込まれて消えてしまわないようにする(津波テスト配信のtestTsunamiと同じ考え方)。
+     index.html版の「複数EEW同時発報」「カスタムパラメータでの発報」に相当する機能を
+     持たせるため、単一オブジェクトではなく配列(testEews)で複数のテストイベントを
+     独立して保持し、それぞれ個別に続報・最終報・取消・削除ができるようにしている。
      ───────────────────────────────────────────────────── */
-  const [testEew, setTestEew] = useState(null);
+  const [testEews, setTestEews] = useState([]);
 
-  function broadcastTestEew(scenario) {
+  // 最大震度キー(scale)から、簡易的な対象地域リストを組み立てる
+  // (震源から少し離れた地域ほど1ランク弱い震度、という単純な減衰モデル)。
+  function buildTestEewAreas(maxScaleKey, isPlum) {
+    const order = ["7", "6+", "6-", "6", "5+", "5-", "5", "4", "3", "2", "1", "0"];
+    const idx = Math.max(0, order.indexOf(maxScaleKey));
+    const names = ["神奈川県東部", "東京都２３区", "伊豆"];
+    return names.map((name, i) => {
+      const key = order[Math.min(order.length - 1, idx + i)];
+      const codeMap = { "7": 70, "6+": 60, "6-": 55, "6": 54, "5+": 50, "5-": 45, "5": 44, "4": 40, "3": 30, "2": 20, "1": 10, "0": 0 };
+      const code = codeMap[key] ?? 30;
+      return { pref: "", name, scaleFrom: code, scaleTo: code, isPlum: !!isPlum };
+    });
+  }
+
+  // カスタムパラメータ(地震タブのカスタムEEWエディタ相当)から1件のテストEEWカードを組み立てる。
+  function buildTestEewCard({ place, latitude, longitude, depth, magnitude, maxIntensityKey, isWarnLevel, isPlum }) {
     const now = new Date();
     const originTimeStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
-    const isPlum = scenario === "plum";
-    const isForecast = scenario === "forecast"; // Wolfxで拾える「予報」段階のテスト用
-    const base = {
-      id: `test_${now.getTime()}`,
-      eventId: `test_${now.getTime()}`,
+    const areas = buildTestEewAreas(maxIntensityKey, isPlum);
+    const id = `test_${now.getTime()}_${Math.floor(Math.random() * 1000)}`;
+    return {
+      id, eventId: id,
       serial: "1",
       cancelled: false,
       isTraining: false,
       originTime: originTimeStr,
       arrivalTime: null,
       isAssumedHypocenter: false,
-      place: "テスト震源(相模湾)",
+      place: place || "テスト震源",
       reducedPlace: "テスト",
+      latitude, longitude, depth,
+      magnitude,
+      areas,
+      maxIntensityKey,
+      isTest: true,
+      source: "test",
+      isFinal: false,
+      isWarnLevel: !!isWarnLevel,
+      isPlum: !!isPlum,
+      receivedLocalAt: Date.now(),
+      cancelledLocalAt: null,
+    };
+  }
+
+  // 通常/PLUM法/予報のプリセットシナリオから、すぐ発報できるパラメータを組み立てる。
+  function presetTestEewParams(scenario) {
+    const isPlum = scenario === "plum";
+    const isForecast = scenario === "forecast"; // Wolfxで拾える「予報」段階のテスト用
+    return {
+      place: "テスト震源(相模湾)",
       latitude: 35.2,
       longitude: 139.3,
       depth: isPlum ? 30 : 20,
       magnitude: isForecast ? 4.5 : (isPlum ? 6.2 : 5.8),
-      areas: isForecast ? [
-        { pref: "神奈川県", name: "神奈川県東部", scaleFrom: 30, scaleTo: 30, isPlum: false },
-      ] : [
-        { pref: "神奈川県", name: "神奈川県東部", scaleFrom: 50, scaleTo: 50, isPlum },
-        { pref: "東京都",   name: "東京都２３区",  scaleFrom: 45, scaleTo: 45, isPlum },
-        { pref: "静岡県",   name: "伊豆",          scaleFrom: 40, scaleTo: 40, isPlum },
-      ],
-      isTest: true,
-      source: "test",
-      isFinal: false,
+      maxIntensityKey: isForecast ? "3" : "5-",
       isWarnLevel: !isForecast,
+      isPlum,
     };
-    const card = { ...base, maxIntensityKey: eewMaxScaleKey(base.areas) };
-    setTestEew({ ...card, receivedLocalAt: Date.now(), cancelledLocalAt: null });
   }
-  function cancelTestEew() {
-    setTestEew(prev => (prev ? { ...prev, cancelled: true, cancelledLocalAt: Date.now() } : null));
-  }
-  function clearTestEew() {
-    setTestEew(null);
+
+  /**
+   * テスト配信パネルからの操作を一手に受け付ける単一ディスパッチャ。
+   * action: "addPreset"(プリセットで即発報) | "addCustom"(カスタムパラメータで即発報) |
+   *         "update"(続報。震度は変えずreportを1つ進める) | "finalize"(最終報として発報) |
+   *         "cancel"(取消を発報) | "remove"(一覧から削除) | "clearAll"(全部削除)
+   */
+  function handleTestEewAction(action, payload) {
+    if (action === "addPreset") {
+      setTestEews(prev => [...prev, buildTestEewCard(presetTestEewParams(payload))]);
+      return;
+    }
+    if (action === "addCustom") {
+      setTestEews(prev => [...prev, buildTestEewCard(payload)]);
+      return;
+    }
+    if (action === "clearAll") {
+      setTestEews([]);
+      return;
+    }
+    // 以降は既存の特定イベント(id)に対する操作
+    const { id } = payload || {};
+    setTestEews(prev => {
+      if (action === "remove") return prev.filter(e => e.id !== id);
+      return prev.map(e => {
+        if (e.id !== id) return e;
+        if (action === "update") {
+          return { ...e, serial: String((parseInt(e.serial, 10) || 1) + 1), receivedLocalAt: Date.now() };
+        }
+        if (action === "finalize") {
+          return { ...e, serial: String((parseInt(e.serial, 10) || 1) + 1), isFinal: true, receivedLocalAt: Date.now() };
+        }
+        if (action === "cancel") {
+          return { ...e, cancelled: true, cancelledLocalAt: Date.now(), receivedLocalAt: Date.now() };
+        }
+        return e;
+      });
+    });
   }
 
   // テスト配信中は、実際の一覧の先頭にテストデータを合成する。地図・パネルとも、
   // 以降のEEW関連の判定はこちら(effectiveEews)を使う。
-  const effectiveEews = testEew ? [testEew, ...eews] : eews;
+  const effectiveEews = testEews.length > 0 ? [...testEews, ...eews] : eews;
 
   // 緊急地震速報の詳細フローティングカードを表示中かどうか。左上のEewFabButtonを
   // 押すとtrueになり、専用の「戻る」ボタンで閉じるとfalseに戻る。既存のタブ
@@ -13233,10 +13417,8 @@ export default function App() {
                   onBroadcastTestTsunami={broadcastTestTsunami}
                   onCancelTestTsunami={cancelTestTsunami}
                   onClearTestTsunami={clearTestTsunami}
-                  testEew={testEew}
-                  onBroadcastTestEew={broadcastTestEew}
-                  onCancelTestEew={cancelTestEew}
-                  onClearTestEew={clearTestEew}
+                  testEews={testEews}
+                  onTestEewAction={handleTestEewAction}
                   eews={effectiveEews}
                   eewDetailOpen={eewDetailOpen}
                   onOpenEewDetail={() => setEewDetailOpen(true)}
@@ -13320,10 +13502,8 @@ export default function App() {
               onBroadcastTestTsunami={broadcastTestTsunami}
               onCancelTestTsunami={cancelTestTsunami}
               onClearTestTsunami={clearTestTsunami}
-              testEew={testEew}
-              onBroadcastTestEew={broadcastTestEew}
-              onCancelTestEew={cancelTestEew}
-              onClearTestEew={clearTestEew}
+              testEews={testEews}
+              onTestEewAction={handleTestEewAction}
               eews={effectiveEews}
               eewDetailOpen={eewDetailOpen}
               onOpenEewDetail={() => setEewDetailOpen(true)}
