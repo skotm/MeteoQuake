@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.4d";
+const APP_VERSION = "1.3.4e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -4758,15 +4758,19 @@ function instrumentalIntensityToScaleKey(i) {
 
 // 緊急地震速報テスト配信専用: 震源(緯度・経度・M・深さ)から、細分区域.json(areasGeoJSON)の
 // 各地域の予測最大震度を距離減衰式で計算する。気象庁「緊急地震速報の概要や処理手法に関する
-// 技術的参考資料」(令和6年4月版)の予測震度算出処理と同じ式を使用する:
+// 技術的参考資料」(令和6年4月版)の予測震度算出処理をベースにしている:
 //   1. Mjma→Mw変換(宇津[1982]等): Mw = M - 0.171
 //   2. 断層長(宇津[1977]): log10(L) = 0.5*Mw - 1.85 半分を震源球の半径とし、最短距離から差し引く
 //      (下限3km)
 //   3. 司・翠川[1999]の距離減衰式で基準基盤(Vs600m/s)上の最大速度PGV600を算出
-//   4. 基準基盤→工学的基盤の換算(≒0.90倍。気象庁資料の簡略値。地点別の地盤増幅度データは
-//      持たないため1.0とみなす)
+//   4. 地表への換算。本来は基準基盤→工学的基盤(≒0.90倍)→地点ごとの地盤増幅度、と
+//      2段階だが、地点別の地盤増幅度データは持たないため、代わりに市街地の軟弱地盤を
+//      想定した簡易増幅係数(SITE_AMPLIFICATION_FACTOR)を掛けている。この値は気象庁の
+//      実運用の平均値より高め(＝震度がやや過大気味)に寄せてあり、テストで震度4未満
+//      判定(=「?」表示)ばかりになるのを避ける狙いもある。
 //   5. 翠川ほか[1999]の換算式で計測震度に変換する。この式は震度4〜7の範囲でのみ有効なため、
 //      震度4未満と算出された地域は結果に含めない(=地図の塗り潰しも震度4以上のみになる)
+const SITE_AMPLIFICATION_FACTOR = 2.0;
 function calcTestEewAreasByAttenuation(areasGeoJSON, lat, lon, magnitude, depthKm, isPlum) {
   if (!areasGeoJSON || !Array.isArray(areasGeoJSON.features)) return [];
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(magnitude)) return [];
@@ -4791,7 +4795,7 @@ function calcTestEewAreasByAttenuation(areasGeoJSON, lat, lon, magnitude, depthK
       - Math.log10(shortestKm + 0.0028 * Math.pow(10, 0.5 * Mw))
       - 0.002 * shortestKm;
     const PGV600 = Math.pow(10, logPGV600);
-    const PGVs = PGV600 * 0.9; // 工学的基盤換算(簡易値)。地盤増幅度は考慮しない
+    const PGVs = PGV600 * SITE_AMPLIFICATION_FACTOR;
 
     const instrIntensity = 2.68 + 1.72 * Math.log10(PGVs);
     if (!Number.isFinite(instrIntensity) || instrIntensity < 4) continue;
