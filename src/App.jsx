@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.3";
+const APP_VERSION = "1.3.3a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -1358,6 +1358,24 @@ function MapCanvas({
           });
 
           // ─────────────────────────────────────────────
+          // 緊急地震速報(EEW): 地域ごとの予測震度の塗りつぶし。
+          // 細分区域.json(areasGeoJSON)のポリゴンのうち、EEWのareas[].nameと
+          // 名前が一致するものだけを抜き出し、震度の色をproperties.fillColorに
+          // 持たせて描画する(震度分布の既存の"areas"ソース/feature-stateとは
+          // 独立させることで、選択中の地震の震度分布表示と干渉しないようにしている)。
+          // P波・S波の円や震源マーカーより下、通常の地図塗りより上になるよう、
+          // このブロックを先に追加しておく。
+          map.addSource("eew-area-fill", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+          map.addLayer({
+            id: "eew-area-fill-layer", type: "fill", source: "eew-area-fill",
+            paint: { "fill-color": ["get", "fillColor"], "fill-opacity": 0.55 },
+          });
+          map.addLayer({
+            id: "eew-area-fill-line-layer", type: "line", source: "eew-area-fill",
+            paint: { "line-color": "rgba(0,0,0,0.35)", "line-width": 0.8 },
+          });
+
+          // ─────────────────────────────────────────────
           // 緊急地震速報(EEW): P波・S波の伝播円と震源マーカー。
           // データは別のuseEffect(下方)がrequestAnimationFrameで頻繁に
           // setDataするため、ここでは空のソースを用意するだけでよい。
@@ -1502,6 +1520,52 @@ function MapCanvas({
 
     return () => { if (frameId != null) cancelAnimationFrame(frameId); };
   }, [status]);
+
+  // 緊急地震速報: areas[]に予測震度がある場合、その地域を細分区域.json上で
+  // 名前が一致するポリゴンを探し、震度の色で塗りつぶす。P/S波の円と違って
+  // 頻繁には変わらないため、requestAnimationFrameではなくeewsが変化した時だけ
+  // 計算する。取消・タイムアウトで対象のEEWが無くなったら自動的に消える
+  // (毎回全部作り直すだけなので、個別の後始末を気にしなくてよい)。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    let cancelled = false;
+
+    loadGeoData().then(({ areas: areasGeoJSON }) => {
+      if (cancelled) return;
+      const source = map.getSource("eew-area-fill");
+      if (!source) return;
+
+      const features = [];
+      const paintedCodes = new Set();
+      for (const eew of eews) {
+        if (eew.cancelled || !Array.isArray(eew.areas)) continue;
+        for (const area of eew.areas) {
+          const intensityKey = area.maxIntensityKey;
+          if (!intensityKey || intensityKey === "?") continue;
+          const codes = findAreaCodesByName(areasGeoJSON, area.name);
+          if (codes.length === 0) continue;
+          const color = (colorScheme.colors[intensityKey] || colorScheme.colors["0"]).bg;
+          for (const code of codes) {
+            if (paintedCodes.has(code)) continue; // 複数EEWが同じ地域を含む場合は先勝ちでよい
+            paintedCodes.add(code);
+            const feature = areasGeoJSON.features.find(f => f.properties?.code === code);
+            if (!feature) continue;
+            features.push({
+              type: "Feature",
+              geometry: feature.geometry,
+              properties: { fillColor: color },
+            });
+          }
+        }
+      }
+      source.setData({ type: "FeatureCollection", features });
+    }).catch(err => {
+      console.error("緊急地震速報の地域塗りつぶし用データの読み込みに失敗:", err);
+    });
+
+    return () => { cancelled = true; };
+  }, [eews, status, colorScheme]);
 
   // 配色スキームが切り替わったら、観測点アイコン(丸+白フチ+数字)を焼き直す。
   // symbolレイヤー側は同じicon-image名を参照し続けるので、updateImageするだけで
@@ -3933,14 +3997,21 @@ function eewMaxScaleKey(areas) {
 function toEewCard(item) {
   const eq = item.earthquake || {};
   const hypo = eq.hypocenter || {};
-  const areas = Array.isArray(item.areas) ? item.areas.map(a => ({
-    pref: a.pref || "",
-    name: a.name || "",
-    scaleFrom: typeof a.scaleFrom === "number" ? a.scaleFrom : null,
-    scaleTo: typeof a.scaleTo === "number" ? a.scaleTo : null,
-    // kindCode: 10/11=通常(到達予測あり)、19=PLUM法(主要動の到達予想なし)
-    isPlum: a.kindCode === "19",
-  })) : [];
+  const areas = Array.isArray(item.areas) ? item.areas.map(a => {
+    const scaleFrom = typeof a.scaleFrom === "number" ? a.scaleFrom : null;
+    const scaleTo = typeof a.scaleTo === "number" ? a.scaleTo : null;
+    return {
+      pref: a.pref || "",
+      name: a.name || "",
+      scaleFrom,
+      scaleTo,
+      // 地図の塗りつぶし用に、この地域の予測震度を内部キー("5-"等)に変換しておく。
+      // scaleTo(上限側)を優先し、無ければscaleFromを使う。
+      maxIntensityKey: eewMaxScaleKey([{ scaleFrom, scaleTo }]),
+      // kindCode: 10/11=通常(到達予測あり)、19=PLUM法(主要動の到達予想なし)
+      isPlum: a.kindCode === "19",
+    };
+  }) : [];
 
   return {
     id: item.id,
@@ -4048,6 +4119,9 @@ function toEewCardFromWolfx(data) {
     name: a.Chiiki || "",
     scaleFrom: null, // 内部的にはscaleコードではなくmaxIntensityKeyを直接使うため未使用
     scaleTo: null,
+    // Wolfxは震度を"5弱"のような表示用文字列で返してくる。Shindo2(上限側)を
+    // 優先し、無ければShindo1を使って内部キーへ変換する(P2P地震情報のscaleTo優先と同じ考え方)。
+    maxIntensityKey: intensityLabelToKey(a.Shindo2 || a.Shindo1),
     isPlum: !!data.isAssumption,
   })) : [];
 
@@ -4804,6 +4878,27 @@ function findAreaCodeByPoint(areasGeoJSON, lat, lon) {
     }
   }
   return null;
+}
+
+// 緊急地震速報のareas[].name(例:「神奈川県東部」「東京都２３区」)から、
+// 細分区域.json(areasGeoJSON)側で同じ名前を持つfeatureのcode一覧を返す。
+// EEWの地域名は気象庁の細分区域名と表記が一致することが多いため、まず完全一致を
+// 試し、見つからなければ全角数字→半角などのゆらぎを吸収して再試行する。
+// 該当が無ければ(=地図側に該当ポリゴンが見つからなければ)空配列を返し、
+// その地域の塗りつぶしはあきらめる(誤った区域を塗るよりは安全)。
+function normalizeAreaNameForMatch(name) {
+  if (!name) return "";
+  // 全角数字を半角に変換してから比較する(「２３区」→「23区」)
+  return name.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).trim();
+}
+function findAreaCodesByName(areasGeoJSON, name) {
+  if (!areasGeoJSON || !Array.isArray(areasGeoJSON.features) || !name) return [];
+  const exact = areasGeoJSON.features.filter(f => f.properties?.name === name);
+  if (exact.length > 0) return exact.map(f => f.properties?.code).filter(c => c != null);
+
+  const normalizedTarget = normalizeAreaNameForMatch(name);
+  const fuzzy = areasGeoJSON.features.filter(f => normalizeAreaNameForMatch(f.properties?.name) === normalizedTarget);
+  return fuzzy.map(f => f.properties?.code).filter(c => c != null);
 }
 
 // 観測点マスタ(stations)から、eqdbの観測点名(name)に対応する地点を探し、
@@ -12159,7 +12254,7 @@ export default function App() {
       const key = order[Math.min(order.length - 1, idx + i)];
       const codeMap = { "7": 70, "6+": 60, "6-": 55, "6": 54, "5+": 50, "5-": 45, "5": 44, "4": 40, "3": 30, "2": 20, "1": 10, "0": 0 };
       const code = codeMap[key] ?? 30;
-      return { pref: "", name, scaleFrom: code, scaleTo: code, isPlum: !!isPlum };
+      return { pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: key, isPlum: !!isPlum };
     });
   }
 
