@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.3a";
+const APP_VERSION = "1.3.4";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -635,6 +635,17 @@ function loadPlateBoundariesData() {
   return plateBoundariesDataPromise;
 }
 
+// 震央地名(気象庁の震央地名区域)データ。緊急地震速報テスト配信で「地図をタップして
+// 震源を指定」した時に、タップ地点から震源地名を自動判定するためだけに使うので、
+// 断層・プレート境界と同様、実験的機能が実際に使われた時だけ遅延読み込みする。
+// ファイル: public/map/震央地名_geo.json
+let epicenterNamesDataPromise = null;
+function loadEpicenterNamesData() {
+  if (epicenterNamesDataPromise) return epicenterNamesDataPromise;
+  epicenterNamesDataPromise = cachedFetchJSON(`${import.meta.env.BASE_URL}map/震央地名_geo.json`);
+  return epicenterNamesDataPromise;
+}
+
 // 津波予報区(海岸線)データ。津波情報の詳細を開いた時だけ、対象の予報区を
 // 塗り分けるために遅延読み込みする(断層・プレート境界と同じ理由・同じ方式)。
 // ファイル: public/map/tsunami-areas.json
@@ -875,6 +886,7 @@ function MapCanvas({
   tsunamiHeightBars = [], tideStationBarsMode = false,
   tsunamiAreaPickActive = false, onPickTsunamiArea, pickedTsunamiAreas = [],
   eews = [],
+  eewEpicenterPickActive = false, onPickEewEpicenter,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -908,6 +920,14 @@ function MapCanvas({
   tsunamiAreaPickActiveRef.current = tsunamiAreaPickActive;
   const onPickTsunamiAreaRef = useRef(onPickTsunamiArea);
   onPickTsunamiAreaRef.current = onPickTsunamiArea;
+  const eewEpicenterPickActiveRef = useRef(eewEpicenterPickActive);
+  eewEpicenterPickActiveRef.current = eewEpicenterPickActive;
+  const onPickEewEpicenterRef = useRef(onPickEewEpicenter);
+  onPickEewEpicenterRef.current = onPickEewEpicenter;
+  // 震央地名データは、緊急地震速報テスト配信のピックモードが最初にONになった時だけ
+  // 遅延読み込みする(実験的機能なので、使わないユーザーには一切通信させない)。
+  const epicenterNamesGeoDataRef = useRef(null);
+  const epicenterNamesLoadedRef = useRef(false);
   const tsunamiAreasGeoDataRef = useRef(null);
   // 地図の基本配色(海・陸・都道府県境界線)。ライト/ダークモードで切り替える。
   const { tokens: themeTokens, mode } = useContext(ThemeContext);
@@ -1357,6 +1377,30 @@ function MapCanvas({
             onPickTsunamiAreaRef.current?.(nearest.name);
           });
 
+          // 緊急地震速報テスト配信「地図をタップして震源を指定」モード中だけ有効になる、
+          // 地図全体を対象としたクリック。タップ地点の緯度経度をそのまま震源座標にし、
+          // 震央地名_geo.json(遅延読み込み済みなら同期的に、まだなら取得してから)で
+          // その地点を含む区域名を調べ、緯度・経度・震源地名をまとめて返す。
+          map.on("click", (e) => {
+            if (!eewEpicenterPickActiveRef.current) return;
+            const { lat, lng } = e.lngLat;
+            const geo = epicenterNamesGeoDataRef.current;
+            if (geo) {
+              const name = findEpicenterNameByPoint(geo, lat, lng);
+              onPickEewEpicenterRef.current?.(lat, lng, name);
+            } else {
+              // 初回タップ時にまだ読み込めていない場合は、取得を待ってから確定する。
+              loadEpicenterNamesData().then((loaded) => {
+                epicenterNamesGeoDataRef.current = loaded;
+                const name = findEpicenterNameByPoint(loaded, lat, lng);
+                onPickEewEpicenterRef.current?.(lat, lng, name);
+              }).catch((err) => {
+                console.error("震央地名データの読み込みに失敗しました:", err);
+                onPickEewEpicenterRef.current?.(lat, lng, null);
+              });
+            }
+          });
+
           // ─────────────────────────────────────────────
           // 緊急地震速報(EEW): 地域ごとの予測震度の塗りつぶし。
           // 細分区域.json(areasGeoJSON)のポリゴンのうち、EEWのareas[].nameと
@@ -1688,6 +1732,26 @@ function MapCanvas({
         });
     }
   }, [tsunamiAreas, tsunamiAreaPickActive, status]);
+
+  // 緊急地震速報テスト配信「地図をタップして震源を指定」モード用。ONになったら
+  // カーソルをcrosshairにし、震央地名データをこの時点で先読みしておく
+  // (タップ時に読めていればそのまま同期的に確定でき、待たせずに済む)。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+
+    map.getCanvas().style.cursor = (tsunamiAreaPickActive || eewEpicenterPickActive) ? "crosshair" : "";
+
+    if (eewEpicenterPickActive && !epicenterNamesLoadedRef.current) {
+      epicenterNamesLoadedRef.current = true;
+      loadEpicenterNamesData()
+        .then((geojson) => { epicenterNamesGeoDataRef.current = geojson; })
+        .catch((err) => {
+          console.error("震央地名データの読み込みに失敗しました:", err);
+          epicenterNamesLoadedRef.current = false; // 失敗時は次回ONで再試行できるようにする
+        });
+    }
+  }, [eewEpicenterPickActive, tsunamiAreaPickActive, status]);
 
   // ピックモードで選ばれている予報区(pickedTsunamiAreas、複数・グレード別可)を、
   // それぞれの実際の配色で強調レイヤーに反映する。buildTsunamiAreaColorExprは
@@ -4901,6 +4965,20 @@ function findAreaCodesByName(areasGeoJSON, name) {
   return fuzzy.map(f => f.properties?.code).filter(c => c != null);
 }
 
+// 震央地名_geo.json(気象庁の震央地名区域)のポリゴンを走査し、点(lat,lon)を
+// 含む区域の名前(properties.name)を返す。緊急地震速報テスト配信で「地図をタップ
+// して震源を指定」した時、タップ地点から震源地名を自動判定するのに使う。
+// 該当する区域が無い(海洋の詳細区分に含まれない・データ範囲外など)場合はnull。
+function findEpicenterNameByPoint(epicenterNamesGeoJSON, lat, lon) {
+  if (!epicenterNamesGeoJSON || !Array.isArray(epicenterNamesGeoJSON.features) || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  for (const feature of epicenterNamesGeoJSON.features) {
+    if (isPointInPolygonGeometry(lat, lon, feature.geometry)) {
+      return feature.properties?.name ?? null;
+    }
+  }
+  return null;
+}
+
 // 観測点マスタ(stations)から、eqdbの観測点名(name)に対応する地点を探し、
 // 区域コード(area.code)を補完する。
 // eqdbは観測点の緯度経度(lat/lon)を直接返してくるため、まずareasGeoJSON(細分区域の
@@ -6498,6 +6576,7 @@ function BottomDock({
   experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
+  eewTestForm, eewEpicenterPickActive,
   eews = EMPTY_EQDB_LIST, eewDetailOpen, onOpenEewDetail, onCloseEewDetail,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
@@ -7926,6 +8005,8 @@ function BottomDock({
                   onClearTestTsunami={onClearTestTsunami}
                   testEews={testEews}
                   onTestEewAction={onTestEewAction}
+                  eewTestForm={eewTestForm}
+                  eewEpicenterPickActive={eewEpicenterPickActive}
                   tsunamiAreaPickActive={tsunamiAreaPickActive}
                   onStartTsunamiAreaPick={onStartTsunamiAreaPick}
                   pickedTsunamiAreas={pickedTsunamiAreas}
@@ -10345,7 +10426,6 @@ const TEST_TSUNAMI_GRADE_OPTIONS = [
 const TSUNAMI_HEIGHT_PICK_OPTIONS = Array.from({ length: 99 }, (_, i) => (i + 2) / 10);
 
 // 実験的機能: 緊急地震速報テスト配信パネル。
-// 実験的機能: 緊急地震速報テスト配信パネル。
 // プリセット(通常/PLUM法/予報)をワンタップで発報できるほか、地震タブの
 // カスタムEEWエディタ(index.html版)に相当する、震央地名・緯度経度・深さ・M・
 // 最大震度・警報/PLUM法を自由に指定できるフォームも用意している。
@@ -10354,16 +10434,10 @@ const TSUNAMI_HEIGHT_PICK_OPTIONS = Array.from({ length: 99 }, (_, i) => (i + 2)
 // 地図上のP波S波円と震源マーカーに、実際のデータと同様に反映される。
 const EEW_TEST_INTENSITY_OPTIONS = ["3", "4", "5-", "5+", "6-", "6+", "7"];
 
-function EewTestBroadcastPanel({ testEews, onAction }) {
+function EewTestBroadcastPanel({ testEews, onAction, eewTestForm, eewEpicenterPickActive }) {
   const { tokens } = useContext(ThemeContext);
-  const [place, setPlace] = useState("テスト震源(相模湾)");
-  const [latitude, setLatitude] = useState(35.2);
-  const [longitude, setLongitude] = useState(139.3);
-  const [depth, setDepth] = useState(20);
-  const [magnitude, setMagnitude] = useState(5.8);
-  const [maxIntensityKey, setMaxIntensityKey] = useState("5-");
-  const [isWarnLevel, setIsWarnLevel] = useState(true);
-  const [isPlum, setIsPlum] = useState(false);
+  const f = eewTestForm;
+  const isEditing = !!f.editingId;
 
   const inputStyle = {
     width: "100%", padding: "8px 10px", borderRadius: 8, border: "none",
@@ -10381,14 +10455,19 @@ function EewTestBroadcastPanel({ testEews, onAction }) {
     };
   }
 
+  function patchForm(patch) {
+    onAction?.("patchForm", patch);
+  }
+
   return (
     <>
       <div style={{ margin: "-4px 14px 10px", fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.7 }}>
         実際の気象庁発表ではない、動作確認用のダミーデータです。複数を同時に発報して
-        重なった時の見え方も確認できます。それぞれ個別に続報・最終報・取消・削除ができます。
+        重なった時の見え方も確認できます。それぞれ個別に続報・最終報・取消・削除ができるほか、
+        一覧の「編集」から続報の内容を書き換えて発報できます。
       </div>
 
-      {/* プリセット — ワンタップで即発報 */}
+      {/* プリセット — ワンタップで即発報(フォームや編集中の内容には影響しない) */}
       <SettingsCard>
         <PressableButton
           type="button"
@@ -10427,59 +10506,71 @@ function EewTestBroadcastPanel({ testEews, onAction }) {
         </PressableButton>
       </SettingsCard>
 
-      {/* カスタムEEWエディタ — 震央地名・緯度経度・深さ・M・最大震度・警報/PLUM法を
-          自由に指定して発報できる(index.html版のカスタムEEWエディタに相当)。 */}
-      <div style={{ margin: "18px 14px 6px", fontSize: 12.5, fontWeight: 700, color: `rgba(${tokens.ink},0.7)` }}>
-        カスタムEEWエディタ
+      {/* カスタムEEWエディタ — 震源は地図タップで指定し(震央地名・緯度・経度は
+          その結果として自動で入る)、深さ・M・最大震度・警報/PLUM法だけ数値・
+          選択肢で指定する。「編集」から呼ばれた場合はeditingIdが立ち、発報時に
+          新規追加ではなく該当イベントへの続報として扱われる。 */}
+      <div style={{ margin: "18px 14px 6px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: `rgba(${tokens.ink},0.7)` }}>
+          カスタムEEWエディタ{isEditing ? "(続報を編集中)" : ""}
+        </span>
+        {isEditing && (
+          <PressableButton
+            type="button"
+            onClick={() => onAction?.("resetForm")}
+            style={{ padding: "4px 8px", border: "none", cursor: "pointer", background: "transparent", fontSize: 12, fontWeight: 700, color: `rgba(${tokens.ink},0.5)` }}
+          >
+            新規に戻す
+          </PressableButton>
+        )}
       </div>
       <SettingsCard>
         <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
           <div>
-            <label style={labelStyle}>震央地名</label>
-            <input
-              type="text" value={place} onChange={e => setPlace(e.target.value)}
-              style={inputStyle} placeholder="震央地名"
-            />
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <label style={labelStyle}>緯度</label>
-              <input
-                type="number" step="any" value={latitude}
-                onChange={e => setLatitude(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                style={inputStyle}
-              />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <label style={labelStyle}>経度</label>
-              <input
-                type="number" step="any" value={longitude}
-                onChange={e => setLongitude(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                style={inputStyle}
-              />
-            </div>
+            <label style={labelStyle}>震源</label>
+            <PressableButton
+              type="button"
+              onClick={() => onAction?.(eewEpicenterPickActive ? "cancelEpicenterPick" : "startEpicenterPick")}
+              style={{
+                width: "100%", padding: "10px 12px", borderRadius: 8, border: "none", cursor: "pointer",
+                textAlign: "left",
+                background: eewEpicenterPickActive ? "rgba(255,69,58,0.18)" : `rgba(${tokens.ink},0.08)`,
+                color: eewEpicenterPickActive ? "#FF453A" : tokens.text,
+              }}
+            >
+              {eewEpicenterPickActive ? (
+                <span style={{ fontSize: 13, fontWeight: 700 }}>地図をタップして震源を指定してください…</span>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{f.place || "(震源未指定)"}</div>
+                  <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, marginTop: 2 }}>
+                    北緯{f.latitude?.toFixed?.(2) ?? "-.--"}° ・ 東経{f.longitude?.toFixed?.(2) ?? "-.--"}° ・ タップして地図で選び直す
+                  </div>
+                </div>
+              )}
+            </PressableButton>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <label style={labelStyle}>深さ(km)</label>
               <input
-                type="number" step="1" value={depth}
-                onChange={e => setDepth(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                type="number" step="1" value={f.depth}
+                onChange={e => patchForm({ depth: e.target.value === "" ? "" : parseFloat(e.target.value) })}
                 style={inputStyle}
               />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <label style={labelStyle}>M(マグニチュード)</label>
               <input
-                type="number" step="0.1" value={magnitude}
-                onChange={e => setMagnitude(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                type="number" step="0.1" value={f.magnitude}
+                onChange={e => patchForm({ magnitude: e.target.value === "" ? "" : parseFloat(e.target.value) })}
                 style={inputStyle}
               />
             </div>
           </div>
           <div>
             <label style={labelStyle}>最大震度</label>
-            <select value={maxIntensityKey} onChange={e => setMaxIntensityKey(e.target.value)} style={inputStyle}>
+            <select value={f.maxIntensityKey} onChange={e => patchForm({ maxIntensityKey: e.target.value })} style={inputStyle}>
               {EEW_TEST_INTENSITY_OPTIONS.map(k => (
                 <option key={k} value={k}>{INTENSITY_LABEL[k]}</option>
               ))}
@@ -10487,11 +10578,11 @@ function EewTestBroadcastPanel({ testEews, onAction }) {
           </div>
           <div style={{ display: "flex", gap: 16, marginTop: 2 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: tokens.text, cursor: "pointer" }}>
-              <input type="checkbox" checked={isWarnLevel} onChange={e => setIsWarnLevel(e.target.checked)} style={{ accentColor: "#FF453A" }}/>
+              <input type="checkbox" checked={f.isWarnLevel} onChange={e => patchForm({ isWarnLevel: e.target.checked })} style={{ accentColor: "#FF453A" }}/>
               警報(オフで予報)
             </label>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: tokens.text, cursor: "pointer" }}>
-              <input type="checkbox" checked={isPlum} onChange={e => setIsPlum(e.target.checked)} style={{ accentColor: "#BF5AF2" }}/>
+              <input type="checkbox" checked={f.isPlum} onChange={e => patchForm({ isPlum: e.target.checked })} style={{ accentColor: "#BF5AF2" }}/>
               PLUM法
             </label>
           </div>
@@ -10499,13 +10590,14 @@ function EewTestBroadcastPanel({ testEews, onAction }) {
         <SettingsCardDivider/>
         <PressableButton
           type="button"
-          onClick={() => onAction?.("addCustom", {
-            place: place || "テスト震源",
-            latitude: typeof latitude === "number" && !Number.isNaN(latitude) ? latitude : 35.2,
-            longitude: typeof longitude === "number" && !Number.isNaN(longitude) ? longitude : 139.3,
-            depth: typeof depth === "number" && !Number.isNaN(depth) ? depth : 20,
-            magnitude: typeof magnitude === "number" && !Number.isNaN(magnitude) ? magnitude : 5.0,
-            maxIntensityKey, isWarnLevel, isPlum,
+          onClick={() => onAction?.("dispatchForm", {
+            editingId: f.editingId,
+            place: f.place || "テスト震源",
+            latitude: typeof f.latitude === "number" && !Number.isNaN(f.latitude) ? f.latitude : 35.2,
+            longitude: typeof f.longitude === "number" && !Number.isNaN(f.longitude) ? f.longitude : 139.3,
+            depth: typeof f.depth === "number" && !Number.isNaN(f.depth) ? f.depth : 20,
+            magnitude: typeof f.magnitude === "number" && !Number.isNaN(f.magnitude) ? f.magnitude : 5.0,
+            maxIntensityKey: f.maxIntensityKey, isWarnLevel: f.isWarnLevel, isPlum: f.isPlum,
           })}
           style={{
             width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
@@ -10513,11 +10605,12 @@ function EewTestBroadcastPanel({ testEews, onAction }) {
             fontSize: 14, fontWeight: 700, color: "#30D158",
           }}
         >
-          このパラメータで追加発報
+          {isEditing ? "このパラメータで続報を発報" : "このパラメータで追加発報"}
         </PressableButton>
       </SettingsCard>
 
-      {/* 配信中のテストEEW一覧 — 複数同時発報にそれぞれ個別対応 */}
+      {/* 配信中のテストEEW一覧 — 複数同時発報にそれぞれ個別対応。「編集」で
+          そのイベントの現在値をカスタムEEWエディタへ読み込み、続報の内容を書き換えられる。 */}
       {testEews.length > 0 && (
         <>
           <div style={{ margin: "18px 14px 6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -10536,7 +10629,10 @@ function EewTestBroadcastPanel({ testEews, onAction }) {
             {testEews.map((e, i) => (
               <Fragment key={e.id}>
                 {i > 0 && <SettingsCardDivider/>}
-                <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{
+                  padding: "10px 14px", display: "flex", flexDirection: "column", gap: 8,
+                  background: f.editingId === e.id ? "rgba(48,209,88,0.08)" : undefined,
+                }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: tokens.text }}>
                     {e.place} ・ 第{e.serial}報{e.isFinal ? "(最終)" : ""}{e.cancelled ? "(取消)" : ""}
                   </div>
@@ -10547,8 +10643,9 @@ function EewTestBroadcastPanel({ testEews, onAction }) {
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     {!e.cancelled && (
                       <>
+                        <PressableButton type="button" onClick={() => onAction?.("editLoad", { id: e.id })} style={pillBtnStyle("#30D158")}>編集して続報</PressableButton>
                         <PressableButton type="button" onClick={() => onAction?.("update", { id: e.id })} style={pillBtnStyle("#0A84FF")}>続報</PressableButton>
-                        <PressableButton type="button" onClick={() => onAction?.("finalize", { id: e.id })} style={pillBtnStyle("#30D158")}>最終報</PressableButton>
+                        <PressableButton type="button" onClick={() => onAction?.("finalize", { id: e.id })} style={pillBtnStyle("#FF9F0A")}>最終報</PressableButton>
                         <PressableButton type="button" onClick={() => onAction?.("cancel", { id: e.id })} style={pillBtnStyle("#FF453A")}>取消</PressableButton>
                       </>
                     )}
@@ -11288,6 +11385,7 @@ function SettingsBody({
   experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
+  eewTestForm, eewEpicenterPickActive,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
   pickedTsunamiHeights, onChangeTsunamiHeightPick, onRemoveTsunamiHeightPick,
@@ -11597,6 +11695,8 @@ function SettingsBody({
         <EewTestBroadcastPanel
           testEews={testEews}
           onAction={onTestEewAction}
+          eewTestForm={eewTestForm}
+          eewEpicenterPickActive={eewEpicenterPickActive}
         />
       </>
     );
@@ -12304,23 +12404,97 @@ export default function App() {
     };
   }
 
+  // カスタムEEWエディタの初期値・「新規」に戻した時の値。
+  function defaultEewTestForm() {
+    return {
+      editingId: null, // nullなら「新規発報」、既存イベントのidが入っていれば「そのイベントへの続報」
+      place: "テスト震源(相模湾)",
+      latitude: 35.2,
+      longitude: 139.3,
+      depth: 20,
+      magnitude: 5.8,
+      maxIntensityKey: "5-",
+      isWarnLevel: true,
+      isPlum: false,
+    };
+  }
+  const [eewTestForm, setEewTestForm] = useState(defaultEewTestForm);
+
+  // 「地図をタップして震源を指定」モード。ONの間はMapCanvas側のクリックが
+  // 震源ピックとして扱われる(津波警報テスト配信のtsunamiAreaPickActiveと同じ考え方)。
+  const [eewEpicenterPickActive, setEewEpicenterPickActive] = useState(false);
+
   /**
    * テスト配信パネルからの操作を一手に受け付ける単一ディスパッチャ。
-   * action: "addPreset"(プリセットで即発報) | "addCustom"(カスタムパラメータで即発報) |
-   *         "update"(続報。震度は変えずreportを1つ進める) | "finalize"(最終報として発報) |
-   *         "cancel"(取消を発報) | "remove"(一覧から削除) | "clearAll"(全部削除)
+   * action:
+   *   "addPreset"    プリセットで即発報(フォームには触れない)
+   *   "dispatchForm" 現在のフォーム内容で発報。editingIdがあれば該当イベントへの
+   *                  続報(震度・位置などを書き換えつつreportを1つ進める)、
+   *                  無ければ新規イベントとして追加する
+   *   "editLoad"     既存イベント(id)の現在値をフォームに読み込み、続報編集モードにする
+   *   "resetForm"    フォームを初期値に戻し、続報編集モードを解除する(「新規」ボタン用)
+   *   "startEpicenterPick" / "cancelEpicenterPick"  地図タップでの震源指定モードの開始/終了
+   *   "update"(続報。パラメータは変えずreportだけ1つ進める) | "finalize"(最終報として発報) |
+   *   "cancel"(取消を発報) | "remove"(一覧から削除) | "clearAll"(全部削除)
    */
   function handleTestEewAction(action, payload) {
     if (action === "addPreset") {
       setTestEews(prev => [...prev, buildTestEewCard(presetTestEewParams(payload))]);
       return;
     }
-    if (action === "addCustom") {
-      setTestEews(prev => [...prev, buildTestEewCard(payload)]);
+    if (action === "dispatchForm") {
+      const { editingId, ...params } = payload;
+      setTestEews(prev => {
+        const idx = editingId ? prev.findIndex(e => e.id === editingId) : -1;
+        if (idx === -1) return [...prev, buildTestEewCard(params)];
+        const next = [...prev];
+        next[idx] = {
+          ...next[idx],
+          ...params,
+          areas: buildTestEewAreas(params.maxIntensityKey, params.isPlum),
+          serial: String((parseInt(next[idx].serial, 10) || 1) + 1),
+          receivedLocalAt: Date.now(),
+        };
+        return next;
+      });
+      setEewTestForm(defaultEewTestForm());
+      return;
+    }
+    if (action === "editLoad") {
+      const target = testEews.find(e => e.id === payload?.id);
+      if (!target) return;
+      setEewTestForm({
+        editingId: target.id,
+        place: target.place,
+        latitude: target.latitude,
+        longitude: target.longitude,
+        depth: target.depth,
+        magnitude: target.magnitude,
+        maxIntensityKey: target.maxIntensityKey,
+        isWarnLevel: target.isWarnLevel !== false,
+        isPlum: !!target.isPlum,
+      });
+      return;
+    }
+    if (action === "resetForm") {
+      setEewTestForm(defaultEewTestForm());
+      return;
+    }
+    if (action === "patchForm") {
+      setEewTestForm(prev => ({ ...prev, ...payload }));
+      return;
+    }
+    if (action === "startEpicenterPick") {
+      setEewEpicenterPickActive(true);
+      return;
+    }
+    if (action === "cancelEpicenterPick") {
+      setEewEpicenterPickActive(false);
       return;
     }
     if (action === "clearAll") {
       setTestEews([]);
+      setEewTestForm(defaultEewTestForm());
       return;
     }
     // 以降は既存の特定イベント(id)に対する操作
@@ -12341,6 +12515,19 @@ export default function App() {
         return e;
       });
     });
+    if (action === "remove" && eewTestForm.editingId === id) setEewTestForm(defaultEewTestForm());
+  }
+
+  // 地図タップで震源が確定した時のハンドラ(MapCanvasのonPickEewEpicenterから呼ばれる)。
+  // 震央地名が判定できなかった場合は地名欄を空のままにする(手がかりが無い海域など)。
+  function handlePickEewEpicenter(lat, lon, placeName) {
+    setEewTestForm(prev => ({
+      ...prev,
+      latitude: lat,
+      longitude: lon,
+      place: placeName || prev.place,
+    }));
+    setEewEpicenterPickActive(false);
   }
 
   // テスト配信中は、実際の一覧の先頭にテストデータを合成する。地図・パネルとも、
@@ -13305,6 +13492,8 @@ export default function App() {
           onPickTsunamiArea={handlePickTsunamiArea}
           pickedTsunamiAreas={pickedTsunamiAreas}
           eews={effectiveEews}
+          eewEpicenterPickActive={eewEpicenterPickActive}
+          onPickEewEpicenter={handlePickEewEpicenter}
         />
 
         {/* 津波テスト配信「地図タップで選択」中のバナー — 画面上部中央に浮かぶ。
@@ -13382,6 +13571,43 @@ export default function App() {
                   );
                 })}
               </div>
+            </Glass>
+          </div>
+        )}
+
+        {/* 緊急地震速報テスト配信「地図をタップして震源を指定」中のバナー。
+            震源は1点だけなので津波の予報区ピックと違って複数タップの積み上げは不要
+            ─ タップした瞬間に確定し、自動的にモードを終える(MapCanvas側のクリック
+            ハンドラ→handlePickEewEpicenterでeewEpicenterPickActiveをfalseに戻している)。
+            ここでは「今からタップする」ことを案内し、途中でやめられるように
+            キャンセルボタンだけ出す。 */}
+        {eewEpicenterPickActive && (
+          <div style={{
+            position: "absolute",
+            top: "calc(16px + env(safe-area-inset-top))",
+            left: 0, right: 0,
+            display: "flex", justifyContent: "center",
+            zIndex: 30, padding: "0 16px",
+          }}>
+            <Glass radius={22} style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "10px 12px",
+              animation: "appear 0.3s cubic-bezier(.25,1,.5,1)",
+            }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: themeContextValue.tokens.text }}>
+                地図をタップして震源を指定
+              </span>
+              <PressableButton
+                type="button"
+                onClick={() => handleTestEewAction("cancelEpicenterPick")}
+                style={{
+                  flexShrink: 0, padding: "6px 12px", borderRadius: 999, border: "none", cursor: "pointer",
+                  background: `rgba(${themeContextValue.tokens.ink},0.08)`,
+                  fontSize: 12, fontWeight: 700, color: themeContextValue.tokens.textSecondary,
+                }}
+              >
+                キャンセル
+              </PressableButton>
             </Glass>
           </div>
         )}
@@ -13514,6 +13740,8 @@ export default function App() {
                   onClearTestTsunami={clearTestTsunami}
                   testEews={testEews}
                   onTestEewAction={handleTestEewAction}
+                  eewTestForm={eewTestForm}
+                  eewEpicenterPickActive={eewEpicenterPickActive}
                   eews={effectiveEews}
                   eewDetailOpen={eewDetailOpen}
                   onOpenEewDetail={() => setEewDetailOpen(true)}
@@ -13599,6 +13827,8 @@ export default function App() {
               onClearTestTsunami={clearTestTsunami}
               testEews={testEews}
               onTestEewAction={handleTestEewAction}
+              eewTestForm={eewTestForm}
+              eewEpicenterPickActive={eewEpicenterPickActive}
               eews={effectiveEews}
               eewDetailOpen={eewDetailOpen}
               onOpenEewDetail={() => setEewDetailOpen(true)}
