@@ -2294,10 +2294,10 @@ function EewDetailFloatingCard({ eew }) {
             style={{
               margin: "2px 14px 4px",
               borderRadius: 16,
-              padding: "10px 16px",
+              padding: "8px 16px",
               display: "flex",
               flexDirection: "column",
-              gap: 6,
+              gap: 3,
               background: `linear-gradient(135deg, ${style.bg}2E, ${style.bg}14)`,
               boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
               animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
@@ -2315,14 +2315,14 @@ function EewDetailFloatingCard({ eew }) {
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0 }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
                 <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, whiteSpace: "nowrap", lineHeight: 1.1 }}>
                   最大予測震度
                 </span>
                 <div
                   style={{
-                    width: 64, height: 64,
-                    borderRadius: 14,
+                    width: 58, height: 58,
+                    borderRadius: 13,
                     background: style.bg, color: style.fg,
                     position: "relative",
                     display: "flex", alignItems: "center", justifyContent: "center",
@@ -2330,14 +2330,14 @@ function EewDetailFloatingCard({ eew }) {
                 >
                   {suffix ? (
                     <>
-                      <span className="mono" style={{ fontSize: 32, fontWeight: 800, lineHeight: 1 }}>{num}</span>
+                      <span className="mono" style={{ fontSize: 29, fontWeight: 800, lineHeight: 1 }}>{num}</span>
                       <span style={{
-                        fontSize: 15, fontWeight: 700, lineHeight: 1,
-                        marginLeft: 2, alignSelf: "flex-end", marginBottom: 14,
+                        fontSize: 14, fontWeight: 700, lineHeight: 1,
+                        marginLeft: 2, alignSelf: "flex-end", marginBottom: 12,
                       }}>{suffix}</span>
                     </>
                   ) : (
-                    <span className="mono" style={{ fontSize: 32, fontWeight: 800, lineHeight: 1 }}>{num}</span>
+                    <span className="mono" style={{ fontSize: 29, fontWeight: 800, lineHeight: 1 }}>{num}</span>
                   )}
                 </div>
               </div>
