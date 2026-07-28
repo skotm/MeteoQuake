@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.5f";
+const APP_VERSION = "1.3.6";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -257,6 +257,7 @@ const Glass = forwardRef(function Glass({
   style,
   filterSize = "normal",  // "normal" | "sm" | "none"
   blur = 14,               // backdrop blur量(px)。アニメーション中だけ軽くしたい場合に上書きする
+  tintColor,               // 状態色(警報/予報など)を付けたい時だけ渡す、6桁hexの基準色(例:"#FF453A")
   ...rest
 }, ref) {
   // backdrop-filterが実効しない(疑いがある)環境では、屈折SVGフィルタも
@@ -269,6 +270,18 @@ const Glass = forwardRef(function Glass({
   // filterSize="none" の場合は屈折SVGフィルタを外し、単純なbackdrop blurのみにする
   // （リサイズや角丸トランジション中など、フィルタの再計算コストが重くなる場面用の軽量モード）
   const filterId = glassOpaque ? null : (filterSize === "none" ? null : filterSize === "sm" ? "lg-refract-sm" : "lg-refract");
+
+  // tintColor指定時の背景色。以前は呼び出し側がstyle.backgroundに直接
+  // "${accent}8C"のような色を指定していたが、それは(下のglass-backdrop-layerより
+  // 手前に敷かれるため)tokens.glassTint/glassOpaqueBgと重ねて表示される。
+  // glassTintはライトモードで55%不透明の白、glassOpaqueBgはライト/ダークどちらも
+  // 92〜94%不透明という設計上、accent色がモードや不透明設定によって大きく
+  // 薄まったり別の色に見えてしまっていた。tintColorはglass-backdrop-layer自体の
+  // 背景を直接置き換えることで、この二重ブレンドを避け、常に狙った濃さの色になる
+  // ようにする(通常時は半透明、不透明モードでは十分濃くして視認性を保つ)。
+  const backdropBackground = tintColor
+    ? `${tintColor}${glassOpaque ? "E6" : "8C"}`
+    : (glassOpaque ? tokens.glassOpaqueBg : tokens.glassTint);
 
   return (
     <div
@@ -298,7 +311,7 @@ const Glass = forwardRef(function Glass({
           // (どうせ効かない処理をGPUにやらせ続けるコストを避ける)。
           backdropFilter: glassOpaque ? "none" : `blur(${blur}px) saturate(140%)`,
           WebkitBackdropFilter: glassOpaque ? "none" : `blur(${blur}px) saturate(140%)`,
-          background: glassOpaque ? tokens.glassOpaqueBg : tokens.glassTint,
+          background: backdropBackground,
           zIndex: 0,
         }}
       />
@@ -2452,21 +2465,25 @@ function EewDetailFloatingCard({ eew }) {
   return (
     <>
       {/* 見出し — 「緊急地震速報(警報)」チップと「#報番号」チップを、色付きの
-          Glass(すりガラス)で囲う。Glassのstyle.backgroundは背景ブラー層より
-          下に敷かれるため、背景色つきの半透明ガラスとして表示される。 */}
+          Glass(すりガラス)で囲う。tintColorはGlass内部のブラー層自体の背景を
+          直接置き換えるため、ライト/ダークモードやフローティング不透明設定に
+          関わらず常に同じ濃さの色になる(以前はstyle.backgroundで指定していたため、
+          tokens.glassTint/glassOpaqueBgと二重に重なって、モードや不透明設定ごとに
+          色の見え方がバラついていた)。 */}
       <div style={{ margin: "4px 16px 10px", display: "flex", alignItems: "stretch", gap: 8 }}>
         <Glass
           radius={14}
+          tintColor={eew.cancelled ? null : accent}
           style={{
             flex: 1, minWidth: 0,
             padding: "10px 14px",
             display: "flex", alignItems: "center",
-            background: eew.cancelled ? `rgba(${tokens.ink},0.08)` : `${accent}8C`,
+            background: eew.cancelled ? `rgba(${tokens.ink},0.08)` : undefined,
           }}
         >
           <span style={{
             fontSize: 16, fontWeight: 800, lineHeight: 1.25,
-            color: eew.cancelled ? tokens.text : "#fff",
+            color: tokens.text,
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
           }}>
             緊急地震速報{eew.cancelled ? "(取消)" : (isWarnLevel ? "(警報)" : "(予報)")}
@@ -2487,15 +2504,17 @@ function EewDetailFloatingCard({ eew }) {
           </Glass>
         )}
         {/* テスト配信バッジ(津波警報テストの一覧行と同じ赤バッジ)。配色状態に
-            関わらず視認できるよう、見出しチップとは別の単色Glassチップにしている。 */}
+            関わらず視認できるよう、見出しチップとは別の単色Glassチップにしている。
+            tintColorを使うことで、見出しチップと同様モード・不透明設定に
+            関わらず常に同じ濃さの赤になる。 */}
         {eew.isTest && (
           <Glass
             radius={14}
+            tintColor="#FF453A"
             style={{
               flexShrink: 0,
               padding: "10px 12px",
               display: "flex", alignItems: "center", justifyContent: "center",
-              background: "#FF453A",
             }}
           >
             <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", whiteSpace: "nowrap" }}>
