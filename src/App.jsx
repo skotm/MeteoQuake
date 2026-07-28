@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.6d";
+const APP_VERSION = "1.3.6f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7389,15 +7389,20 @@ function BottomDock({
   // 別のタブに切り替えた時は、フローティングを「中高」まで開く。
   // (同じタブを再タップした時の開閉トグルとは別物なので、prevActiveRefで
   // 「本当にタブが変わった時だけ」を判定している)
+  // ただし、緊急地震速報の詳細を表示している間(eewDetailOpen)は、タブを切り替えても
+  // この自動オープンを起こさない。EEW表示中はEEWの内容に集中してほしいため、
+  // 他のタブのボタンを押しても裏のフローティングパネルが開閉しないようにする。
   const prevActiveRef = useRef(active);
   useEffect(() => {
     if (prevActiveRef.current !== active) {
-      killScrollMomentum();
-      setSnapIndex(3);
-      openedByTapRef.current = true;
+      if (!eewDetailOpen) {
+        killScrollMomentum();
+        setSnapIndex(3);
+        openedByTapRef.current = true;
+      }
     }
     prevActiveRef.current = active;
-  }, [active]);
+  }, [active, eewDetailOpen]);
 
   // タブバーで、既にアクティブなタブがもう一度タップされた時(navCollapseSignalの変化で検知)、
   // フローティングを開閉トグルする。前回タップ(またはタブ切り替え)で自分が開いたかどうかを
