@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.5b";
+const APP_VERSION = "1.3.5c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -1621,7 +1621,7 @@ function MapCanvas({
           const codes = findAreaCodesByName(areasGeoJSON, area.name);
           if (codes.length === 0) continue;
           const color = (colorScheme.colors[intensityKey] || colorScheme.colors["0"]).bg;
-          const orderIdx = INTENSITY_LEGEND_ORDER.indexOf(intensityKey);
+          const orderIdx = EEW_FILL_LEGEND_ORDER.indexOf(intensityKey);
           for (const code of codes) {
             if (paintedCodes.has(code)) continue; // 複数EEWが同じ地域を含む場合は先勝ちでよい
             paintedCodes.add(code);
@@ -1642,7 +1642,7 @@ function MapCanvas({
       source.setData({ type: "FeatureCollection", features });
       setEewFillRange(
         maxOrderIdx >= 0
-          ? { minKey: INTENSITY_LEGEND_ORDER[minOrderIdx], maxKey: INTENSITY_LEGEND_ORDER[maxOrderIdx] }
+          ? { minKey: EEW_FILL_LEGEND_ORDER[minOrderIdx], maxKey: EEW_FILL_LEGEND_ORDER[maxOrderIdx] }
           : null
       );
     }).catch(err => {
@@ -2268,10 +2268,10 @@ function MapCanvas({
           最も高いものまでを一覧できる、右上固定のミニ凡例。EEW詳細(びっくりボタン)を
           開いている間だけ出す — 塗り潰しに興味が無い場面で常時出っぱなしにしないため。 */}
       {status === "ready" && eewDetailOpen && eewFillRange && (() => {
-        const minIdx = INTENSITY_LEGEND_ORDER.indexOf(eewFillRange.minKey);
-        const maxIdx = INTENSITY_LEGEND_ORDER.indexOf(eewFillRange.maxKey);
+        const minIdx = EEW_FILL_LEGEND_ORDER.indexOf(eewFillRange.minKey);
+        const maxIdx = EEW_FILL_LEGEND_ORDER.indexOf(eewFillRange.maxKey);
         if (minIdx === -1 || maxIdx === -1) return null;
-        const keys = INTENSITY_LEGEND_ORDER.slice(minIdx, maxIdx + 1).reverse(); // 強い震度を上に
+        const keys = EEW_FILL_LEGEND_ORDER.slice(minIdx, maxIdx + 1).reverse(); // 強い震度を上に
         return (
           <div style={{
             position: "absolute",
@@ -2632,9 +2632,11 @@ function intensityLabelToKey(label) {
   return INTENSITY_LABEL_TO_KEY[label] ?? "?";
 }
 
-// 震度の弱い順(凡例表示用)。"5"/"6"は1996年10月改定前専用の値なので、
-// 実運用の並びには含めない。
-const INTENSITY_LEGEND_ORDER = ["0", "1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
+// 震度の弱い順(緊急地震速報の塗り潰し範囲の凡例表示用)。"5"/"6"は1996年10月改定前
+// 専用の値なので、実運用の並びには含めない。
+// (下方のQuakeIntensityLegend用のINTENSITY_LEGEND_ORDERとは別物 — あちらは
+//  震度1始まりで実際の地震向け、こちらは震度0を含む緊急地震速報の塗り潰し向け)
+const EEW_FILL_LEGEND_ORDER = ["0", "1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
 
 // 観測点マーカーをMapLibreのsymbolレイヤーで描くための下準備。
 // 震度キーは有限個(0〜7,5-,5+,6-,6+,?)しかないので、キーごとに
