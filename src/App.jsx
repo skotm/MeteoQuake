@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.6c";
+const APP_VERSION = "1.3.6d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -12302,6 +12302,10 @@ function TermsConsentGate() {
    ───────────────────────────────────────────────────── */
 export default function App() {
   const [activeNav, setActiveNav] = useState("quake");
+  // WebSocketの受信ハンドラ(古いクロージャのまま生き続ける)から常に最新の
+  // activeNavを参照できるようにするためのref。緊急地震速報の自動表示切り替えに使う。
+  const activeNavRef = useRef(activeNav);
+  useEffect(() => { activeNavRef.current = activeNav; }, [activeNav]);
 
   // タブバーで、既にアクティブなタブをもう一度タップした時に、フローティングを
   // 開閉トグルさせるための信号。値そのものに意味は無く、変化すること自体を
@@ -12532,6 +12536,10 @@ export default function App() {
       const idx = prev.findIndex(e => e.eventId === newEew.eventId);
       if (idx === -1) {
         const withLocal = { ...newEew, receivedLocalAt: Date.now(), cancelledLocalAt: newEew.cancelled ? Date.now() : null };
+        // 新規の(続報ではない)緊急地震速報が来た時、設定タブ以外を見ていれば
+        // 自動でEEW詳細画面に切り替える。設定タブだけは対象外
+        // (設定変更中に画面が奪われて操作が中断されるのを避けるため)。
+        if (activeNavRef.current !== "settings") setEewDetailOpen(true);
         return [withLocal, ...prev].slice(0, EEW_MAX_CONCURRENT);
       }
       const existing = prev[idx];
@@ -12972,7 +12980,7 @@ export default function App() {
        同じ日ならAPIを叩き直さない。
      ───────────────────────────────────────────────────── */
   const [tsunamiViewModeTop, setTsunamiViewModeTop] = useState("recent");
-  const showTideGaugeLayer = activeNav === "tsunami" && tsunamiViewModeTop === "tidegauge";
+  const showTideGaugeLayer = !eewDetailOpen && activeNav === "tsunami" && tsunamiViewModeTop === "tidegauge";
   // 現在進行形で有効な(解除されていない)津波情報があるかどうか。潮位観測点
   // マスタの取得トリガー・自動表示の判定の両方で使う軽量な判定。
   const hasActiveTsunami = effectiveTsunamis.some(t => !t.cancelled);
@@ -13346,11 +13354,14 @@ export default function App() {
   // (地震タブに戻れば、元の設定のまま再び表示される)。
   // ただし津波タブで「↪︎津波を引き起こした地震」を表示している間だけは例外的に、
   // その地震の震源・観測点を地図に出す(causingQuakeCard参照)。
-  const showQuakeMapLayers = activeNav === "quake" || activeNav === "settings" || (activeNav === "tsunami" && causingQuakeCard != null);
+  // どちらのタブを見ていても、緊急地震速報の詳細画面(eewDetailOpen)を開いている
+  // 間はEEW以外の表示を一切出さない(震源・観測点・断層・津波予報区の色分け等、
+  // 緊急地震速報の内容に集中してもらうため)。
+  const showQuakeMapLayers = !eewDetailOpen && (activeNav === "quake" || activeNav === "settings" || (activeNav === "tsunami" && causingQuakeCard != null));
 
   // 津波予報区の色分けは、津波タブ・設定タブを見ている間に出す。
   // 実際にどの回の予報区を塗るかはtsunamiForMapDisplay(下)が決める。
-  const showTsunamiMapLayers = activeNav === "tsunami" || activeNav === "settings";
+  const showTsunamiMapLayers = !eewDetailOpen && (activeNav === "tsunami" || activeNav === "settings");
   const selectedFromRecent = effectiveTsunamis.find(t => t.id === selectedTsunamiId) || null;
   const selectedFromHistory = !selectedFromRecent
     ? (tsunamiHistory.items.find(t => t.id === selectedTsunamiId) || null)
