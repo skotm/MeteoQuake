@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.6";
+const APP_VERSION = "1.3.6a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5050,25 +5050,25 @@ async function fetchTideObsRange(stationCode, days = 2) {
 // 差し引いた値が津波による海面変動の高さにあたる。この値はtide_obsのdeparture配列に
 // そのまま「潮位偏差」として入っている(このアプリのTideStationDetailで表示している
 // ものと同じ値)ため、追加の逆算はせずdepartureをそのまま使う。
-// startMs以降(=警報等の発表時刻以降)で絶対値が最大になった値(符号付き、cm単位)を返す。
+// startMs以降(=警報等の発表時刻以降)で、潮位偏差が正の値(山=海面上昇側)のうち
+// 最大のものを返す。引き波による谷(負の値)は津波の「高さ」としては扱わない。
 // データの終端は「取得できている最新時点まで」が自動的に上限になるため、終了時刻を
-// 別途指定する必要はない。該当データが無ければnull。
+// 別途指定する必要はない。該当データ(正の値)が無ければnull。
 function computeMaxTsunamiHeightCm(obsData, startMs) {
   if (!obsData || !Array.isArray(obsData.departure) || !obsData.time) return null;
   const dayStartMs = new Date(obsData.time).getTime();
   if (!Number.isFinite(dayStartMs) || !Number.isFinite(startMs)) return null;
   const intervalMs = (obsData.interval || 15) * 1000;
-  let maxAbs = -1;
-  let signedAtMax = null;
+  let max = -Infinity;
   let timeMsAtMax = null;
   obsData.departure.forEach((v, i) => {
-    if (v == null) return;
+    if (v == null || v <= 0) return; // 正の値(山)のみを対象にする
     const t = dayStartMs + i * intervalMs;
     if (t < startMs) return; // 警報発表より前の値は対象外
-    if (Math.abs(v) > maxAbs) { maxAbs = Math.abs(v); signedAtMax = v; timeMsAtMax = t; }
+    if (v > max) { max = v; timeMsAtMax = t; }
   });
-  if (signedAtMax == null) return null;
-  return { cm: signedAtMax, timeMs: timeMsAtMax }; // cm(符号付き)・観測時刻(エポックms)。該当データが1件も無ければnull
+  if (timeMsAtMax == null) return null;
+  return { cm: max, timeMs: timeMsAtMax }; // cm(常に正の値)・観測時刻(エポックms)。該当データが1件も無ければnull
 }
 
 
@@ -6991,7 +6991,12 @@ function BottomDock({
   // 現在進行形で有効な(解除されていない)津波情報。App側の同名の計算(地図の
   // 予報区塗り分け用)と同じ考え方で、ここでは「潮位観測点オンオフボタン」を
   // 出すかどうかの判定にだけ使う。
-  const activeTsunami = tsunamis.find(t => !t.cancelled) || null;
+  // tsunamisは新しい順にソート済みなので、一番新しい1件だけを見る。以前は
+  // find(t => !t.cancelled)としており、一番新しい報が「解除」だった場合に
+  // それを読み飛ばして1つ前の(すでに解除済みの)警報を「現在進行形」として
+  // 扱ってしまっていた(解除後も古い警報の表示が残り続けるバグ)。
+  const newestTsunami = tsunamis[0] || null;
+  const activeTsunami = newestTsunami && !newestTsunami.cancelled ? newestTsunami : null;
   // 潮位観測点の自動表示は、有効な津波情報がある間・かつ「引き起こした地震」を
   // 見ていない間だけ提供する(引き起こした地震を見ている間は、その地震の震度観測点
   // 用に同じボタン枠を使っているため)。
@@ -13319,7 +13324,12 @@ export default function App() {
   const selectedTsunami = selectedFromRecent || selectedFromHistory;
 
   // 現在進行形で有効な(解除されていない)、一番新しい津波情報。
-  const activeTsunami = effectiveTsunamis.find(t => !t.cancelled) || null;
+  // effectiveTsunamisは新しい順にソート済みなので、先頭の1件だけを見る。以前は
+  // find(t => !t.cancelled)としており、一番新しい報が「解除」だった場合に
+  // それを読み飛ばして1つ前の(すでに解除済みの)警報を「現在進行形」として
+  // 扱ってしまっていた(解除後も地図の塗り分けが古い警報のまま残り続けるバグ)。
+  const newestTsunami = effectiveTsunamis[0] || null;
+  const activeTsunami = newestTsunami && !newestTsunami.cancelled ? newestTsunami : null;
 
   // 地図に出す海岸線の色分けは「直近一覧・履歴を問わず、何か選んでいればそれを
   // 最優先」する。選んでいる間は必ずその回の予報区が出る(=他の過去の津波を
