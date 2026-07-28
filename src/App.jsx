@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.7a";
+const APP_VERSION = "1.3.8";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7431,6 +7431,14 @@ function BottomDock({
       return;
     }
     killScrollMomentum();
+    // 緊急地震速報の詳細を表示中は、同じタブの再タップによる開閉トグルで
+    // フローティングを閉じてしまわないようにする(EEWの内容を見せ続けるため)。
+    // 閉じている(snapIndex===0)状態からの場合だけ、詳細が見える高さまで開く。
+    if (eewDetailOpen) {
+      openedByTapRef.current = true;
+      if (snapIndex === 0) setSnapIndex(2);
+      return;
+    }
     if (openedByTapRef.current) {
       openedByTapRef.current = false;
       setSnapIndex(0);
