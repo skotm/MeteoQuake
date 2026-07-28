@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.7";
+const APP_VERSION = "1.3.7a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7389,20 +7389,23 @@ function BottomDock({
   // 別のタブに切り替えた時は、フローティングを「中高」まで開く。
   // (同じタブを再タップした時の開閉トグルとは別物なので、prevActiveRefで
   // 「本当にタブが変わった時だけ」を判定している)
-  // ただし、緊急地震速報の詳細を表示している間(eewDetailOpen)は、タブを切り替えても
-  // この自動オープンを起こさない。EEW表示中はEEWの内容に集中してほしいため、
-  // 他のタブのボタンを押しても裏のフローティングパネルが開閉しないようにする。
+  // ただし、緊急地震速報の詳細を表示していて(eewDetailOpen)、かつフローティングが
+  // 既に開いている(snapIndex !== 0)間は、タブを切り替えてもこの自動オープンを
+  // 起こさない。EEW表示中に他のタブのボタンを押しても、開いているパネルの高さが
+  // 勝手に変わらないようにするため。フローティングが閉じている時は、EEW表示中でも
+  // このガードの対象外とする(閉じた状態を維持するだけなので、タブ切り替えの
+  // 邪魔にはならない)。
   const prevActiveRef = useRef(active);
   useEffect(() => {
     if (prevActiveRef.current !== active) {
-      if (!eewDetailOpen) {
+      if (!(eewDetailOpen && snapIndex !== 0)) {
         killScrollMomentum();
         setSnapIndex(3);
         openedByTapRef.current = true;
       }
     }
     prevActiveRef.current = active;
-  }, [active, eewDetailOpen]);
+  }, [active, eewDetailOpen, snapIndex]);
 
   // 緊急地震速報の詳細が開かれた瞬間、フローティングの高さを自動で「中中」にする。
   // EEWの内容(震源・予測震度など)が見える程度に開きつつ、地図もある程度隠れずに
