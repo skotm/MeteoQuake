@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.4e";
+const APP_VERSION = "1.3.5";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -4766,21 +4766,29 @@ function instrumentalIntensityToScaleKey(i) {
 //   4. 地表への換算。本来は基準基盤→工学的基盤(≒0.90倍)→地点ごとの地盤増幅度、と
 //      2段階だが、地点別の地盤増幅度データは持たないため、代わりに市街地の軟弱地盤を
 //      想定した簡易増幅係数(SITE_AMPLIFICATION_FACTOR)を掛けている。この値は気象庁の
-//      実運用の平均値より高め(＝震度がやや過大気味)に寄せてあり、テストで震度4未満
-//      判定(=「?」表示)ばかりになるのを避ける狙いもある。
-//   5. 翠川ほか[1999]の換算式で計測震度に変換する。この式は震度4〜7の範囲でのみ有効なため、
-//      震度4未満と算出された地域は結果に含めない(=地図の塗り潰しも震度4以上のみになる)
+//      実運用の平均値より高め(＝震度がやや過大気味)に寄せてある。
+//   5. 翠川ほか[1999]の換算式で計測震度に変換する。
+// 気象庁は震度4未満の予測でも緊急地震速報(予報)自体は発表し、最大震度の予測値も含めて
+// いる(警報になるのは震度5弱以上の予測の時)。そのため、地図に塗り潰す地域(areas)は
+// 従来通り震度4以上のみに絞る一方、カードの「最大震度」表示に使うmaxIntensityKeyは
+// 震度4未満だった場合も含めた全地域中の最大値から求め、震度4未満の震源でも「?」に
+// ならず正しい予測震度が表示されるようにしている。
 const SITE_AMPLIFICATION_FACTOR = 2.0;
 function calcTestEewAreasByAttenuation(areasGeoJSON, lat, lon, magnitude, depthKm, isPlum) {
-  if (!areasGeoJSON || !Array.isArray(areasGeoJSON.features)) return [];
-  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(magnitude)) return [];
+  if (!areasGeoJSON || !Array.isArray(areasGeoJSON.features)) return { areas: [], maxIntensityKey: "?" };
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(magnitude)) {
+    return { areas: [], maxIntensityKey: "?" };
+  }
   const D = Number.isFinite(depthKm) ? Math.max(0, depthKm) : 10;
   const Mw = magnitude - 0.171;
   const faultLengthKm = Math.pow(10, 0.5 * Mw - 1.85);
   const sourceRadiusKm = faultLengthKm / 2;
   const codeMap = { "7": 70, "6+": 60, "6-": 55, "6": 54, "5+": 50, "5-": 45, "5": 44, "4": 40 };
 
-  const results = [];
+  const areas = []; // 地図の塗り潰し用(震度4以上のみ)
+  let overallMaxValue = -Infinity;
+  let overallMaxKey = null;
+
   for (const feature of areasGeoJSON.features) {
     const name = feature.properties?.name;
     if (!name) continue;
@@ -4798,13 +4806,19 @@ function calcTestEewAreasByAttenuation(areasGeoJSON, lat, lon, magnitude, depthK
     const PGVs = PGV600 * SITE_AMPLIFICATION_FACTOR;
 
     const instrIntensity = 2.68 + 1.72 * Math.log10(PGVs);
-    if (!Number.isFinite(instrIntensity) || instrIntensity < 4) continue;
+    if (!Number.isFinite(instrIntensity)) continue;
 
     const key = instrumentalIntensityToScaleKey(instrIntensity);
+    if (instrIntensity > overallMaxValue) {
+      overallMaxValue = instrIntensity;
+      overallMaxKey = key;
+    }
+    if (instrIntensity < 4) continue; // 塗り潰し対象は震度4以上のみ
+
     const code = codeMap[key] ?? 40;
-    results.push({ pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: key, isPlum: !!isPlum });
+    areas.push({ pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: key, isPlum: !!isPlum });
   }
-  return results;
+  return { areas, maxIntensityKey: overallMaxKey || "?" };
 }
 
 // 潮位観測点(1点)から一番近い津波予報区を、tsunami-areas.json(海岸線の座標データ、
@@ -12502,10 +12516,9 @@ export default function App() {
       // loadGeoData()の解決を待ってから行う(地図表示時に読み込み済みなので、
       // 実際にはほぼ即座に解決する)。
       loadGeoData().then(({ areas: areasGeoJSON }) => {
-        const areas = calcTestEewAreasByAttenuation(
+        const { areas, maxIntensityKey } = calcTestEewAreasByAttenuation(
           areasGeoJSON, params.latitude, params.longitude, params.magnitude, params.depth, params.isPlum
         );
-        const maxIntensityKey = eewMaxScaleKey(areas);
         if (isNew) {
           setTestEews(prev => [...prev, buildTestEewCard({ ...params, id: resultId, areas, maxIntensityKey })]);
         } else {
