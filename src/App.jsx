@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.5d";
+const APP_VERSION = "1.3.5f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2483,6 +2483,23 @@ function EewDetailFloatingCard({ eew }) {
           >
             <span style={{ fontSize: 16, fontWeight: 800, color: tokens.text, whiteSpace: "nowrap" }}>
               # {eew.serial ?? "-"}{eew.isFinal ? "(最終)" : ""}
+            </span>
+          </Glass>
+        )}
+        {/* テスト配信バッジ(津波警報テストの一覧行と同じ赤バッジ)。配色状態に
+            関わらず視認できるよう、見出しチップとは別の単色Glassチップにしている。 */}
+        {eew.isTest && (
+          <Glass
+            radius={14}
+            style={{
+              flexShrink: 0,
+              padding: "10px 12px",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: "#FF453A",
+            }}
+          >
+            <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", whiteSpace: "nowrap" }}>
+              テスト
             </span>
           </Glass>
         )}
