@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.6b";
+const APP_VERSION = "1.3.6c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -13858,12 +13858,20 @@ export default function App() {
   // 過去の津波を選んで見ている間に地図に出す観測点(丸)・バー。ライブ監視用の
   // tideStationsForMap/tsunamiHeightBarsと全く同じ組み立て方を、対象データだけ
   // selectedTsunamiTideStations/historicalTsunamiHeightByStationに差し替えて使う。
+  // 潮位データが取得できていない(未取得・取得中・失敗)観測点は表示しない
+  // ——ライブ監視と違い、過去分は「観測点はあるが値はまだ来ていない」という
+  // 状態が長く続くことは無い(取得済みか失敗かのどちらか)ため、取得できたものだけに絞る。
   const historicalTideStationsForMap = useMemo(() => {
-    return selectedTsunamiTideStations.map(st => ({
-      ...st,
-      dotColor: tsunamiHeightBandColor(historicalTsunamiHeightByStation[st.code]),
-    }));
-  }, [selectedTsunamiTideStations, historicalTsunamiHeightByStation]);
+    return selectedTsunamiTideStations
+      .filter(st => {
+        const entry = historicalTideObsByStation[`${selectedTsunami?.id}::${st.code}`];
+        return entry?.status === "ready";
+      })
+      .map(st => ({
+        ...st,
+        dotColor: tsunamiHeightBandColor(historicalTsunamiHeightByStation[st.code]),
+      }));
+  }, [selectedTsunamiTideStations, historicalTsunamiHeightByStation, historicalTideObsByStation, selectedTsunami]);
 
   const historicalTsunamiHeightBars = useMemo(() => {
     return selectedTsunamiTideStations
@@ -13891,6 +13899,12 @@ export default function App() {
   // ——後述のStationMarkerToggleButton側の対応、及びMapCanvas側のタップ無効化と対)。
   const showHistoricalTsunamiTideStations =
     showTsunamiMapLayers && causingQuakeCard == null && isViewingPastTsunami && selectedTsunamiTideStations.length > 0;
+
+  // 津波タブの予報区一覧(TsunamiAreaRow)に渡す「観測点ごとの最大波」データ。
+  // 過去の津波を選んで見ている間はhistorical側(第１報〜解除の期間で計算したもの)、
+  // それ以外(ライブ監視中)は従来通りactiveTsunami用の値を使う。
+  const tsunamiHeightByStationForDisplay = isViewingPastTsunami ? historicalTsunamiHeightByStation : tsunamiHeightByStation;
+  const tsunamiHeightTimeByStationForDisplay = isViewingPastTsunami ? historicalTsunamiHeightTimeByStation : tsunamiHeightTimeByStation;
 
   // 潮位観測点ピン(発令中の予報区分。潮位計モードでない間に表示しているもの)を
   // 地図上でタップした時、手動で潮位計モードに入って観測点を選んだ時と同じ体験に
@@ -14168,8 +14182,8 @@ export default function App() {
                   selectedTideStationCode={selectedTideStationCode}
                   onSelectTideStation={setSelectedTideStationCode}
                   tideStationSelectSignal={tideStationSelectSignal}
-                  tsunamiHeightByStation={tsunamiHeightByStation}
-                  tsunamiHeightTimeByStation={tsunamiHeightTimeByStation}
+                  tsunamiHeightByStation={tsunamiHeightByStationForDisplay}
+                  tsunamiHeightTimeByStation={tsunamiHeightTimeByStationForDisplay}
                   tideObsByStation={tideObsByStation}
                   onLoadTideObs={loadTideObs}
                   onCausingQuakeChange={setCausingQuakeCard}
@@ -14256,8 +14270,8 @@ export default function App() {
               selectedTideStationCode={selectedTideStationCode}
               onSelectTideStation={setSelectedTideStationCode}
               tideStationSelectSignal={tideStationSelectSignal}
-              tsunamiHeightByStation={tsunamiHeightByStation}
-              tsunamiHeightTimeByStation={tsunamiHeightTimeByStation}
+              tsunamiHeightByStation={tsunamiHeightByStationForDisplay}
+              tsunamiHeightTimeByStation={tsunamiHeightTimeByStationForDisplay}
               tideObsByStation={tideObsByStation}
               onLoadTideObs={loadTideObs}
               onCausingQuakeChange={setCausingQuakeCard}
