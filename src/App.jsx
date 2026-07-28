@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.8c";
+const APP_VERSION = "1.3.8d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2510,24 +2510,18 @@ function EewDetailFloatingCard({ eew }) {
             </span>
           </Glass>
         )}
-        {/* テスト配信バッジ(津波警報テストの一覧行と同じ赤バッジ)。配色状態に
-            関わらず視認できるよう、見出しチップとは別の単色Glassチップにしている。
-            tintColorを使うことで、見出しチップと同様モード・不透明設定に
-            関わらず常に同じ濃さの赤になる。 */}
+        {/* テスト配信バッジ。津波警報テストの一覧行(TsunamiListRow)のバッジと
+            全く同じスタイルをそのまま使う(Glassチップにはせず、単色フラットな
+            赤背景+白文字のspan)。見た目を独自に作り込まず、既存の「テスト」
+            表示と統一する。 */}
         {eew.isTest && (
-          <Glass
-            radius={14}
-            tintColor="#FF453A"
-            style={{
-              flexShrink: 0,
-              padding: "10px 12px",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
-          >
-            <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", whiteSpace: "nowrap" }}>
-              テスト
-            </span>
-          </Glass>
+          <span style={{
+            flexShrink: 0, alignSelf: "center",
+            fontSize: 9.5, fontWeight: 800, color: "#fff",
+            background: "#FF453A", borderRadius: 4, padding: "2px 5px",
+          }}>
+            テスト
+          </span>
         )}
       </div>
 
