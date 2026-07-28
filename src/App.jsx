@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.5";
+const APP_VERSION = "1.3.5a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -889,6 +889,7 @@ function MapCanvas({
   tsunamiAreaPickActive = false, onPickTsunamiArea, pickedTsunamiAreas = [],
   eews = [],
   eewEpicenterPickActive = false, onPickEewEpicenter,
+  eewDetailOpen = false,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -907,6 +908,10 @@ function MapCanvas({
   // { x, y, title, text } | null。x,yは地図コンテナ基準のスクリーン座標
   // (MapLibreのe.pointがそのままその座標系なので、変換不要で使える)。
   const [epicenterTooltip, setEpicenterTooltip] = useState(null);
+
+  // 地図に塗られている緊急地震速報の予想震度のうち、最も低いものと最も高いもの。
+  // {minKey, maxKey} | null(何も塗られていない時)。右上の凡例表示に使う。
+  const [eewFillRange, setEewFillRange] = useState(null);
 
   // 震央分布の丸をタップした時に呼ぶ選択コールバック。
   // map.on("load")内の登録は初回マウント時の1回きりなので、refで最新の
@@ -1607,6 +1612,7 @@ function MapCanvas({
 
       const features = [];
       const paintedCodes = new Set();
+      let minOrderIdx = Infinity, maxOrderIdx = -Infinity;
       for (const eew of eews) {
         if (eew.cancelled || !Array.isArray(eew.areas)) continue;
         for (const area of eew.areas) {
@@ -1615,6 +1621,7 @@ function MapCanvas({
           const codes = findAreaCodesByName(areasGeoJSON, area.name);
           if (codes.length === 0) continue;
           const color = (colorScheme.colors[intensityKey] || colorScheme.colors["0"]).bg;
+          const orderIdx = INTENSITY_LEGEND_ORDER.indexOf(intensityKey);
           for (const code of codes) {
             if (paintedCodes.has(code)) continue; // 複数EEWが同じ地域を含む場合は先勝ちでよい
             paintedCodes.add(code);
@@ -1625,10 +1632,19 @@ function MapCanvas({
               geometry: feature.geometry,
               properties: { fillColor: color },
             });
+            if (orderIdx !== -1) {
+              if (orderIdx < minOrderIdx) minOrderIdx = orderIdx;
+              if (orderIdx > maxOrderIdx) maxOrderIdx = orderIdx;
+            }
           }
         }
       }
       source.setData({ type: "FeatureCollection", features });
+      setEewFillRange(
+        maxOrderIdx >= 0
+          ? { minKey: INTENSITY_LEGEND_ORDER[minOrderIdx], maxKey: INTENSITY_LEGEND_ORDER[maxOrderIdx] }
+          : null
+      );
     }).catch(err => {
       console.error("緊急地震速報の地域塗りつぶし用データの読み込みに失敗:", err);
     });
@@ -2248,6 +2264,43 @@ function MapCanvas({
         </div>
       )}
 
+      {/* 緊急地震速報の予想震度の凡例。地図に塗られている震度のうち最も低いものから
+          最も高いものまでを一覧できる、右上固定のミニ凡例。EEW詳細(びっくりボタン)を
+          開いている間だけ出す — 塗り潰しに興味が無い場面で常時出っぱなしにしないため。 */}
+      {status === "ready" && eewDetailOpen && eewFillRange && (() => {
+        const minIdx = INTENSITY_LEGEND_ORDER.indexOf(eewFillRange.minKey);
+        const maxIdx = INTENSITY_LEGEND_ORDER.indexOf(eewFillRange.maxKey);
+        if (minIdx === -1 || maxIdx === -1) return null;
+        const keys = INTENSITY_LEGEND_ORDER.slice(minIdx, maxIdx + 1).reverse(); // 強い震度を上に
+        return (
+          <div style={{
+            position: "absolute",
+            top: "calc(14px + env(safe-area-inset-top, 0px))",
+            right: 16,
+            zIndex: 6,
+            display: "flex", flexDirection: "column", gap: 4,
+            padding: "8px 10px",
+            borderRadius: 12,
+            background: tokens.glassOpaqueBg,
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+            pointerEvents: "none",
+          }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: `rgba(${tokens.ink},0.5)`, marginBottom: 2 }}>予想震度</div>
+            {keys.map(key => {
+              const c = colorScheme.colors[key] || colorScheme.colors["0"];
+              return (
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 14, height: 14, borderRadius: 4, background: c.bg, flexShrink: 0 }}/>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: tokens.text }}>{INTENSITY_LABEL[key]}</span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+
       {/* エラー表示 */}
       {status === "error" && (
         <div style={{
@@ -2578,6 +2631,10 @@ function intensityLabelToKey(label) {
   if (!label) return "?";
   return INTENSITY_LABEL_TO_KEY[label] ?? "?";
 }
+
+// 震度の弱い順(凡例表示用)。"5"/"6"は1996年10月改定前専用の値なので、
+// 実運用の並びには含めない。
+const INTENSITY_LEGEND_ORDER = ["0", "1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
 
 // 観測点マーカーをMapLibreのsymbolレイヤーで描くための下準備。
 // 震度キーは有限個(0〜7,5-,5+,6-,6+,?)しかないので、キーごとに
@@ -4774,6 +4831,13 @@ function instrumentalIntensityToScaleKey(i) {
 // 震度4未満だった場合も含めた全地域中の最大値から求め、震度4未満の震源でも「?」に
 // ならず正しい予測震度が表示されるようにしている。
 const SITE_AMPLIFICATION_FACTOR = 2.0;
+// 震度キー→気象庁の震度階級コード(数値。大きいほど強い)の対応。eewMaxScaleKey等で
+// 使われているものと同じ体系。
+const INTENSITY_SCALE_CODE = { "7": 70, "6+": 60, "6-": 55, "6": 54, "5+": 50, "5-": 45, "5": 44, "4": 40, "3": 30, "2": 20, "1": 10, "0": 0 };
+// テスト配信専用: 震度5弱(気象庁の実運用で警報の基準となる階級)以上を警報級とみなす。
+function isTestWarnLevel(intensityKey) {
+  return (INTENSITY_SCALE_CODE[intensityKey] ?? -1) >= 45;
+}
 function calcTestEewAreasByAttenuation(areasGeoJSON, lat, lon, magnitude, depthKm, isPlum) {
   if (!areasGeoJSON || !Array.isArray(areasGeoJSON.features)) return { areas: [], maxIntensityKey: "?" };
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(magnitude)) {
@@ -4783,7 +4847,6 @@ function calcTestEewAreasByAttenuation(areasGeoJSON, lat, lon, magnitude, depthK
   const Mw = magnitude - 0.171;
   const faultLengthKm = Math.pow(10, 0.5 * Mw - 1.85);
   const sourceRadiusKm = faultLengthKm / 2;
-  const codeMap = { "7": 70, "6+": 60, "6-": 55, "6": 54, "5+": 50, "5-": 45, "5": 44, "4": 40 };
 
   const areas = []; // 地図の塗り潰し用(震度4以上のみ)
   let overallMaxValue = -Infinity;
@@ -4815,7 +4878,7 @@ function calcTestEewAreasByAttenuation(areasGeoJSON, lat, lon, magnitude, depthK
     }
     if (instrIntensity < 4) continue; // 塗り潰し対象は震度4以上のみ
 
-    const code = codeMap[key] ?? 40;
+    const code = INTENSITY_SCALE_CODE[key] ?? 40;
     areas.push({ pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: key, isPlum: !!isPlum });
   }
   return { areas, maxIntensityKey: overallMaxKey || "?" };
@@ -10669,13 +10732,13 @@ function EewTestBroadcastPanel({ testEews, onAction, eewTestForm, eewEpicenterPi
           </div>
           <div style={{ display: "flex", gap: 16, marginTop: 2 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: tokens.text, cursor: "pointer" }}>
-              <input type="checkbox" checked={f.isWarnLevel} onChange={e => patchForm({ isWarnLevel: e.target.checked })} style={{ accentColor: "#FF453A" }}/>
-              警報(オフで予報)
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: tokens.text, cursor: "pointer" }}>
               <input type="checkbox" checked={f.isPlum} onChange={e => patchForm({ isPlum: e.target.checked })} style={{ accentColor: "#BF5AF2" }}/>
               PLUM法
             </label>
+          </div>
+          <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.6 }}>
+            警報/予報は自動判定(最大震度5弱以上で警報)。一度警報になった後は、
+            続報で震度が下がっても予報には戻りません。
           </div>
         </div>
         <SettingsCardDivider/>
@@ -10688,7 +10751,7 @@ function EewTestBroadcastPanel({ testEews, onAction, eewTestForm, eewEpicenterPi
             longitude: typeof f.longitude === "number" && !Number.isNaN(f.longitude) ? f.longitude : 139.3,
             depth: typeof f.depth === "number" && !Number.isNaN(f.depth) ? f.depth : 20,
             magnitude: typeof f.magnitude === "number" && !Number.isNaN(f.magnitude) ? f.magnitude : 5.0,
-            isWarnLevel: f.isWarnLevel, isPlum: f.isPlum,
+            isPlum: f.isPlum,
           })}
           style={{
             width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
@@ -12476,7 +12539,6 @@ export default function App() {
       longitude: 139.3,
       depth: 20,
       magnitude: 5.8,
-      isWarnLevel: true,
       isPlum: false,
     };
   }
@@ -12519,18 +12581,26 @@ export default function App() {
         const { areas, maxIntensityKey } = calcTestEewAreasByAttenuation(
           areasGeoJSON, params.latitude, params.longitude, params.magnitude, params.depth, params.isPlum
         );
+        // 警報/予報はテスト機能限定のルール: 最大震度5弱以上を警報、4以下を予報として
+        // 自動判定する。一度警報級になったイベントは、その後の続報で計算上の震度が
+        // 下がっても予報には戻さない(気象庁の実運用でも警報は取消されるまで解除されない)。
+        const computedIsWarnLevel = isTestWarnLevel(maxIntensityKey);
         if (isNew) {
-          setTestEews(prev => [...prev, buildTestEewCard({ ...params, id: resultId, areas, maxIntensityKey })]);
+          setTestEews(prev => [...prev, buildTestEewCard({
+            ...params, id: resultId, areas, maxIntensityKey, isWarnLevel: computedIsWarnLevel,
+          })]);
         } else {
           setTestEews(prev => {
             const i = prev.findIndex(e => e.id === resultId);
             if (i === -1) return prev;
             const next = [...prev];
+            const isWarnLevel = next[i].isWarnLevel === true ? true : computedIsWarnLevel;
             next[i] = {
               ...next[i],
               ...params,
               areas,
               maxIntensityKey,
+              isWarnLevel,
               serial: String((parseInt(next[i].serial, 10) || 1) + 1),
               receivedLocalAt: Date.now(),
             };
@@ -12552,7 +12622,6 @@ export default function App() {
         longitude: target.longitude,
         depth: target.depth,
         magnitude: target.magnitude,
-        isWarnLevel: target.isWarnLevel !== false,
         isPlum: !!target.isPlum,
       });
       return;
@@ -13576,6 +13645,7 @@ export default function App() {
           eews={effectiveEews}
           eewEpicenterPickActive={eewEpicenterPickActive}
           onPickEewEpicenter={handlePickEewEpicenter}
+          eewDetailOpen={eewDetailOpen}
         />
 
         {/* 津波テスト配信「地図タップで選択」中のバナー — 画面上部中央に浮かぶ。
