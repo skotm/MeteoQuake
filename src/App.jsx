@@ -13,7 +13,7 @@ import { createPortal } from "react-dom";
 const APP_VERSION = "1.3.5a";
 
 /* ─────────────────────────────────────────────────────
-   RESPONSIVE LAYOUT
+   RESPONSIVE LAYOUT 
    スマホ縦持ちでは「下部タブバー + 下からドラッグして開くボトムシート」、
    横画面スマホ・タブレット・PCなど横幅が十分ある場合は「左端の縦タブバー
    (レール) + 常に画面右側に居るパネル」に切り替える。
