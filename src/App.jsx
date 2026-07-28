@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.8";
+const APP_VERSION = "1.3.8b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7529,9 +7529,17 @@ function BottomDock({
   // (トップメニューがスクロールなしで丸ごと見える高さのため)。
   // 開く前の高さ(ドラッグで調整していた場合も含む)を覚えておき、
   // 設定タブから元のタブへ戻った時はその高さにそのまま復元する。
+  // ただし、緊急地震速報の詳細を表示中(eewDetailOpen)は、この高さ強制を
+  // 行わない。EEW表示中に設定タブへ切り替えても、フローティングの高さが
+  // 勝手に変わらないようにするため(タブ切り替え全般でのeewDetailOpen中の
+  // 挙動を、他のタブ切り替えガードと揃えている)。
   const preSettingsSnapIndexRef = useRef(snapIndex);
   const lastActiveForSettings = useRef(active);
   useEffect(() => {
+    if (eewDetailOpen) {
+      lastActiveForSettings.current = active;
+      return;
+    }
     if (lastActiveForSettings.current !== "settings" && active === "settings") {
       preSettingsSnapIndexRef.current = snapIndex; // 開く直前の高さを覚えておく
       setSnapIndex(3);
@@ -7539,7 +7547,7 @@ function BottomDock({
       setSnapIndex(preSettingsSnapIndexRef.current); // 覚えておいた元の高さに戻す
     }
     lastActiveForSettings.current = active;
-  }, [active]);
+  }, [active, eewDetailOpen]);
 
   // 津波警報テスト配信の「地図タップで選択」モード。ONになった瞬間、その時点の
   // 高さを覚えたうえでフローティングを完全にたたみ(低=0)、地図全体をタップできる
