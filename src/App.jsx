@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.8d";
+const APP_VERSION = "1.3.8e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2470,7 +2470,19 @@ function EewDetailFloatingCard({ eew }) {
   const accent = eew.cancelled ? tokens.textSecondary : (isWarnLevel ? "#FF453A" : "#FF9F0A");
 
   return (
-    <>
+    <div style={{ position: "relative" }}>
+      {/* テスト配信バッジ。津波警報テストの詳細カード(TsunamiDetailCard)の
+          バッジと全く同じスタイル・配置(フローティング左上に絶対配置)を
+          そのまま使う。サイズやデザインは変えない。 */}
+      {eew.isTest && (
+        <span style={{
+          position: "absolute", top: 6, left: 10, zIndex: 1,
+          fontSize: 9.5, fontWeight: 800, color: "#fff",
+          background: "#FF453A", borderRadius: 4, padding: "2px 6px",
+        }}>
+          テスト配信
+        </span>
+      )}
       {/* 見出し — 「緊急地震速報(警報)」チップと「#報番号」チップを、色付きの
           Glass(すりガラス)で囲う。tintColorはGlass内部のブラー層自体の背景を
           直接置き換えるため、ライト/ダークモードやフローティング不透明設定に
@@ -2509,19 +2521,6 @@ function EewDetailFloatingCard({ eew }) {
               # {eew.serial ?? "-"}{eew.isFinal ? "(最終)" : ""}
             </span>
           </Glass>
-        )}
-        {/* テスト配信バッジ。津波警報テストの一覧行(TsunamiListRow)のバッジと
-            全く同じスタイルをそのまま使う(Glassチップにはせず、単色フラットな
-            赤背景+白文字のspan)。見た目を独自に作り込まず、既存の「テスト」
-            表示と統一する。 */}
-        {eew.isTest && (
-          <span style={{
-            flexShrink: 0, alignSelf: "center",
-            fontSize: 9.5, fontWeight: 800, color: "#fff",
-            background: "#FF453A", borderRadius: 4, padding: "2px 5px",
-          }}>
-            テスト
-          </span>
         )}
       </div>
 
@@ -2640,7 +2639,7 @@ function EewDetailFloatingCard({ eew }) {
           )}
         </>
       )}
-    </>
+    </div>
   );
 }
 
