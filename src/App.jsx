@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.6a";
+const APP_VERSION = "1.3.6b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -899,6 +899,7 @@ function MapCanvas({
   stationMarkersVisible = true,
   tideStationPoints = [], onSelectTideStation, selectedTideStationCode,
   tsunamiHeightBars = [], tideStationBarsMode = false,
+  tideStationsInteractive = true,
   tsunamiAreaPickActive = false, onPickTsunamiArea, pickedTsunamiAreas = [],
   eews = [],
   eewEpicenterPickActive = false, onPickEewEpicenter,
@@ -933,6 +934,8 @@ function MapCanvas({
   onSelectEpicenterPointRef.current = onSelectEpicenterPoint;
   const onSelectTideStationRef = useRef(onSelectTideStation);
   onSelectTideStationRef.current = onSelectTideStation;
+  const tideStationsInteractiveRef = useRef(tideStationsInteractive);
+  tideStationsInteractiveRef.current = tideStationsInteractive;
 
   // 津波予報区の「地図タップで選択」モード用。map.on("load")内の登録は初回のみなので、
   // 最新のモードON/OFF・コールバック・読み込み済みデータをrefで参照できるようにする。
@@ -1353,12 +1356,14 @@ function MapCanvas({
             },
           });
           map.on("mouseenter", "tide-station-points-layer", () => {
+            if (!tideStationsInteractiveRef.current) return;
             map.getCanvas().style.cursor = "pointer";
           });
           map.on("mouseleave", "tide-station-points-layer", () => {
             map.getCanvas().style.cursor = "";
           });
           map.on("click", "tide-station-points-layer", (e) => {
+            if (!tideStationsInteractiveRef.current) return; // 過去の津波の参照専用表示ではタップを無効にする
             if (!e.features || !e.features.length) return;
             onSelectTideStationRef.current?.(e.features[0].properties.code);
           });
@@ -1367,10 +1372,12 @@ function MapCanvas({
           // 同じく観測点を選択できるようにする(アイコン全体が当たり判定になるため、
           // 丸だけでなくバーの範囲もタップ可能)。
           map.on("click", "tsunami-height-bars-layer", (e) => {
+            if (!tideStationsInteractiveRef.current) return; // 過去の津波の参照専用表示ではタップを無効にする
             if (!e.features || !e.features.length) return;
             onSelectTideStationRef.current?.(e.features[0].properties.code);
           });
           map.on("mouseenter", "tsunami-height-bars-layer", () => {
+            if (!tideStationsInteractiveRef.current) return;
             map.getCanvas().style.cursor = "pointer";
           });
           map.on("mouseleave", "tsunami-height-bars-layer", () => {
@@ -5044,6 +5051,32 @@ async function fetchTideObsRange(stationCode, days = 2) {
   };
 }
 
+// startDate〜endDateの暦日(両端含む)について、1地点分の観測値を1日ずつ取得し、
+// 1本の配列に結合する。fetchTideObsRangeは「当日を含む直近N日」専用(常に今日を
+// 終端にする)なので、過去の津波情報(履歴)を選んで見る時のために、任意の過去の
+// 期間を扱えるこちらを別途用意する。取得できなかった日(欠測・レート制限等)は
+// 読み飛ばし、取得できた日だけを時系列順に繋げる(最大波さえ拾えれば十分なため、
+// fetchTideObsRangeのように欠測で即座に打ち切ることはしない)。
+async function fetchTideObsForDateRange(stationCode, startDate, endDate) {
+  const dateStrs = [];
+  const cur = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  const last = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+  while (cur.getTime() <= last.getTime()) {
+    dateStrs.push(toTideDateStr(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+  const settled = await Promise.allSettled(dateStrs.map(ds => fetchTideObs(ds, stationCode)));
+  const ordered = settled.filter(s => s.status === "fulfilled").map(s => s.value);
+  if (ordered.length === 0) throw new Error("潮位観測値の取得に失敗");
+
+  return {
+    ...ordered[ordered.length - 1],
+    time: ordered[0].time,
+    tide: ordered.flatMap(d => Array.isArray(d.tide) ? d.tide : []),
+    departure: ordered.flatMap(d => Array.isArray(d.departure) ? d.departure : []),
+  };
+}
+
 // 観測された津波の高さ(推定)を、潮位観測データから計算する。
 // 気象庁の解説(https://www.jma.go.jp/jma/kishou/know/jishin/joho/tsunamiinfo.html)の
 // 「津波観測に関する情報」が示す考え方どおり、潮位の実測値から天文潮位(推算潮位)を
@@ -6782,6 +6815,7 @@ function BottomDock({
   active, onNav, navCollapseSignal, navDoubleTapSignal, layerOpen, layers, onToggleLayer, onLayerOpenChange,
   quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [],
   tsunamis = [], tsunamiStatus = "loading", selectedTsunamiId, onSelectTsunami,
+  isViewingPastTsunami = false,
   tsunamiHistory, onLoadMoreTsunamiHistory, onCausingQuakeChange,
   onTsunamiViewModeChange,
   tideStations = EMPTY_EQDB_LIST, tideStationsStatus = "idle",
@@ -7806,7 +7840,7 @@ function BottomDock({
               <div style={{ marginTop: 12 }}>
                 <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
               </div>
-            ) : activeTsunami != null && tsunamiViewMode !== "tidegauge" && (
+            ) : activeTsunami != null && !isViewingPastTsunami && tsunamiViewMode !== "tidegauge" && (
               <div style={{ marginTop: 12 }}>
                 <StationMarkerToggleButton visible={tideStationMarkersVisible} onClick={onToggleTideStationMarkersVisible}/>
               </div>
@@ -7825,7 +7859,7 @@ function BottomDock({
             <div style={{ marginBottom: 12 }}>
               <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
             </div>
-          ) : activeTsunami != null && tsunamiViewMode !== "tidegauge" && (
+          ) : activeTsunami != null && !isViewingPastTsunami && tsunamiViewMode !== "tidegauge" && (
             <div style={{ marginBottom: 12 }}>
               <StationMarkerToggleButton visible={tideStationMarkersVisible} onClick={onToggleTideStationMarkersVisible}/>
             </div>
@@ -13368,8 +13402,31 @@ export default function App() {
     return { episodeStart, reachedBoundary: false }; // 一覧の先頭に達してもなお空きが見つからなかった
   }
 
+  // walkTsunamiEpisodeBackの逆(先へ辿る)版。過去の津波情報を選んで見ている時、
+  // 「一連の現象」の解除時刻を求めるために使う(同じ24時間ギリギリのヒューリスティック)。
+  // 解除(cancelled)報が見つかればそこで確定、見つからないまま一覧の末尾(=最新)に
+  // 達した場合はreachedBoundary:falseを返す(=まだ解除報を確認できていない=
+  // 現象が継続中の可能性がある、という意味)。
+  function walkTsunamiEpisodeForward(sortedAsc, idx) {
+    const GAP_LIMIT_MS = 24 * 60 * 60 * 1000;
+    if (sortedAsc[idx].cancelled) return { episodeEnd: new Date(sortedAsc[idx].time), reachedBoundary: true };
+    let cur = sortedAsc[idx];
+    for (let i = idx; i < sortedAsc.length - 1; i++) {
+      const next = sortedAsc[i + 1];
+      if (new Date(next.time).getTime() - new Date(cur.time).getTime() > GAP_LIMIT_MS) {
+        return { episodeEnd: null, reachedBoundary: true }; // ここで現象が途切れた=解除報を伴わずに終わった
+      }
+      cur = next;
+      if (cur.cancelled) return { episodeEnd: new Date(cur.time), reachedBoundary: true };
+    }
+    return { episodeEnd: null, reachedBoundary: false }; // 一覧の末尾に達してもなお解除報が見つからなかった
+  }
+
   const effectiveTsunamisRef = useRef(effectiveTsunamis);
   effectiveTsunamisRef.current = effectiveTsunamis;
+
+  const tsunamiHistoryItemsRef = useRef(tsunamiHistory.items);
+  tsunamiHistoryItemsRef.current = tsunamiHistory.items;
 
   const [activeTsunamiEpisodeStartTime, setActiveTsunamiEpisodeStartTime] = useState(null);
   useEffect(() => {
@@ -13408,6 +13465,78 @@ export default function App() {
     resolve();
     return () => { cancelled = true; };
   }, [activeTsunami?.id]);
+
+  // 今見せているのが、activeTsunamiではない「過去の津波情報」かどうか。
+  // (選んでいない=activeTsunamiをそのまま自動表示している間はfalse)
+  const isViewingPastTsunami =
+    selectedTsunami != null && (!activeTsunami || selectedTsunami.id !== activeTsunami.id);
+
+  // 過去の津波情報を選んで見ている間、その「一連の現象」の開始(第１報)〜
+  // 終了(解除報)の日時。潮位データの取得範囲(=第１報〜解除まで)と、その中での
+  // 最大波の探索に使う。解除報が見つからない場合はend:null(=解除されないまま
+  // 一覧が途切れている。まれなケースだが、その場合は「開始から一覧にある最後の
+  // 報の時刻まで」を範囲とみなす)。
+  const [selectedTsunamiEpisodeRange, setSelectedTsunamiEpisodeRange] = useState(null); // {start, end} | null
+  useEffect(() => {
+    if (!isViewingPastTsunami || !selectedTsunami) { setSelectedTsunamiEpisodeRange(null); return; }
+    let cancelled = false;
+
+    async function resolve() {
+      let pool = dedupeTsunamiList([...effectiveTsunamisRef.current, ...tsunamiHistoryItemsRef.current]);
+      let sorted = [...pool].sort((a, b) => new Date(a.time) - new Date(b.time));
+      let idx = sorted.findIndex(t => t.id === selectedTsunami.id);
+      if (idx < 0) {
+        if (!cancelled) {
+          const t = new Date(selectedTsunami.time);
+          setSelectedTsunamiEpisodeRange({ start: t, end: selectedTsunami.cancelled ? t : t });
+        }
+        return;
+      }
+
+      let { episodeStart, reachedBoundary: startBoundary } = walkTsunamiEpisodeBack(sorted, idx);
+      let { episodeEnd, reachedBoundary: endBoundary } = walkTsunamiEpisodeForward(sorted, idx);
+
+      const MAX_HISTORY_PAGES = 5; // 10リクエスト/分の制限があるAPIなので、遡りすぎないよう上限を設ける
+      let offset = 0;
+      while ((!startBoundary || !endBoundary) && !cancelled && offset / TSUNAMI_HISTORY_PAGE_SIZE < MAX_HISTORY_PAGES) {
+        let older;
+        try {
+          older = await fetchTsunamiHistoryPage(offset, TSUNAMI_HISTORY_PAGE_SIZE);
+        } catch {
+          break; // 取得に失敗したら、それまでに分かっている範囲で確定させる
+        }
+        if (!older || older.length === 0) break;
+        const beforeCount = pool.length;
+        pool = dedupeTsunamiList([...pool, ...older]);
+        if (pool.length === beforeCount) break; // 追加分が全部重複だった→これ以上遡っても無駄
+        sorted = [...pool].sort((a, b) => new Date(a.time) - new Date(b.time));
+        idx = sorted.findIndex(t => t.id === selectedTsunami.id);
+        if (idx < 0) break;
+        if (!startBoundary) ({ episodeStart, reachedBoundary: startBoundary } = walkTsunamiEpisodeBack(sorted, idx));
+        if (!endBoundary) ({ episodeEnd, reachedBoundary: endBoundary } = walkTsunamiEpisodeForward(sorted, idx));
+        offset += TSUNAMI_HISTORY_PAGE_SIZE;
+      }
+      // 解除報がどうしても見つからない場合は、一覧にある最後(=一連の現象の中で
+      // 一番新しい)報の時刻を終了時刻の代わりに使う(潮位データを取りこぼさないため、
+      // 少し余裕を持たせた範囲になる)。
+      if (!episodeEnd) {
+        idx = sorted.findIndex(t => t.id === selectedTsunami.id);
+        if (idx < 0) {
+          episodeEnd = episodeStart; // 見失った場合は開始時刻をそのまま終了時刻とする
+        } else {
+          let lastIdx = idx;
+          for (let i = idx; i < sorted.length - 1; i++) {
+            if (new Date(sorted[i + 1].time).getTime() - new Date(sorted[i].time).getTime() > 24 * 60 * 60 * 1000) break;
+            lastIdx = i + 1;
+          }
+          episodeEnd = new Date(sorted[lastIdx].time);
+        }
+      }
+      if (!cancelled) setSelectedTsunamiEpisodeRange({ start: episodeStart, end: episodeEnd });
+    }
+    resolve();
+    return () => { cancelled = true; };
+  }, [isViewingPastTsunami, selectedTsunami?.id]);
 
   const tsunamiAreasForMap =
     !showTsunamiMapLayers || !tsunamiForMapDisplay || tsunamiForMapDisplay.cancelled
@@ -13466,6 +13595,22 @@ export default function App() {
       return match ? { ...st, activeGrade: match.grade } : st;
     });
   }, [tideStationsWithArea, activeTsunami]);
+
+  // 過去の(activeTsunamiではない)津波情報を選んで見ている間、その回の対象予報区に
+  // 属する観測点一覧。tideStationsWithGradeはactiveTsunami(ライブ監視)専用なので、
+  // 過去分はここで別途、selectedTsunami.areasと照合して求める。
+  const selectedTsunamiTideStations = useMemo(() => {
+    if (!isViewingPastTsunami || !selectedTsunami || !Array.isArray(selectedTsunami.areas) || selectedTsunami.areas.length === 0) {
+      return EMPTY_EQDB_LIST;
+    }
+    const result = [];
+    for (const st of tideStationsWithArea) {
+      if (!st.tsunamiAreaName) continue;
+      const match = selectedTsunami.areas.find(a => a.name === st.tsunamiAreaName);
+      if (match) result.push({ ...st, activeGrade: match.grade });
+    }
+    return result;
+  }, [isViewingPastTsunami, selectedTsunami, tideStationsWithArea]);
 
   // 潮位観測点(発令中の予報区分)の表示/非表示。地震タブの観測点表示ボタンと
   // 同じ考え方で、パネルの外に浮かぶ丸ボタンから切り替える。
@@ -13592,6 +13737,78 @@ export default function App() {
     return result;
   }, [activeTsunami, activeTsunamiEpisodeStartTime, tideStationsWithGrade, tideObsByStation, tsunamiHeightByStation]);
 
+  /* ─────────────────────────────────────────────────────
+     過去の津波情報を選んで見ている間の潮位データ・最大波。
+     activeTsunami用(tideObsByStation)は「当日を含む直近日」しか取得しないため、
+     過去の任意の期間には使えない。ここでは、対象観測点それぞれについて
+     「一連の現象」の第１報の日〜解除の日までを個別に取得し(historicalTideObsByStation、
+     `${tsunamiId}::${code}`をキーにしてactiveTsunami用のキャッシュとは独立させる)、
+     その範囲内で潮位偏差が正の値(山)の最大のものを最大波として計算する。
+     ───────────────────────────────────────────────────── */
+  // 形: { "tsunamiId::stationCode": { status: "loading"|"ready"|"error", data } }
+  const [historicalTideObsByStation, setHistoricalTideObsByStation] = useState({});
+  const historicalTideObsRequestedRef = useRef(new Set()); // 取得を開始済みのキー(重複フェッチ防止)
+  useEffect(() => {
+    if (!isViewingPastTsunami || !selectedTsunami || !selectedTsunamiEpisodeRange || selectedTsunamiTideStations.length === 0) return;
+    let cancelled = false;
+    const { start, end } = selectedTsunamiEpisodeRange;
+    const endDate = end || new Date(); // 稀に解除が確認できなかった場合は現在時刻まで
+    const tsunamiId = selectedTsunami.id;
+
+    async function run() {
+      for (const st of selectedTsunamiTideStations) {
+        if (cancelled) return;
+        const key = `${tsunamiId}::${st.code}`;
+        if (historicalTideObsRequestedRef.current.has(key)) continue; // 取得済み・取得中ならスキップ
+        historicalTideObsRequestedRef.current.add(key);
+        setHistoricalTideObsByStation(prev => ({ ...prev, [key]: { status: "loading", data: null } }));
+        try {
+          const data = await fetchTideObsForDateRange(st.code, start, endDate);
+          if (cancelled) return;
+          setHistoricalTideObsByStation(prev => ({ ...prev, [key]: { status: "ready", data } }));
+        } catch (err) {
+          console.error(`過去の津波の潮位観測値の取得に失敗(${st.code}):`, err);
+          if (cancelled) return;
+          setHistoricalTideObsByStation(prev => ({ ...prev, [key]: { status: "error", data: null } }));
+        }
+      }
+    }
+    run();
+    return () => { cancelled = true; };
+  }, [isViewingPastTsunami, selectedTsunami, selectedTsunamiEpisodeRange, selectedTsunamiTideStations]);
+
+  // 観測点コードごとの、過去の津波で観測された最大波(メートル、正の値のみ)。
+  const historicalTsunamiHeightByStation = useMemo(() => {
+    if (!isViewingPastTsunami || !selectedTsunami || !selectedTsunamiEpisodeRange) return {};
+    const startMs = selectedTsunamiEpisodeRange.start.getTime();
+    const result = {};
+    selectedTsunamiTideStations.forEach(st => {
+      const entry = historicalTideObsByStation[`${selectedTsunami.id}::${st.code}`];
+      if (!entry || entry.status !== "ready" || !entry.data) return;
+      const max = computeMaxTsunamiHeightCm(entry.data, startMs);
+      if (max == null) return;
+      const m = max.cm / 100;
+      if (m < TSUNAMI_HEIGHT_NEGLIGIBLE_M) return; // 微弱
+      result[st.code] = m;
+    });
+    return result;
+  }, [isViewingPastTsunami, selectedTsunami, selectedTsunamiEpisodeRange, selectedTsunamiTideStations, historicalTideObsByStation]);
+
+  // 観測点コードごとの、過去の津波で最大波を観測した時刻(エポックms)。
+  const historicalTsunamiHeightTimeByStation = useMemo(() => {
+    if (!isViewingPastTsunami || !selectedTsunami || !selectedTsunamiEpisodeRange) return {};
+    const startMs = selectedTsunamiEpisodeRange.start.getTime();
+    const result = {};
+    selectedTsunamiTideStations.forEach(st => {
+      if (historicalTsunamiHeightByStation[st.code] == null) return;
+      const entry = historicalTideObsByStation[`${selectedTsunami.id}::${st.code}`];
+      if (!entry || entry.status !== "ready" || !entry.data) return;
+      const max = computeMaxTsunamiHeightCm(entry.data, startMs);
+      if (max?.timeMs != null) result[st.code] = max.timeMs;
+    });
+    return result;
+  }, [isViewingPastTsunami, selectedTsunami, selectedTsunamiEpisodeRange, selectedTsunamiTideStations, historicalTideObsByStation, historicalTsunamiHeightByStation]);
+
   // 地図に表示する観測点一覧。丸の色(dotColor)は、予報区の公式グレードではなく
   // 実際に観測された津波の高さ(tsunamiHeightByStation)から決める
   // (tsunamiHeightBandColor参照。未観測・微弱の間は薄グレー)。
@@ -13638,6 +13855,43 @@ export default function App() {
       });
   }, [tideStationsWithGrade, tsunamiHeightByStation]);
 
+  // 過去の津波を選んで見ている間に地図に出す観測点(丸)・バー。ライブ監視用の
+  // tideStationsForMap/tsunamiHeightBarsと全く同じ組み立て方を、対象データだけ
+  // selectedTsunamiTideStations/historicalTsunamiHeightByStationに差し替えて使う。
+  const historicalTideStationsForMap = useMemo(() => {
+    return selectedTsunamiTideStations.map(st => ({
+      ...st,
+      dotColor: tsunamiHeightBandColor(historicalTsunamiHeightByStation[st.code]),
+    }));
+  }, [selectedTsunamiTideStations, historicalTsunamiHeightByStation]);
+
+  const historicalTsunamiHeightBars = useMemo(() => {
+    return selectedTsunamiTideStations
+      .filter(st => historicalTsunamiHeightByStation[st.code] != null)
+      .map(st => {
+        const heightM = historicalTsunamiHeightByStation[st.code];
+        const clamped = Math.min(heightM, TSUNAMI_HEIGHT_BAR_MAX_M);
+        const heightT = (clamped - TSUNAMI_HEIGHT_NEGLIGIBLE_M) / (TSUNAMI_HEIGHT_BAR_MAX_M - TSUNAMI_HEIGHT_NEGLIGIBLE_M);
+        return {
+          code: st.code,
+          name: st.name,
+          heightM,
+          heightT,
+          color: tsunamiHeightBandColor(heightM),
+          lng: st.lon,
+          lat: st.lat,
+        };
+      });
+  }, [selectedTsunamiTideStations, historicalTsunamiHeightByStation]);
+
+  // 過去の津波の観測点・バーを地図に出すかどうか。ライブ監視用のshowActiveTsunamiTideStations
+  // と同じ考え方で、こちらはisViewingPastTsunamiの間だけ出す。
+  // 過去分は参照専用の表示なので、観測点の表示/非表示ボタン(tideStationMarkersVisible)は
+  // 関与させない(常にオンとして扱い、ボタン自体は無効化してタップできないようにする
+  // ——後述のStationMarkerToggleButton側の対応、及びMapCanvas側のタップ無効化と対)。
+  const showHistoricalTsunamiTideStations =
+    showTsunamiMapLayers && causingQuakeCard == null && isViewingPastTsunami && selectedTsunamiTideStations.length > 0;
+
   // 潮位観測点ピン(発令中の予報区分。潮位計モードでない間に表示しているもの)を
   // 地図上でタップした時、手動で潮位計モードに入って観測点を選んだ時と同じ体験に
   // したいので、選択だけでなく「潮位計モードに切り替えてほしい」という信号も
@@ -13666,12 +13920,21 @@ export default function App() {
           tideStationPoints={
             showTideGaugeLayer ? tideStationsForMap
             : showActiveTsunamiTideStations ? warnedTideStationsForMap
+            : showHistoricalTsunamiTideStations ? historicalTideStationsForMap
             : EMPTY_EQDB_LIST
           }
           onSelectTideStation={handleSelectTideStationOnMap}
           selectedTideStationCode={selectedTideStationCode}
-          tsunamiHeightBars={showActiveTsunamiTideStations ? tsunamiHeightBars : EMPTY_EQDB_LIST}
-          tideStationBarsMode={showActiveTsunamiTideStations}
+          tsunamiHeightBars={
+            showActiveTsunamiTideStations ? tsunamiHeightBars
+            : showHistoricalTsunamiTideStations ? historicalTsunamiHeightBars
+            : EMPTY_EQDB_LIST
+          }
+          tideStationBarsMode={showActiveTsunamiTideStations || showHistoricalTsunamiTideStations}
+          // 過去の津波の観測点・バーは参照専用の表示なので、タップ(選択・詳細表示)を
+          // 無効にする。ライブ監視中(showActiveTsunamiTideStations)・潮位計モードでは
+          // 従来通りタップ可能。
+          tideStationsInteractive={!showHistoricalTsunamiTideStations}
           hypocenters={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeHypocenters : selectedHypocenters) : EMPTY_EQDB_LIST}
           isWide={isWide}
           quakeTimeStr={causingQuakeCard ? causingQuakeCard.time : selectedQuake?.time}
@@ -13896,6 +14159,7 @@ export default function App() {
                   tsunamiStatus={tsunamiStatus}
                   selectedTsunamiId={selectedTsunamiId}
                   onSelectTsunami={setSelectedTsunamiId}
+                  isViewingPastTsunami={isViewingPastTsunami}
                   tsunamiHistory={tsunamiHistory}
                   onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
                   onTsunamiViewModeChange={setTsunamiViewModeTop}
@@ -13983,6 +14247,7 @@ export default function App() {
               tsunamiStatus={tsunamiStatus}
               selectedTsunamiId={selectedTsunamiId}
               onSelectTsunami={setSelectedTsunamiId}
+              isViewingPastTsunami={isViewingPastTsunami}
               tsunamiHistory={tsunamiHistory}
               onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
               onTsunamiViewModeChange={setTsunamiViewModeTop}
