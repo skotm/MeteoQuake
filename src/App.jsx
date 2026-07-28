@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.8b";
+const APP_VERSION = "1.3.8c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -8077,11 +8077,14 @@ function BottomDock({
               <>
                 {/* 緊急地震速報の詳細 — 地震タブでQuakeDetailCard/QuakeMessageCardが
                     並ぶのと全く同じように、囲みなしでカードを直接並べる。タブの中身を
-                    一時的に置き換えるだけで、閉じれば元のタブ表示にそのまま戻る。 */}
+                    一時的に置き換えるだけで、閉じれば元のタブ表示にそのまま戻る。
+                    地震カード・津波カードと同じくPanelDragHandoffCardで包み、カードを
+                    掴んで縦方向にドラッグした時、パネル本体の高さ調整(ハンドルの
+                    ドラッグ)として扱えるようにする。 */}
                 {eews.map(eew => (
-                  <Fragment key={eew.eventId}>
+                  <PanelDragHandoffCard key={eew.eventId} onHandoffToPanelDrag={handlePointerDown}>
                     <EewDetailFloatingCard eew={eew}/>
-                  </Fragment>
+                  </PanelDragHandoffCard>
                 ))}
               </>
             ) : active === "quake" ? (
