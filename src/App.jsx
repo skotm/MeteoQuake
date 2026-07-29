@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.1d";
+const APP_VERSION = "1.4.1e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2658,6 +2658,7 @@ function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
 const INTENSITY_LABEL = {
   "0": "0", "1": "1", "2": "2", "3": "3", "4": "4",
   "5": "5", "5-": "5弱", "5+": "5強", "6": "6", "6-": "6弱", "6+": "6強", "7": "7",
+  "5u": "5弱以上未入電", // 観測点の震度計が検知したが、確定した震度をまだ入電できていない状態(scale=46)
   "?": "?", // 震度が取得できなかった場合(「0」と区別する)
 };
 
@@ -2682,11 +2683,11 @@ const EEW_FILL_LEGEND_ORDER = ["0", "1", "2", "3", "4", "5-", "5+", "6-", "6+", 
 // 「丸+白フチ+震度番号」を1枚のbitmapとして事前にcanvasへ焼いておき、
 // addImageでMapLibreに登録する。text-fieldを使わないため、
 // スタイルにglyphs(フォント配信)を用意しなくても数字を表示できる。
-const STATION_ICON_KEYS = ["0", "1", "2", "3", "4", "5", "5-", "5+", "6", "6-", "6+", "7", "?"];
+const STATION_ICON_KEYS = ["0", "1", "2", "3", "4", "5", "5-", "5u", "5+", "6", "6-", "6+", "7", "?"];
 
 // 震度キーの弱い順(小さい順)の並び。震度リストのソート・グループ化・
 // 折りたたみ判定など、複数箇所で「震度の大小比較」が必要な場面で共通して使う。
-const INTENSITY_ORDER = ["0","1","2","3","4","5","5-","5+","6","6-","6+","7"];
+const INTENSITY_ORDER = ["0","1","2","3","4","5","5-","5u","5+","6","6-","6+","7"];
 const STATION_ICON_BASE_RADIUS = 32; // bitmap側の半径(px)。icon-sizeで実際の大きさへスケールする。
 
 // withText=falseの場合は数字を描かない(低ズームで円が小さいときに文字が潰れるのを避けるため)。
@@ -2736,9 +2737,10 @@ function buildStationIconCanvas(bg, fg, label, withText, strokeColor = "#ffffff"
 // まとめて生成し、MapLibreへaddImage/updateImageする。配色スキームが切り替わるたびに呼ぶ。
 function registerStationIcons(map, scheme) {
   STATION_ICON_KEYS.forEach(key => {
-    const style = scheme.colors[key] || scheme.colors["0"];
-    // 地図上の丸には「5弱」「6強」ではなくキー表記(5-,6+等)をそのまま出す。
-    const label = key;
+    const style = scheme.colors[key === "5u" ? "5-" : key] || scheme.colors["0"];
+    // 地図上の丸には「5弱」「6強」ではなくキー表記(5-,6+等)をそのまま出すが、
+    // "5u"(震度5弱以上未入電)だけは内部キーをそのまま出さず「未」にする。
+    const label = key === "5u" ? "未" : key;
     // 気象庁配色の震度1は塗りがほぼ白(#F2F2FF)なので、既定の白い縁のままだと
     // 塗りと縁が同化して見分けづらい。この組み合わせの時だけ縁を黒にする。
     const strokeColor = (scheme.id === "jma" && key === "1") ? "#000000" : "#ffffff";
@@ -3302,7 +3304,10 @@ function saveStationListDisplayMode(mode) {
 // .map()のコールバック内などフックを呼べない場所からはこちらを直接使う
 // (スキーム自体はコンポーネント側で useContext(QuakeColorSchemeContext) して渡す)。
 function getIntensityStyleFromScheme(scheme, intensityKey) {
-  const c = scheme.colors[intensityKey] || scheme.colors["0"];
+  // "5u"(震度5弱以上未入電)は独自の色を持たず、5弱(5-)の配色を流用する。
+  // 「少なくとも5弱相当」という情報として扱うため。
+  const colorKey = intensityKey === "5u" ? "5-" : intensityKey;
+  const c = scheme.colors[colorKey] || scheme.colors["0"];
   const label = INTENSITY_LABEL[intensityKey] || INTENSITY_LABEL["0"];
   return { bg: c.bg, fg: c.fg, label };
 }
@@ -3336,6 +3341,7 @@ function maxScaleToIntensityKey(maxScale) {
     "-1": "0", "0": "0",
     "10": "1", "20": "2", "30": "3", "40": "4",
     "44": "5", "45": "5-", "50": "5+",
+    "46": "5u", // 震度5弱以上未入電(観測点で震度計は検知したが、確定した震度をまだ入電できていない状態)
     "54": "6", "55": "6-", "60": "6+",
     "70": "7",
   };
@@ -3448,9 +3454,14 @@ const TSUNAMI_TEXT = {
   Unknown:      { text: "津波の有無について、現在調査中です。",                   color: "#FFD60A" },
   Checking:     { text: "津波の有無について、現在調査中です。",                   color: "#FFD60A" },
   NonEffective: { text: "若干の海面変動が予想されますが、被害の心配はありません。", color: "#FFD60A" },
-  Watch:        { text: "この地震により、津波注意報が発表されています。",         color: "#FF9F0A" },
-  Warning:      { text: "この地震により、津波警報が発表されています。",           color: "#FF453A" },
-  MajorWarning: { text: "この地震により、大津波警報が発表されています。",         color: "#FF453A" },
+  // 注意報・警報・大津波警報は、個別のグレードを言い切らず「等」でまとめた
+  // 共通文言にする。同じ地震について、グレードが後から切り下げ/切り上げ
+  // されることがあり、表示側が参照している電文のタイミングによっては
+  // 実際のグレードと異なる文言を出してしまう恐れがあるため
+  // (詳しい現在のグレードは津波タブ側の表示を確認してもらう)。
+  Watch:        { text: "この地震により、津波警報・注意報等が発表されています。", color: "#FF453A" },
+  Warning:      { text: "この地震により、津波警報・注意報等が発表されています。", color: "#FF453A" },
+  MajorWarning: { text: "この地震により、津波警報・注意報等が発表されています。", color: "#FF453A" },
 };
 
 function buildQuakeMessage(quake) {
@@ -4611,7 +4622,7 @@ function resolveStationPoints(points, stations) {
 // 各区域には、その区域内の観測点で観測された「最大震度」を割り当てる
 // (気象庁の震度分布図と同じ考え方: 区域内で一番揺れが大きかった地点の震度で塗る)。
 function aggregateByArea(resolvedPoints) {
-  const INTENSITY_ORDER = ["0","1","2","3","4","5","5-","5+","6","6-","6+","7"];
+  const INTENSITY_ORDER = ["0","1","2","3","4","5","5-","5u","5+","6","6-","6+","7"];
   const maxByArea = new Map(); // areaCode -> intensityKey
 
   for (const p of resolvedPoints) {
@@ -5806,6 +5817,14 @@ function QuakeDetailCard({ quake }) {
             <span style={{ fontSize: 14, fontWeight: 800, lineHeight: 1.2 }}>不明</span>
           ) : quake.maxIntensity === "?" ? (
             <span style={{ fontSize: 13, fontWeight: 800, lineHeight: 1.15, textAlign: "center" }}>調査中</span>
+          ) : quake.maxIntensity === "5u" ? (
+            // 震度5弱以上未入電 — 観測点の震度計は検知したが、確定した震度が
+            // まだ入電されていない状態。「少なくとも5弱」を示す"5弱+"と、
+            // その理由となる"未入電"を2段で表示する。
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1.1 }}>
+              <span className="mono" style={{ fontSize: 22, fontWeight: 800 }}>5弱+</span>
+              <span style={{ fontSize: 10, fontWeight: 700, marginTop: 2 }}>未入電</span>
+            </div>
           ) : suffix ? (
             <>
               {/* 弱/強付き(5弱・5強・6弱・6強) — 数字と弱/強を近づけ、正方形の中央にまとめて配置 */}
@@ -6112,9 +6131,9 @@ function StationPointsList({ points, displayMode = "list", openKey, onOpenKeyCha
                     flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
                     background: style.bg, color: style.fg,
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 11, fontWeight: 800,
+                    fontSize: key === "5u" ? 9 : 11, fontWeight: 800,
                   }}>
-                    {style.label}
+                    {key === "5u" ? "未入電" : style.label}
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: tokens.text }}>
@@ -6148,9 +6167,9 @@ function StationPointsList({ points, displayMode = "list", openKey, onOpenKeyCha
                     flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
                     background: style.bg, color: style.fg,
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 11, fontWeight: 800,
+                    fontSize: p.intensityKey === "5u" ? 9 : 11, fontWeight: 800,
                   }}>
-                    {style.label}
+                    {p.intensityKey === "5u" ? "未入電" : style.label}
                   </span>
                   <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.4)`, flexShrink: 0 }}>
                     {p.pref}
@@ -8839,10 +8858,10 @@ function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect, loading = 
             flexShrink: 0, width: 28, height: 22, borderRadius: 6,
             background: style.bg, color: style.fg,
             display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: q.isForeign ? 9 : (q.maxIntensity === "?" ? 7.5 : 11), fontWeight: 800,
+            fontSize: q.isForeign ? 9 : (q.maxIntensity === "?" || q.maxIntensity === "5u" ? 7.5 : 11), fontWeight: 800,
             lineHeight: 1.1, textAlign: "center",
           }}>
-            {q.isForeign ? "遠地" : (q.maxIntensity === "?" ? "調査中" : style.label)}
+            {q.isForeign ? "遠地" : q.maxIntensity === "?" ? "調査中" : q.maxIntensity === "5u" ? "未入電" : style.label}
           </span>
         )}
         <span style={{
