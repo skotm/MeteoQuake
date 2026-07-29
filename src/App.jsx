@@ -2544,10 +2544,7 @@ function EewDetailFloatingCard({ eew }) {
               animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
             }}
           >
-            {/* 震源地 — カード上部に全幅で表示。PLUM法(観測点の揺れの実測から
-                震源を仮定する方式)の場合は、この同じ行の末尾に断り書きを添える
-                (別行にすると下の最大予測震度アイコンの位置がずれてしまうため、
-                アイコン側の高さに一切影響しない、この行の中に収める)。 */}
+            {/* 震源地 — カード上部に全幅で表示 */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0, lineHeight: 1.1 }}>
               <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>震源地</span>
               <AutoFitText
@@ -2556,14 +2553,6 @@ function EewDetailFloatingCard({ eew }) {
                 minFontSize={13}
                 style={{ fontWeight: 800, color: tokens.text, lineHeight: 1.1 }}
               />
-              {eew.isPlum && (
-                <span style={{
-                  flexShrink: 0, fontSize: 11.5, fontWeight: 700,
-                  color: tokens.textSecondary, whiteSpace: "nowrap", lineHeight: 1.1,
-                }}>
-                  PLUM法による仮定震源要素
-                </span>
-              )}
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -2595,6 +2584,18 @@ function EewDetailFloatingCard({ eew }) {
               </div>
 
               <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+                {/* PLUM法(観測点の揺れの実測から震源を仮定する方式)の場合だけ、
+                    M・深さの行と同じ書式(ラベル文字のみ・同じフォントサイズと色)で
+                    その一段上に表示する。この列(テキスト側)の中に収めているので、
+                    左の最大予測震度アイコンの高さ・位置には一切影響しない。 */}
+                {eew.isPlum && (
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
+                      PLUM法による仮定震源要素
+                    </span>
+                  </div>
+                )}
+
                 <div style={{ display: "flex", alignItems: "baseline", gap: 12, lineHeight: 1.1 }}>
                   <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
                     M<span className="mono" style={{ fontSize: 25, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
