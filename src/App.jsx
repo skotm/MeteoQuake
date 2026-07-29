@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.1c";
+const APP_VERSION = "1.4.1d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3485,8 +3485,10 @@ function dedupeQuakeList(list) {
   //  M・深さを条件から外しても誤結合のリスクは実用上問題にならない)
   const groupKey = q => `${q.time}|${q.place}`;
 
-  // 各グループについて、最も情報量の多い(震度情報を持つ、かつリスト内でより後に
-  // 出てきた=より新しい)レコードだけを残す。
+  // 各グループについて、最も情報量の多い(震度情報を持つ)レコードだけを残す。
+  // listは常に新しい順(newest-first)で渡ってくる(/history統合時・WebSocket
+  // 受信時のどちらも、呼び出し側で新しい順に並べてから渡している)。そのため
+  // 「リスト内で先に出てきた方」が常により新しいレコードになる。
   const bestInGroup = new Map(); // groupKey -> 現時点で最良のレコード
   for (const q of list) {
     const key = groupKey(q);
@@ -3497,9 +3499,15 @@ function dedupeQuakeList(list) {
     }
     const existingSubstantial = existing.points.length > 0 || (existing.maxIntensity !== "0" && existing.maxIntensity !== "?");
     const qSubstantial = q.points.length > 0 || (q.maxIntensity !== "0" && q.maxIntensity !== "?");
-    // 震度情報を持つ方を優先。情報量が同じレベルなら、より新しい(リスト内で後の)方を採用する
-    // ことで、M・深さの修正(確定値への更新)を反映できるようにする。
-    if (qSubstantial || qSubstantial === existingSubstantial) {
+    // 震度情報を持たないexisting(震源情報のみ)を、震度情報を持つqで補完する
+    // 場合だけ上書きする。それ以外(情報量が同じレベル)は、先に出てきた
+    // existing(=より新しいレコード)を残す。
+    // 以前は「情報量が同じレベルなら後の方(=list内で後)を採用する」ロジックに
+    // なっていたが、これは「後の方が新しい」という誤った前提に基づいており、
+    // 実際には新しい順のlistでは後の方が古いレコードだったため、M・深さの
+    // 修正や津波警報→注意報への切り下げなど、後から更新された内容が反映されず、
+    // 古いレコードの内容(古いdomesticTsunamiの値など)が残ってしまっていた。
+    if (qSubstantial && !existingSubstantial) {
       bestInGroup.set(key, q);
     }
   }
