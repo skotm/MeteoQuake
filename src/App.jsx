@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.8e";
+const APP_VERSION = "1.3.8f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2505,7 +2505,7 @@ function EewDetailFloatingCard({ eew }) {
             color: tokens.text,
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
           }}>
-            緊急地震速報{eew.cancelled ? "(取消)" : (isWarnLevel ? "(警報)" : "(予報)")}
+            緊急地震速報{eew.cancelled ? "(取消)" : (isWarnLevel ? "(警報)" : "(予報)")}{!eew.cancelled && eew.isPlum ? "・PLUM法" : ""}
           </span>
         </Glass>
         {!eew.cancelled && (
@@ -2554,6 +2554,15 @@ function EewDetailFloatingCard({ eew }) {
                 style={{ fontWeight: 800, color: tokens.text, lineHeight: 1.1 }}
               />
             </div>
+
+            {/* PLUM法(観測点の揺れの実測から震源を仮定する方式)の場合だけ、
+                震源地とM・深さの間に断り書きを挟む。震源要素そのものが実際の
+                観測から算出した「仮定」の値であることを明示するため。 */}
+            {eew.isPlum && (
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#BF5AF2", lineHeight: 1.3 }}>
+                PLUM法による仮定震源要素
+              </div>
+            )}
 
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
