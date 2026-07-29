@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.0b";
+const APP_VERSION = "1.4.0c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2549,7 +2549,7 @@ function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
           >
             {/* 震源地 — カード上部に全幅で表示 */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0, lineHeight: 1.1 }}>
-              <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>震源地</span>
+              <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>{eew.isPlum ? "検知観測点" : "震源地"}</span>
               <AutoFitText
                 text={eew.place}
                 maxFontSize={25}
@@ -2618,7 +2618,7 @@ function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
                 <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1 }}>
                   <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>発生時刻</span>
                   <span className="mono" style={{ fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.1 }}>
-                    {formatQuakeTimeShort(eew.originTime)}
+                    {formatEewTimeShort(eew.originTime)}
                   </span>
                 </div>
               </div>
@@ -3369,6 +3369,17 @@ function formatQuakeTimeShort(raw) {
   const [hh, mm] = timePart.split(":");
   if (hh == null || mm == null) return raw;
   return `${datePart} ${hh}:${mm}頃`;
+}
+
+// 緊急地震速報の発生時刻用。通常の地震一覧(formatQuakeTimeShort)は分単位までだが、
+// 緊急地震速報は速報性・精度が重要なため秒まで表示する。
+function formatEewTimeShort(raw) {
+  if (!raw) return "";
+  const [datePart, timePart] = raw.split(" ");
+  if (!timePart) return raw;
+  const [hh, mm, ss] = timePart.split(":");
+  if (hh == null || mm == null) return raw;
+  return `${datePart} ${hh}:${mm}:${ss ?? "00"}頃`;
 }
 
 // 「最大波を観測した時刻」の表示用(エポックms→「24日 15:30」のような形式)。
