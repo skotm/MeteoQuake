@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.1b";
+const APP_VERSION = "1.4.1c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3428,7 +3428,11 @@ function toQuakeCard(item) {
     points,
     // 国内津波の有無・程度。"None"(心配なし) / "Unknown" / "Checking"(調査中) /
     // "NonEffective"(若干の海面変動) / "Watch"(注意報) / "Warning"(警報) / "MajorWarning"(大津波警報)
-    domesticTsunami: eq?.domesticTsunami || "None",
+    // フィールド自体が無い場合(震度速報・震源に関する情報など、津波の判定が
+    // まだ行われていない段階のレコード)は、「心配なし」ではなく「調査中」を
+    // 既定値にする。"None"を既定にしてしまうと、実際にはまだ判定されていない
+    // だけなのに「津波の心配はありません」と誤って表示されてしまうため。
+    domesticTsunami: eq?.domesticTsunami || "Unknown",
     // 気象庁が付加する自由記述コメント(あれば)
     freeFormComment: item?.comments?.freeFormComment || null,
   };
@@ -5792,6 +5796,8 @@ function QuakeDetailCard({ quake }) {
         >
           {quake.isForeign ? (
             <span style={{ fontSize: 14, fontWeight: 800, lineHeight: 1.2 }}>不明</span>
+          ) : quake.maxIntensity === "?" ? (
+            <span style={{ fontSize: 13, fontWeight: 800, lineHeight: 1.15, textAlign: "center" }}>調査中</span>
           ) : suffix ? (
             <>
               {/* 弱/強付き(5弱・5強・6弱・6強) — 数字と弱/強を近づけ、正方形の中央にまとめて配置 */}
@@ -8825,9 +8831,10 @@ function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect, loading = 
             flexShrink: 0, width: 28, height: 22, borderRadius: 6,
             background: style.bg, color: style.fg,
             display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: q.isForeign ? 9 : 11, fontWeight: 800,
+            fontSize: q.isForeign ? 9 : (q.maxIntensity === "?" ? 7.5 : 11), fontWeight: 800,
+            lineHeight: 1.1, textAlign: "center",
           }}>
-            {q.isForeign ? "遠地" : style.label}
+            {q.isForeign ? "遠地" : (q.maxIntensity === "?" ? "調査中" : style.label)}
           </span>
         )}
         <span style={{
