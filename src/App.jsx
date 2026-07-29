@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.0";
+const APP_VERSION = "1.4.0a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2470,18 +2470,23 @@ function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
   const accent = eew.cancelled ? tokens.textSecondary : (isWarnLevel ? "#FF453A" : "#FF9F0A");
 
   return (
-    <div style={{ position: "relative" }}>
+    <div>
       {/* テスト配信バッジ。津波警報テストの詳細カード(TsunamiDetailCard)の
-          バッジと全く同じスタイル・配置(フローティング左上に絶対配置)を
-          そのまま使う。サイズやデザインは変えない。 */}
+          バッジと全く同じスタイル(サイズ・角丸・配色)をそのまま使う。
+          以前はabsolute配置で見出しチップの上に重ねていたが、見出しとの
+          重なりを避けるための余白調整が必要になり、逆に上部へ不要な空白が
+          生まれてしまっていた。通常の行として見出しのすぐ上に積む形にすれば、
+          重なりも余白の帳尻合わせも不要になる。 */}
       {eew.isTest && (
-        <span style={{
-          position: "absolute", top: 6, left: 10, zIndex: 1,
-          fontSize: 9.5, fontWeight: 800, color: "#fff",
-          background: "#FF453A", borderRadius: 4, padding: "2px 6px",
-        }}>
-          テスト配信
-        </span>
+        <div style={{ margin: "4px 16px 0" }}>
+          <span style={{
+            display: "inline-block",
+            fontSize: 9.5, fontWeight: 800, color: "#fff",
+            background: "#FF453A", borderRadius: 4, padding: "2px 6px",
+          }}>
+            テスト配信
+          </span>
+        </div>
       )}
       {/* 見出し — 「緊急地震速報(警報)」チップと「#報番号」チップを、色付きの
           Glass(すりガラス)で囲う。tintColorはGlass内部のブラー層自体の背景を
@@ -2490,7 +2495,7 @@ function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
           tokens.glassTint/glassOpaqueBgと二重に重なって、モードや不透明設定ごとに
           色の見え方がバラついていた)。 */}
       <PanelDragHandoffCard onHandoffToPanelDrag={onHandoffToPanelDrag}>
-        <div style={{ margin: eew.isTest ? "26px 16px 10px" : "4px 16px 10px", display: "flex", alignItems: "stretch", gap: 8 }}>
+        <div style={{ margin: "4px 16px 10px", display: "flex", alignItems: "stretch", gap: 8 }}>
           <Glass
             radius={14}
             tintColor={eew.cancelled ? null : accent}
