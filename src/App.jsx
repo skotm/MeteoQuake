@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.0a";
+const APP_VERSION = "1.4.0b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2471,31 +2471,27 @@ function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
 
   return (
     <div>
-      {/* テスト配信バッジ。津波警報テストの詳細カード(TsunamiDetailCard)の
-          バッジと全く同じスタイル(サイズ・角丸・配色)をそのまま使う。
-          以前はabsolute配置で見出しチップの上に重ねていたが、見出しとの
-          重なりを避けるための余白調整が必要になり、逆に上部へ不要な空白が
-          生まれてしまっていた。通常の行として見出しのすぐ上に積む形にすれば、
-          重なりも余白の帳尻合わせも不要になる。 */}
-      {eew.isTest && (
-        <div style={{ margin: "4px 16px 0" }}>
-          <span style={{
-            display: "inline-block",
-            fontSize: 9.5, fontWeight: 800, color: "#fff",
-            background: "#FF453A", borderRadius: 4, padding: "2px 6px",
-          }}>
-            テスト配信
-          </span>
-        </div>
-      )}
       {/* 見出し — 「緊急地震速報(警報)」チップと「#報番号」チップを、色付きの
           Glass(すりガラス)で囲う。tintColorはGlass内部のブラー層自体の背景を
           直接置き換えるため、ライト/ダークモードやフローティング不透明設定に
           関わらず常に同じ濃さの色になる(以前はstyle.backgroundで指定していたため、
           tokens.glassTint/glassOpaqueBgと二重に重なって、モードや不透明設定ごとに
-          色の見え方がバラついていた)。 */}
+          色の見え方がバラついていた)。
+          テスト配信バッジは、この見出しブロックの左上に重ねて絶対配置する
+          (このdivだけをposition:relativeにすることで、カード全体やスクロール
+          位置には影響させず、見出しブロックとの相対位置だけで決まるようにする)。 */}
       <PanelDragHandoffCard onHandoffToPanelDrag={onHandoffToPanelDrag}>
-        <div style={{ margin: "4px 16px 10px", display: "flex", alignItems: "stretch", gap: 8 }}>
+        <div style={{ position: "relative", margin: "4px 16px 10px" }}>
+          {eew.isTest && (
+            <span style={{
+              position: "absolute", top: -6, left: 8, zIndex: 1,
+              fontSize: 9.5, fontWeight: 800, color: "#fff",
+              background: "#FF453A", borderRadius: 4, padding: "2px 6px",
+            }}>
+              テスト配信
+            </span>
+          )}
+          <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
           <Glass
             radius={14}
             tintColor={eew.cancelled ? null : accent}
@@ -2527,6 +2523,7 @@ function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
               </span>
             </Glass>
           )}
+          </div>
         </div>
       </PanelDragHandoffCard>
 
