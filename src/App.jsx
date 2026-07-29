@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.8f";
+const APP_VERSION = "1.3.8g";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2489,7 +2489,7 @@ function EewDetailFloatingCard({ eew }) {
           関わらず常に同じ濃さの色になる(以前はstyle.backgroundで指定していたため、
           tokens.glassTint/glassOpaqueBgと二重に重なって、モードや不透明設定ごとに
           色の見え方がバラついていた)。 */}
-      <div style={{ margin: "4px 16px 10px", display: "flex", alignItems: "stretch", gap: 8 }}>
+      <div style={{ margin: eew.isTest ? "26px 16px 10px" : "4px 16px 10px", display: "flex", alignItems: "stretch", gap: 8 }}>
         <Glass
           radius={14}
           tintColor={eew.cancelled ? null : accent}
@@ -2538,7 +2538,7 @@ function EewDetailFloatingCard({ eew }) {
               padding: "8px 16px",
               display: "flex",
               flexDirection: "column",
-              gap: 3,
+              gap: 2,
               background: `linear-gradient(135deg, ${style.bg}2E, ${style.bg}14)`,
               boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
               animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
@@ -2559,7 +2559,7 @@ function EewDetailFloatingCard({ eew }) {
                 震源地とM・深さの間に断り書きを挟む。震源要素そのものが実際の
                 観測から算出した「仮定」の値であることを明示するため。 */}
             {eew.isPlum && (
-              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#BF5AF2", lineHeight: 1.3 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: tokens.textSecondary, lineHeight: 1.3, marginBottom: 2 }}>
                 PLUM法による仮定震源要素
               </div>
             )}
