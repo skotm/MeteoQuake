@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.9";
+const APP_VERSION = "1.4.0";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2461,7 +2461,7 @@ function EewFabButton({ onClick }) {
    取消(cancelled)を受信した場合は「取消」表示に切り替わり、一定時間後に
    一覧から消える(App側のEEW_CANCEL_LINGER_MSタイマーで管理)。
    ───────────────────────────────────────────────────── */
-function EewDetailFloatingCard({ eew }) {
+function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
   const { tokens } = useContext(ThemeContext);
   const style = useIntensityStyle(eew.maxIntensityKey);
   const { num, suffix } = splitIntensityLabel(style.label);
@@ -2489,40 +2489,41 @@ function EewDetailFloatingCard({ eew }) {
           関わらず常に同じ濃さの色になる(以前はstyle.backgroundで指定していたため、
           tokens.glassTint/glassOpaqueBgと二重に重なって、モードや不透明設定ごとに
           色の見え方がバラついていた)。 */}
-      <div style={{ margin: eew.isTest ? "26px 16px 10px" : "4px 16px 10px", display: "flex", alignItems: "stretch", gap: 8 }}>
-        <Glass
-          radius={14}
-          tintColor={eew.cancelled ? null : accent}
-          style={{
-            flex: 1, minWidth: 0,
-            padding: "10px 14px",
-            display: "flex", alignItems: "center",
-            background: eew.cancelled ? `rgba(${tokens.ink},0.08)` : undefined,
-          }}
-        >
-          <span style={{
-            fontSize: 16, fontWeight: 800, lineHeight: 1.25,
-            color: tokens.text,
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          }}>
-            緊急地震速報{eew.cancelled ? "(取消)" : (isWarnLevel ? "(警報)" : "(予報)")}{!eew.cancelled && eew.isPlum ? "・PLUM法" : ""}
-          </span>
-        </Glass>
-        {!eew.cancelled && (
+      <PanelDragHandoffCard onHandoffToPanelDrag={onHandoffToPanelDrag}>
+        <div style={{ margin: eew.isTest ? "26px 16px 10px" : "4px 16px 10px", display: "flex", alignItems: "stretch", gap: 8 }}>
           <Glass
             radius={14}
+            tintColor={eew.cancelled ? null : accent}
             style={{
-              flexShrink: 0,
+              flex: 1, minWidth: 0,
               padding: "10px 14px",
-              display: "flex", alignItems: "center", justifyContent: "center",
+              display: "flex", alignItems: "center",
+              background: eew.cancelled ? `rgba(${tokens.ink},0.08)` : undefined,
             }}
           >
-            <span style={{ fontSize: 16, fontWeight: 800, color: tokens.text, whiteSpace: "nowrap" }}>
-              # {eew.serial ?? "-"}{eew.isFinal ? "(最終)" : ""}
+            <span style={{
+              fontSize: 16, fontWeight: 800, lineHeight: 1.25,
+              color: tokens.text,
+            }}>
+              緊急地震速報{eew.cancelled ? "(取消)" : (isWarnLevel ? "(警報)" : "(予報)")}{!eew.cancelled && eew.isPlum ? "・PLUM法" : ""}
             </span>
           </Glass>
-        )}
-      </div>
+          {!eew.cancelled && (
+            <Glass
+              radius={14}
+              style={{
+                flexShrink: 0,
+                padding: "10px 14px",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}
+            >
+              <span style={{ fontSize: 16, fontWeight: 800, color: tokens.text, whiteSpace: "nowrap" }}>
+                # {eew.serial ?? "-"}{eew.isFinal ? "(最終)" : ""}
+              </span>
+            </Glass>
+          )}
+        </div>
+      </PanelDragHandoffCard>
 
       {eew.cancelled ? (
         <div style={{ margin: "2px 16px 10px", fontSize: 13, color: tokens.textSecondary, lineHeight: 1.7 }}>
@@ -6841,7 +6842,7 @@ function BottomDock({
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
   eewTestForm, eewEpicenterPickActive,
-  eews = EMPTY_EQDB_LIST, eewDetailOpen, onOpenEewDetail, onCloseEewDetail,
+  eews = EMPTY_EQDB_LIST, eewDetailOpen, eewOpenSignal, onOpenEewDetail, onCloseEewDetail,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
   pickedTsunamiHeights, onChangeTsunamiHeightPick, onRemoveTsunamiHeightPick,
@@ -7425,6 +7426,22 @@ function BottomDock({
     }
     prevEewDetailOpenRef.current = eewDetailOpen;
   }, [eewDetailOpen]);
+
+  // FAB(!ボタン)を押すたびに増える信号。eewDetailOpenが既にtrueのまま(例: 手元で
+  // フローティングだけ閉じていた状態で、もう一度!ボタンを押して確認し直したい時)
+  // だと上のuseEffectの「falseからtrueへの変化」という条件に引っかからず、
+  // パネルが開き直されない(上部が見切れたまま/閉じたままになる)ことがあったため、
+  // 値が変わるたびに必ず開き直す専用の信号として分けている。
+  const isFirstEewOpenSignalRender = useRef(true);
+  useEffect(() => {
+    if (isFirstEewOpenSignalRender.current) {
+      isFirstEewOpenSignalRender.current = false;
+      return;
+    }
+    killScrollMomentum();
+    setSnapIndex(2);
+    openedByTapRef.current = true;
+  }, [eewOpenSignal]);
 
   // タブバーで、既にアクティブなタブがもう一度タップされた時(navCollapseSignalの変化で検知)、
   // フローティングを開閉トグルする。前回タップ(またはタブ切り替え)で自分が開いたかどうかを
@@ -8083,13 +8100,13 @@ function BottomDock({
                 {/* 緊急地震速報の詳細 — 地震タブでQuakeDetailCard/QuakeMessageCardが
                     並ぶのと全く同じように、囲みなしでカードを直接並べる。タブの中身を
                     一時的に置き換えるだけで、閉じれば元のタブ表示にそのまま戻る。
-                    地震カード・津波カードと同じくPanelDragHandoffCardで包み、カードを
-                    掴んで縦方向にドラッグした時、パネル本体の高さ調整(ハンドルの
-                    ドラッグ)として扱えるようにする。 */}
+                    地震カード・津波カードと違い、カード全体ではなく「緊急地震速報
+                    (警報/予報)」ブロックと「第◯報」ブロック(見出し部分)だけを
+                    PanelDragHandoffCardで包む(EewDetailFloatingCard内部で対応)。
+                    最大予測震度カードなど、それ以外の部分をドラッグしてもパネルの
+                    高さは変わらないようにするため。 */}
                 {eews.map(eew => (
-                  <PanelDragHandoffCard key={eew.eventId} onHandoffToPanelDrag={handlePointerDown}>
-                    <EewDetailFloatingCard eew={eew}/>
-                  </PanelDragHandoffCard>
+                  <EewDetailFloatingCard key={eew.eventId} eew={eew} onHandoffToPanelDrag={handlePointerDown}/>
                 ))}
               </>
             ) : active === "quake" ? (
@@ -12825,6 +12842,11 @@ export default function App() {
   useEffect(() => {
     if (eewDetailOpen && effectiveEews.length === 0) setEewDetailOpen(false);
   }, [eewDetailOpen, effectiveEews.length]);
+  // FAB(!ボタン)を押すたびに1増える信号。eewDetailOpenは既にtrueのままだと
+  // 値が変化せず「開いた瞬間」を検知するuseEffectが反応しないため、既に開いている
+  // 状態でFABを押し直した時(例: 手元でパネルを閉じた後、再度確認したい時)にも
+  // 確実にパネルの高さを開き直せるよう、別の信号として持たせている。
+  const [eewOpenSignal, setEewOpenSignal] = useState(0);
 
   /* ─────────────────────────────────────────────────────
      実験的機能: 津波警報テスト配信
@@ -14278,7 +14300,8 @@ export default function App() {
                   eewEpicenterPickActive={eewEpicenterPickActive}
                   eews={effectiveEews}
                   eewDetailOpen={eewDetailOpen}
-                  onOpenEewDetail={() => setEewDetailOpen(true)}
+                  eewOpenSignal={eewOpenSignal}
+                  onOpenEewDetail={() => { setEewDetailOpen(true); setEewOpenSignal(s => s + 1); }}
                   onCloseEewDetail={() => setEewDetailOpen(false)}
                   tsunamiAreaPickActive={tsunamiAreaPickActive}
                   onStartTsunamiAreaPick={startTsunamiAreaPick}
@@ -14366,7 +14389,8 @@ export default function App() {
               eewEpicenterPickActive={eewEpicenterPickActive}
               eews={effectiveEews}
               eewDetailOpen={eewDetailOpen}
-              onOpenEewDetail={() => setEewDetailOpen(true)}
+              eewOpenSignal={eewOpenSignal}
+              onOpenEewDetail={() => { setEewDetailOpen(true); setEewOpenSignal(s => s + 1); }}
               onCloseEewDetail={() => setEewDetailOpen(false)}
               tsunamiAreaPickActive={tsunamiAreaPickActive}
               onStartTsunamiAreaPick={startTsunamiAreaPick}
