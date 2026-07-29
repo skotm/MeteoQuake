@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef, useContext, createContext, forwardRef, Fragment } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useContext, createContext, forwardRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 
 /* ─────────────────────────────────────────────────────
@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.1f";
+const APP_VERSION = "1.4.2";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -12618,8 +12618,21 @@ export default function App() {
   const [selectedQuakeId, setSelectedQuakeId] = useState(null);
   // WebSocketのイベントハンドラ(古いクロージャのまま生き続ける)から常に最新の
   // selectedQuakeIdを参照できるようにするためのref。
+  // 以前はuseEffect(selectedQuakeIdの変化を見て同期)で更新していたが、それだと
+  // 「地震を選択した直後(レンダー→コミット→エフェクト実行、が終わる前)に、
+  // 同じ地震の続報がWebSocketで届いてidが差し替わる」という、選択とほぼ同時に
+  // 起こるケースでrefの反映が間に合わず、続報側の「選択中の地震を後継idへ
+  // 引き継ぐ」処理(下のconnectQuakeWebSocket・/history統合の両方)が発火条件を
+  // 満たせず素通りしてしまい、選択がズレたまま戻せなくなる不具合があった
+  // (戻るボタンが出ない/ツールバーが引っ込まないという形で表面化していた)。
+  // → refの更新をuseEffect任せにせず、selectedQuakeIdを変更する箇所すべてで
+  //   このselectQuake()を通すことで、state更新と完全に同じタイミング(同期的)
+  //   でrefも更新されるようにする。
   const selectedQuakeIdRef = useRef(null);
-  useEffect(() => { selectedQuakeIdRef.current = selectedQuakeId; }, [selectedQuakeId]);
+  const selectQuake = useCallback((id) => {
+    selectedQuakeIdRef.current = id;
+    setSelectedQuakeId(id);
+  }, []);
 
   // 津波情報(P2P地震情報API)。地震情報と同じWebSocket接続を共有する(下のuseEffect参照)。
   const [tsunamis,          setTsunamis]          = useState([]);
@@ -13187,12 +13200,12 @@ export default function App() {
       loadGeoData().then(geo => {
         const card = buildEqdbQuakeCard(point._eqdbDetail, point._eqdbListItem, stations, geo?.areas);
         setSearchQuake(card);
-        setSelectedQuakeId(card.id);
+        selectQuake(card.id);
         setMapSelectSignal(n => n + 1);
       });
       return;
     }
-    setSelectedQuakeId(id);
+    selectQuake(id);
     setMapSelectSignal(n => n + 1);
   }
 
@@ -13347,7 +13360,7 @@ export default function App() {
             const successor = prevSelected
               ? result.find(q => q.time === prevSelected.time && q.place === prevSelected.place)
               : null;
-            setSelectedQuakeId(successor ? successor.id : null);
+            selectQuake(successor ? successor.id : null);
           }
 
           return result;
@@ -13432,7 +13445,7 @@ export default function App() {
               q.time === prevSelected.time &&
               q.place === prevSelected.place
             );
-            setSelectedQuakeId(successor ? successor.id : null);
+            selectQuake(successor ? successor.id : null);
           }
 
           return result;
@@ -14314,7 +14327,7 @@ export default function App() {
                       quakes={quakes}
                   quakeStatus={quakeStatus}
                   selectedQuakeId={selectedQuakeId}
-                  onSelectQuake={setSelectedQuakeId}
+                  onSelectQuake={selectQuake}
                   tsunamis={effectiveTsunamis}
                   tsunamiStatus={tsunamiStatus}
                   selectedTsunamiId={selectedTsunamiId}
@@ -14403,7 +14416,7 @@ export default function App() {
               quakes={quakes}
               quakeStatus={quakeStatus}
               selectedQuakeId={selectedQuakeId}
-              onSelectQuake={setSelectedQuakeId}
+              onSelectQuake={selectQuake}
               tsunamis={effectiveTsunamis}
               tsunamiStatus={tsunamiStatus}
               selectedTsunamiId={selectedTsunamiId}
