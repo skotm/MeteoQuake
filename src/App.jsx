@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.0c";
+const APP_VERSION = "1.4.0d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -8094,9 +8094,14 @@ function BottomDock({
             フリックした後の減速アニメーション)が同じ要素に対して裏側で動き続け、
             切り替え直後にリセットしてもすぐ上書きされて別タブ側まで動いてしまう
             ため。要素ごと作り直すことで、古い要素に紐づく慣性スクロールを
-            物理的に断ち切る。 */}
+            物理的に断ち切る。
+            eewDetailOpenもkeyに含めているのは、これが無いと「今見ているタブ」の
+            スクロールコンテナをそのまま緊急地震速報の表示にも使い回してしまい、
+            EEWを開く前/後でスクロール位置が引き継がれてしまう(EEWを見ている間に
+            スクロールすると、閉じた時にタブ本来の内容側もそのスクロール位置に
+            なってしまう)ため。 */}
         <div
-          key={`${active}:${quakeViewMode}:${tsunamiViewMode}:${selectedQuakeId != null}:${selectedTsunamiId != null}:${selectedTideStationCode != null}`}
+          key={`${eewDetailOpen}:${active}:${quakeViewMode}:${tsunamiViewMode}:${selectedQuakeId != null}:${selectedTsunamiId != null}:${selectedTideStationCode != null}`}
           ref={scrollRef}
           style={{
             flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", overflowAnchor: "none",
