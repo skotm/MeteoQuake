@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.3.8g";
+const APP_VERSION = "1.3.9";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2538,13 +2538,16 @@ function EewDetailFloatingCard({ eew }) {
               padding: "8px 16px",
               display: "flex",
               flexDirection: "column",
-              gap: 2,
+              gap: 3,
               background: `linear-gradient(135deg, ${style.bg}2E, ${style.bg}14)`,
               boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
               animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
             }}
           >
-            {/* 震源地 — カード上部に全幅で表示 */}
+            {/* 震源地 — カード上部に全幅で表示。PLUM法(観測点の揺れの実測から
+                震源を仮定する方式)の場合は、この同じ行の末尾に断り書きを添える
+                (別行にすると下の最大予測震度アイコンの位置がずれてしまうため、
+                アイコン側の高さに一切影響しない、この行の中に収める)。 */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0, lineHeight: 1.1 }}>
               <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>震源地</span>
               <AutoFitText
@@ -2553,16 +2556,15 @@ function EewDetailFloatingCard({ eew }) {
                 minFontSize={13}
                 style={{ fontWeight: 800, color: tokens.text, lineHeight: 1.1 }}
               />
+              {eew.isPlum && (
+                <span style={{
+                  flexShrink: 0, fontSize: 11.5, fontWeight: 700,
+                  color: tokens.textSecondary, whiteSpace: "nowrap", lineHeight: 1.1,
+                }}>
+                  PLUM法による仮定震源要素
+                </span>
+              )}
             </div>
-
-            {/* PLUM法(観測点の揺れの実測から震源を仮定する方式)の場合だけ、
-                震源地とM・深さの間に断り書きを挟む。震源要素そのものが実際の
-                観測から算出した「仮定」の値であることを明示するため。 */}
-            {eew.isPlum && (
-              <div style={{ fontSize: 12.5, fontWeight: 700, color: tokens.textSecondary, lineHeight: 1.3, marginBottom: 2 }}>
-                PLUM法による仮定震源要素
-              </div>
-            )}
 
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
