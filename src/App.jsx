@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.1";
+const APP_VERSION = "1.4.1a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -13292,12 +13292,25 @@ export default function App() {
             .slice(0, quakeFetchLimit);
           const result = dedupeQuakeList(merged);
 
-          // 選択中の地震が、統合後もなお一覧に存在しない場合だけ選択解除する。
+          // 選択中の地震が、統合後もなお一覧に存在しない場合の後始末。
           // ただし気象庁 震度データベース検索由来(id が "eqdb_" 始まり)の地震は
           // そもそもこの一覧(P2P地震情報)には入らないため、対象外にする。
+          // WebSocket受信時(下のconnectQuakeWebSocket側)と同じ理由で、
+          // dedupeQuakeList側が「同じ地震のより情報量の多いレコード」を優先して
+          // 別idを採用することがある(アプリを開いている間に新着地震を選択した
+          // 直後、/historyの取得が完了してより詳細なレコードに差し替わる場合など)。
+          // ここでも同様に、消えたレコードのidだけを見て即座に選択解除するのでは
+          // なく、まず「同じ発生時刻+震源地」の後継レコードを探し、見つかれば
+          // そちらに選択を引き継ぐ(見つからない場合だけ選択解除する)。これが
+          // 無いと、新着地震を選んだ直後に選択が解除され、詳細画面が一覧表示に
+          // 戻ってしまう(ボタンバーは出たまま、戻るボタンは出ない)不具合になる。
           const selId = selectedQuakeIdRef.current;
           if (selId != null && !String(selId).startsWith("eqdb_") && !result.some(q => q.id === selId)) {
-            setSelectedQuakeId(null);
+            const prevSelected = prev.find(q => q.id === selId) || null;
+            const successor = prevSelected
+              ? result.find(q => q.time === prevSelected.time && q.place === prevSelected.place)
+              : null;
+            setSelectedQuakeId(successor ? successor.id : null);
           }
 
           return result;
