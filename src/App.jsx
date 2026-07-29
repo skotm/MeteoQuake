@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.0d";
+const APP_VERSION = "1.4.0e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -14185,8 +14185,12 @@ export default function App() {
           </div>
         )}
 
-        {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ */}
-        {activeNav === "quake" && selectedQuake && (
+        {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ。
+            緊急地震速報の詳細を表示中(eewDetailOpen)は、EEW側に別の凡例
+            (震度の予測範囲の凡例)があるため、こちらは隠す。これが無いと、
+            地震タブで地震を選択したまま緊急地震速報が開いた時、地震の震度凡例が
+            EEWの表示に重なって残ってしまっていた。 */}
+        {!eewDetailOpen && activeNav === "quake" && selectedQuake && (
           <div style={{
             position: "absolute",
             top: "calc(16px + env(safe-area-inset-top))",
