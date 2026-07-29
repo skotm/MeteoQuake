@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.0e";
+const APP_VERSION = "1.4.1";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -1449,23 +1449,11 @@ function MapCanvas({
             }
           });
 
-          // ─────────────────────────────────────────────
-          // 緊急地震速報(EEW): 地域ごとの予測震度の塗りつぶし。
-          // 細分区域.json(areasGeoJSON)のポリゴンのうち、EEWのareas[].nameと
-          // 名前が一致するものだけを抜き出し、震度の色をproperties.fillColorに
-          // 持たせて描画する(震度分布の既存の"areas"ソース/feature-stateとは
-          // 独立させることで、選択中の地震の震度分布表示と干渉しないようにしている)。
-          // P波・S波の円や震源マーカーより下、通常の地図塗りより上になるよう、
-          // このブロックを先に追加しておく。
-          map.addSource("eew-area-fill", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-          map.addLayer({
-            id: "eew-area-fill-layer", type: "fill", source: "eew-area-fill",
-            paint: { "fill-color": ["get", "fillColor"], "fill-opacity": 0.55 },
-          });
-          map.addLayer({
-            id: "eew-area-fill-line-layer", type: "line", source: "eew-area-fill",
-            paint: { "line-color": "rgba(0,0,0,0.35)", "line-width": 0.8 },
-          });
+          // 緊急地震速報(EEW)の地域ごとの予測震度塗りつぶしは、専用レイヤーは
+          // 持たず、地震情報の震度分布と同じ"areas"ソース/"areas-intensity-fill"・
+          // "areas-intensity-line"レイヤー(feature-state)を共用する(下のuseEffectで
+          // setFeatureStateする)。塗り方・線・重なり順を地震情報の震度塗りつぶしと
+          // 完全に一致させるため。
 
           // ─────────────────────────────────────────────
           // 緊急地震速報(EEW): P波・S波の伝播円と震源マーカー。
@@ -1618,8 +1606,13 @@ function MapCanvas({
   // 緊急地震速報: areas[]に予測震度がある場合、その地域を細分区域.json上で
   // 名前が一致するポリゴンを探し、震度の色で塗りつぶす。P/S波の円と違って
   // 頻繁には変わらないため、requestAnimationFrameではなくeewsが変化した時だけ
-  // 計算する。取消・タイムアウトで対象のEEWが無くなったら自動的に消える
-  // (毎回全部作り直すだけなので、個別の後始末を気にしなくてよい)。
+  // 計算する。取消・タイムアウトで対象のEEWが無くなったら自動的に消える。
+  // 地震情報の震度分布(下のuseEffect)と全く同じ"areas"ソース/feature-stateの
+  // 仕組み(setFeatureState)を使い、同じ"areas-intensity-fill"・
+  // "areas-intensity-line"レイヤーで描画する。塗った区域コードは
+  // eewPaintedAreaCodesRefで別管理し、地震情報側が塗った区域(paintedAreaCodesRef)
+  // を巻き込んで消してしまわないようにしている。
+  const eewPaintedAreaCodesRef = useRef([]);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
@@ -1627,10 +1620,12 @@ function MapCanvas({
 
     loadGeoData().then(({ areas: areasGeoJSON }) => {
       if (cancelled) return;
-      const source = map.getSource("eew-area-fill");
-      if (!source) return;
 
-      const features = [];
+      for (const code of eewPaintedAreaCodesRef.current) {
+        map.setFeatureState({ source: "areas", id: code }, { color: null, hasIntensity: 0 });
+      }
+      eewPaintedAreaCodesRef.current = [];
+
       const paintedCodes = new Set();
       let minOrderIdx = Infinity, maxOrderIdx = -Infinity;
       for (const eew of eews) {
@@ -1645,13 +1640,7 @@ function MapCanvas({
           for (const code of codes) {
             if (paintedCodes.has(code)) continue; // 複数EEWが同じ地域を含む場合は先勝ちでよい
             paintedCodes.add(code);
-            const feature = areasGeoJSON.features.find(f => f.properties?.code === code);
-            if (!feature) continue;
-            features.push({
-              type: "Feature",
-              geometry: feature.geometry,
-              properties: { fillColor: color },
-            });
+            map.setFeatureState({ source: "areas", id: code }, { color, hasIntensity: 1 });
             if (orderIdx !== -1) {
               if (orderIdx < minOrderIdx) minOrderIdx = orderIdx;
               if (orderIdx > maxOrderIdx) maxOrderIdx = orderIdx;
@@ -1659,7 +1648,7 @@ function MapCanvas({
           }
         }
       }
-      source.setData({ type: "FeatureCollection", features });
+      eewPaintedAreaCodesRef.current = [...paintedCodes];
       setEewFillRange(
         maxOrderIdx >= 0
           ? { minKey: EEW_FILL_LEGEND_ORDER[minOrderIdx], maxKey: EEW_FILL_LEGEND_ORDER[maxOrderIdx] }
@@ -13445,6 +13434,12 @@ export default function App() {
   // 緊急地震速報の内容に集中してもらうため)。
   const showQuakeMapLayers = !eewDetailOpen && (activeNav === "quake" || activeNav === "settings" || (activeNav === "tsunami" && causingQuakeCard != null));
 
+  // 断層・プレート境界だけは例外。showQuakeMapLayers(震源・観測点・震度塗り分け等)は
+  // 緊急地震速報の表示中はすべて隠すが、断層・プレート境界は地理的な背景情報であり、
+  // EEWの震源位置を見る上でもむしろ有用なため、EEW表示中でも(元のタブに関わらず)
+  // 設定のON/OFF(faultsEnabled/plateBoundariesEnabled)に従って表示できるようにする。
+  const showFaultPlateLayers = showQuakeMapLayers || eewDetailOpen;
+
   // 津波予報区の色分けは、津波タブ・設定タブを見ている間に出す。
   // 実際にどの回の予報区を塗るかはtsunamiForMapDisplay(下)が決める。
   const showTsunamiMapLayers = !eewDetailOpen && (activeNav === "tsunami" || activeNav === "settings");
@@ -14052,8 +14047,8 @@ export default function App() {
           maxIntensityKey={causingQuakeCard ? causingQuakeCard.maxIntensity : selectedQuake?.maxIntensity}
           estIntensityEnabled={showQuakeMapLayers && estIntensityEnabled}
           areaFillEnabled={showQuakeMapLayers && areaFillEnabled}
-          faultsEnabled={showQuakeMapLayers && faultsEnabled}
-          plateBoundariesEnabled={showQuakeMapLayers && plateBoundariesEnabled}
+          faultsEnabled={showFaultPlateLayers && faultsEnabled}
+          plateBoundariesEnabled={showFaultPlateLayers && plateBoundariesEnabled}
           boundaryLineColorId={boundaryLineColorId}
           epicenterPoints={showQuakeMapLayers ? epicenterPoints : EMPTY_EQDB_LIST}
           onSelectEpicenterPoint={handleSelectEpicenterPoint}
