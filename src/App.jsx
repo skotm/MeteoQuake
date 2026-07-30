@@ -10,7 +10,100 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.3";
+const APP_VERSION = "1.4.4";
+
+/* ─────────────────────────────────────────────────────
+   IN-APP DEBUG LOG
+   実機のPWAではPCの開発者ツールに繋がずconsoleログを見る手段が無いため、
+   console.log/info/warn/errorを横取りして直近分をメモリ上のリングバッファに
+   保持し、設定タブ「詳細設定」→「ログ」から一覧表示・コピーできるようにする。
+   - バッファ自体はReact stateではなくモジュールスコープの配列で持つ
+     (発生頻度が高いログでrender/commitを都度挟むと重くなるため)。
+   - 表示側は購読(subscribe)コールバックのSetを介して更新を検知する、
+     ミニ版useSyncExternalStoreのような仕組み。
+   - console.*の差し替えはモジュール読み込み時に1度だけ行う。元の関数呼び出し
+     (PCでdevtoolsを開いている場合はそちらにも従来通り出る)は維持したまま、
+     バッファへの追記を追加するだけ。
+   ───────────────────────────────────────────────────── */
+const DEBUG_LOG_MAX = 500; // 古いものから捨てる上限件数(メモリ節約のため)
+
+let debugLogBuffer = [];
+let debugLogSeq = 0;
+const debugLogSubscribers = new Set();
+
+function notifyDebugLogSubscribers() {
+  for (const cb of debugLogSubscribers) cb();
+}
+
+// console.logなどに渡された1個の引数を、表示用の1行の文字列に変換する。
+// 文字列はそのまま、Errorはname+message、それ以外(オブジェクト・配列等)は
+// JSON化を試み、失敗すれば(循環参照など)String()にフォールバックする。
+function formatDebugLogArg(arg) {
+  if (typeof arg === "string") return arg;
+  if (arg instanceof Error) return `${arg.name}: ${arg.message}`;
+  if (arg === undefined) return "undefined";
+  try {
+    return JSON.stringify(arg, (key, value) => (typeof value === "bigint" ? value.toString() : value));
+  } catch {
+    return String(arg);
+  }
+}
+
+function pushDebugLog(level, args) {
+  debugLogSeq += 1;
+  const entry = {
+    id: debugLogSeq,
+    level, // "log" | "info" | "warn" | "error"
+    time: new Date(),
+    text: args.map(formatDebugLogArg).join(" "),
+  };
+  debugLogBuffer.push(entry);
+  if (debugLogBuffer.length > DEBUG_LOG_MAX) {
+    debugLogBuffer.splice(0, debugLogBuffer.length - DEBUG_LOG_MAX);
+  }
+  notifyDebugLogSubscribers();
+}
+
+function clearDebugLog() {
+  debugLogBuffer = [];
+  notifyDebugLogSubscribers();
+}
+
+// console.log/info/warn/errorを横取りする。多重パッチ防止のためwindowにフラグを立てる
+// (開発時のホットリロード等で複数回このモジュールが評価されても1回だけ差し替える)。
+(function patchConsoleForDebugLog() {
+  if (typeof window === "undefined" || window.__debugLogPatched) return;
+  window.__debugLogPatched = true;
+  for (const method of ["log", "info", "warn", "error"]) {
+    const original = console[method] ? console[method].bind(console) : () => {};
+    console[method] = (...args) => {
+      original(...args);
+      try { pushDebugLog(method, args); } catch { /* ログ機構自体の失敗は握りつぶす */ }
+    };
+  }
+  // 通常のtry/catchを素通りしてしまうエラー(非同期処理内の未捕捉例外など)も
+  // 追っておくと、実機での不具合調査に役立つ。
+  window.addEventListener("error", (e) => {
+    try { pushDebugLog("error", [`window.onerror: ${e.message}`, `${e.filename}:${e.lineno}`]); } catch {}
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    try { pushDebugLog("error", ["unhandledrejection:", e.reason]); } catch {}
+  });
+})();
+
+// バッファの現在の中身をコンポーネントから購読するためのフック。
+// バッファ自体は毎回同じ配列参照を返す(pushDebugLog側でmutateしている)ため、
+// 呼び出し側では返り値をそのまま使わず、参照だけをトリガーにして再描画のたびに
+// 最新のdebugLogBufferを読みに行く形にしている。
+function useDebugLog() {
+  const [, forceUpdate] = useState(0);
+  useEffect(() => {
+    const cb = () => forceUpdate(n => n + 1);
+    debugLogSubscribers.add(cb);
+    return () => { debugLogSubscribers.delete(cb); };
+  }, []);
+  return debugLogBuffer;
+}
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -10693,6 +10786,7 @@ const SETTINGS_ITEMS = {
   advanced: [
     { id: "appearance", label: "外観" },
     { id: "experimental", label: "実験的・テスト機能" },
+    { id: "logs", label: "ログ" },
   ],
 };
 
@@ -11468,6 +11562,157 @@ function StationListDisplayModeSettings({ value, onChange }) {
   );
 }
 
+// 「詳細設定」→「ログ」の中身。useDebugLog()で購読しているリングバッファを
+// そのまま新しい順に一覧表示する。実機で不具合を再現した直後にこの画面を開けば、
+// PCの開発者ツールに繋がなくてもconsole.log/warn/error(および未捕捉の例外)の
+// 内容をその場で確認・全文コピーできる。
+const LOG_LEVEL_FILTERS = [
+  { id: "all",   label: "すべて" },
+  { id: "error", label: "error" },
+  { id: "warn",  label: "warn" },
+  { id: "log",   label: "log/info" },
+];
+
+function logLevelColor(level, tokens) {
+  if (level === "error") return "#FF6B6B";
+  if (level === "warn") return "#FFD60A";
+  return `rgba(${tokens.ink},0.75)`;
+}
+
+function formatDebugLogTime(date) {
+  // 秒未満まで見えないと、短時間に連続するログの前後関係が分かりにくいため、
+  // ミリ秒3桁まで表示する(toLocaleTimeStringにはミリ秒オプションが無いため手組み)。
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  const ms = String(date.getMilliseconds()).padStart(3, "0");
+  return `${hh}:${mm}:${ss}.${ms}`;
+}
+
+function LogViewerPanel() {
+  const { tokens } = useContext(ThemeContext);
+  const logs = useDebugLog();
+  const [levelFilter, setLevelFilter] = useState("all");
+  const [copyState, setCopyState] = useState("idle"); // idle | copied | failed
+
+  const filtered = levelFilter === "all"
+    ? logs
+    : levelFilter === "log"
+      ? logs.filter(l => l.level === "log" || l.level === "info")
+      : logs.filter(l => l.level === levelFilter);
+
+  // 新しいログを上にする(直近の再現手順を追うのに読みやすいため)。
+  const displayed = filtered.slice().reverse();
+
+  async function handleCopy() {
+    const text = filtered
+      .map(l => `[${formatDebugLogTime(l.time)}] ${l.level.toUpperCase()}: ${l.text}`)
+      .join("\n");
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // クリップボードAPIが使えない環境(非HTTPS等)向けのフォールバック。
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+    setTimeout(() => setCopyState("idle"), 2000);
+  }
+
+  return (
+    <>
+      <div style={{ margin: "0 14px 8px", fontSize: 11, color: `rgba(${tokens.ink},0.4)`, lineHeight: 1.5 }}>
+        console.log/info/warn/errorの出力(および未捕捉のエラー)を、直近{DEBUG_LOG_MAX}件までこの画面から確認できます。
+        アプリを再読み込みすると消去されます。
+      </div>
+
+      <div style={{ margin: "0 14px 8px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {LOG_LEVEL_FILTERS.map(f => (
+          <PressableButton
+            key={f.id}
+            onClick={() => setLevelFilter(f.id)}
+            style={{
+              padding: "5px 11px", borderRadius: 999, fontSize: 11, fontWeight: 600,
+              border: `1px solid rgba(${tokens.ink},0.16)`,
+              background: levelFilter === f.id ? "rgba(10,132,255,0.9)" : `rgba(${tokens.ink},0.08)`,
+              color: levelFilter === f.id ? "#fff" : tokens.text,
+              cursor: "pointer",
+            }}
+          >
+            {f.label}
+          </PressableButton>
+        ))}
+      </div>
+
+      <div style={{ margin: "0 14px 10px", display: "flex", gap: 8 }}>
+        <PressableButton
+          onClick={handleCopy}
+          disabled={filtered.length === 0}
+          style={{
+            flex: 1, padding: "9px 12px", borderRadius: 10, fontSize: 12, fontWeight: 700,
+            border: "none", cursor: filtered.length === 0 ? "default" : "pointer",
+            background: `rgba(${tokens.ink},0.08)`, color: tokens.text,
+            opacity: filtered.length === 0 ? 0.4 : 1,
+          }}
+        >
+          {copyState === "copied" ? "コピーしました" : copyState === "failed" ? "コピーに失敗しました" : "表示中のログを全文コピー"}
+        </PressableButton>
+        <PressableButton
+          onClick={() => clearDebugLog()}
+          style={{
+            padding: "9px 14px", borderRadius: 10, fontSize: 12, fontWeight: 700,
+            border: "none", cursor: "pointer",
+            background: "rgba(255,69,58,0.16)", color: "#FF6B6B",
+          }}
+        >
+          クリア
+        </PressableButton>
+      </div>
+
+      <SettingsCard>
+        {displayed.length === 0 ? (
+          <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12, color: `rgba(${tokens.ink},0.4)` }}>
+            ログはまだありません
+          </div>
+        ) : (
+          displayed.map((entry, i) => (
+            <div key={entry.id}>
+              {i > 0 && <SettingsCardDivider/>}
+              <div style={{ padding: "8px 12px" }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "baseline", marginBottom: 2 }}>
+                  <span style={{ fontSize: 10, fontFamily: "monospace", color: `rgba(${tokens.ink},0.4)` }}>
+                    {formatDebugLogTime(entry.time)}
+                  </span>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: logLevelColor(entry.level, tokens) }}>
+                    {entry.level.toUpperCase()}
+                  </span>
+                </div>
+                <div style={{
+                  fontSize: 11.5, fontFamily: "monospace", color: tokens.text,
+                  whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.5,
+                }}>
+                  {entry.text}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </SettingsCard>
+    </>
+  );
+}
+
 // リポジトリ直下のLICENSEファイル(MIT)を実行時に取得して、そのまま表示するカード。
 // ビルド時に埋め込むのではなく、デプロイ先で公開されている実ファイルを毎回fetchすることで、
 // LICENSEファイルの内容が変わっても表示側の修正なしに追従できるようにしている。
@@ -12126,6 +12371,18 @@ function SettingsBody({
     );
   }
 
+  // ログ(詳細設定カテゴリの項目)の中身。console.log等を横取りして溜めている
+  // リングバッファ(useDebugLog)をそのまま一覧表示する。実機のPWAで発生した
+  // 不具合をPCのdevtools無しで調査できるようにするためのデバッグ機能。
+  if (category === "advanced" && leaf === "logs") {
+    return (
+      <>
+        <SettingsHeader title="ログ"/>
+        <LogViewerPanel/>
+      </>
+    );
+  }
+
   // カテゴリ内の項目一覧(地震カテゴリは上で処理済みのため、それ以外のカテゴリ用)
   const items = SETTINGS_ITEMS[category] || [];
   if (!leaf) {
@@ -12630,6 +12887,7 @@ export default function App() {
   //   でrefも更新されるようにする。
   const selectedQuakeIdRef = useRef(null);
   const selectQuake = useCallback((id) => {
+    console.log("[quake-select-diag][selectQuake]", { from: selectedQuakeIdRef.current, to: id });
     selectedQuakeIdRef.current = id;
     setSelectedQuakeId(id);
   }, []);
@@ -13360,6 +13618,12 @@ export default function App() {
             const successor = prevSelected
               ? result.find(q => q.time === prevSelected.time && q.place === prevSelected.place)
               : null;
+            console.log("[quake-select-diag][history-merge] 選択中の地震が一覧から消失", {
+              selId,
+              prevSelected: prevSelected && { id: prevSelected.id, time: prevSelected.time, place: prevSelected.place },
+              successor: successor ? { id: successor.id, time: successor.time, place: successor.place } : null,
+              引き継ぎ結果: successor ? `成功(id=${successor.id}へ引き継ぎ)` : "失敗(選択解除)",
+            });
             selectQuake(successor ? successor.id : null);
           }
 
@@ -13420,6 +13684,11 @@ export default function App() {
     const socket = connectQuakeWebSocket(
       (newQuake) => {
         if (cancelled) return;
+        console.log("[quake-select-diag][ws-receive] 新着地震をWebSocketで受信", {
+          id: newQuake.id, time: newQuake.time, place: newQuake.place,
+          pointsCount: Array.isArray(newQuake.points) ? newQuake.points.length : 0,
+          現在選択中のid: selectedQuakeIdRef.current,
+        });
         setQuakes(prev => {
           // 選択中の地震(あれば)を、差し替え前に控えておく。
           // dedupeQuakeList等で「同じ地震の新しいレコード」に統合された場合、
@@ -13445,6 +13714,12 @@ export default function App() {
               q.time === prevSelected.time &&
               q.place === prevSelected.place
             );
+            console.log("[quake-select-diag][ws-receive] 選択中の地震が一覧から消失", {
+              prevSelected: { id: prevSelected.id, time: prevSelected.time, place: prevSelected.place },
+              newQuake: { id: newQuake.id, time: newQuake.time, place: newQuake.place },
+              successor: successor ? { id: successor.id, time: successor.time, place: successor.place } : null,
+              引き継ぎ結果: successor ? `成功(id=${successor.id}へ引き継ぎ)` : "失敗(選択解除)",
+            });
             selectQuake(successor ? successor.id : null);
           }
 
