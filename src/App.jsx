@@ -3444,6 +3444,32 @@ function maxScaleToIntensityKey(maxScale) {
   return map[String(maxScale)] ?? "?";
 }
 
+/* ─────────────────────────────────────────────────────
+   地震情報の発表段階(issue.type)
+   最大震度3以上等の地震では、気象庁の電文が段階的に発表される:
+     ① ScalePrompt(震度速報)   … 震源はまだ不明。細分区域単位(isArea:true)の
+                                   揺れの分布と最大震度だけが先に分かる。
+     ② Destination(震源に関する情報) … 震源(位置・M・深さ)は判明したが、
+                                   震度分布(points)はまだ無い(maxScale=-1)。
+     ③ DetailScale(震度に関する情報) … 震源・市町村単位(isArea:false)の
+                                   震度分布のどちらも確定。
+   同じ地震について複数の段階の電文が別々に届くため、アプリ内では
+   「これまでに届いた電文のうち最も進んだ段階」をstageとして保持し、
+   一覧・詳細画面に「震度速報」「震源速報」等のバッジを出す。
+   ③まで届けば全情報が揃うため、バッジは表示しない。
+   ───────────────────────────────────────────────────── */
+const QUAKE_STAGE_RANK = { prompt: 1, destination: 2, detail: 3 };
+const QUAKE_STAGE_LABEL = {
+  prompt: "震度速報",
+  destination: "震源速報",
+  // detail(確定)はバッジ無し
+};
+function quakeStageFromIssueType(issueType) {
+  if (issueType === "ScalePrompt") return "prompt";
+  if (issueType === "Destination") return "destination";
+  return "detail"; // DetailScale・Foreign・その他は確定扱い
+}
+
 // API由来のISO風文字列("2024/01/01 12:34:56.789")を "YYYY/MM/DD HH:mm:ss" 表示用に整える
 function formatQuakeTime(raw) {
   if (!raw) return "";
@@ -3508,9 +3534,15 @@ function toQuakeCard(item) {
   // その場合はpoints[]の中の最大scaleから補完し、「震度0」の誤表示を防ぐ。
   // ただし遠地地震はそもそも国内観測点のpointsを持たないため、補完の対象外とする。
   let maxScale = eq?.maxScale;
-  if (!isForeign && maxScale == null && points.length > 0) {
+  if (!isForeign && (maxScale == null || maxScale === -1) && points.length > 0) {
     maxScale = points.reduce((max, p) => (typeof p.scale === "number" && p.scale > max ? p.scale : max), -1);
   }
+  // 震源に関する情報(issue.type: Destination)は、震源(位置・M・深さ)は判明した
+  // ものの震度分布(points)がまだ無い段階のため、maxScaleは常に-1・pointsは
+  // 常に空配列で届く。この-1は遠地地震の「国内で観測なし」とは意味が違い、
+  // 「震度がまだ不明(調査中)」であって「震度0(揺れなし)」ではないため、
+  // points補完もできない(=points.length===0のまま)場合は明示的に「不明」扱いにする。
+  const maxScaleUnknown = !isForeign && maxScale === -1 && points.length === 0;
 
   // WebSocketのリアルタイム配信では、ごく最初の1通だけAPI上本来必須のはずの
   // idが未確定/欠落した状態で届くことがある(/historyで同じ地震を取得し直すと
@@ -3527,14 +3559,22 @@ function toQuakeCard(item) {
   return {
     id,
     time: formatQuakeTime(eq?.time),
+    // 電文の発表時刻(issue.time)。同じ地震の複数電文をフィールド単位でマージする際、
+    // どちらが新しい電文かを判定するのに使う(mergeQuakeCards参照)。
+    issueTime: item?.issue?.time || null,
+    // 発表段階(震度速報/震源に関する情報/確定)。バッジ表示・マージ時の情報量比較に使う。
+    stage: quakeStageFromIssueType(item?.issue?.type),
     place: hypo?.name || "震源地不明",
-    maxIntensity: isForeign ? "?" : maxScaleToIntensityKey(maxScale),
+    maxIntensity: isForeign ? "?" : (maxScaleUnknown ? "?" : maxScaleToIntensityKey(maxScale)),
     isForeign,
     magnitude: typeof hypo?.magnitude === "number" && hypo.magnitude > 0 ? hypo.magnitude : null,
     depth: typeof hypo?.depth === "number" && hypo.depth >= 0 ? hypo.depth : null,
     longPeriod: null, // P2P地震情報APIには長周期地震動階級は含まれないため常に非表示
-    latitude: typeof hypo?.latitude === "number" ? hypo.latitude : null,
-    longitude: typeof hypo?.longitude === "number" ? hypo.longitude : null,
+    // -200は「震源がまだ確定していない」ことを示す番兵値(震度速報の段階で使われる)。
+    // 数値ではあるが実在の座標ではないため、通常のnullチェックと同様に除外する
+    // (これが無いと、震源不明のはずの地震が地図上のあり得ない位置に表示されてしまう)。
+    latitude: typeof hypo?.latitude === "number" && hypo.latitude !== -200 ? hypo.latitude : null,
+    longitude: typeof hypo?.longitude === "number" && hypo.longitude !== -200 ? hypo.longitude : null,
     // 観測点ごとの震度。{ pref, addr, scale, isArea }の配列(無ければ空配列)。
     // 注意: pointsは`earthquake`オブジェクトの中ではなく、レコード直下(item.points)にある。
     // scaleは10刻みのJMAコード(10=震度1 ... 70=震度7)のまま保持しておき、
@@ -3585,61 +3625,100 @@ function buildQuakeMessage(quake) {
 
 // 直近の地震情報一覧を取得する。取得失敗時はエラーを投げる(呼び出し側でハンドリング)。
 /* ─────────────────────────────────────────────────────
-   重複レコードの除外
-   同じ地震について、気象庁から複数の電文(震度・観測点を含むものと、
-   震源(位置・M・深さ)だけを伝えるもの)が別レコードとして配信されることがある。
-   その場合、同じ発生時刻+同じ震源地なのに「震度4」と「震度0」が別々に
-   一覧に並んでしまい、後者はあたかも別の(無感)地震のように見えて紛らわしい。
-   → 発生時刻+震源地が一致するグループの中に、実際に震度情報(points)を
-     持つレコードが1件でもあれば、震度情報を持たない(points空 かつ 震度0)
-     レコードは「同じ地震の随伴電文」とみなして除外する。
+   重複レコードの除外・段階マージ
+   同じ地震について、気象庁から複数の電文(①震度速報→②震源に関する情報→
+   ③震度に関する情報)が段階的に配信される。①は震源不明・地域単位の震度分布、
+   ②は震源確定・震度分布なし、③は震源・市町村単位の震度分布のどちらも確定、
+   というように電文ごとに持っている情報が異なるため、単純に「1グループ1件を
+   丸ごと選ぶ」のではなく、フィールドごとに「その時点で一番情報量が多いもの」を
+   組み合わせてマージする(mergeQuakeCards参照)。
+   グループ化のキーはearthquake.time(発生時刻)のみを使う。以前はplace(震源地)
+   も条件に含めていたが、①→②③の間でplaceが「震源地不明」→実際の地名に
+   変わるため、それだと同じ地震が2件に分かれてしまう。時刻は①②③を通じて
+   変化しないため、キーとして安定している。
    ───────────────────────────────────────────────────── */
-function dedupeQuakeList(list) {
-  // 発生時刻+震源地が一致すれば「同じ地震の一連の電文」とみなす。
-  // 以前はM・深さも一致条件に含めていたが、顕著な地震などでは
-  // 「震源に関する情報(速報値)」→「震源・震度に関する情報(確定値)」の
-  // 過程でM・深さがわずかに修正されることがあり、その場合に一致しなくなって
-  // 同じ地震が2件並んでしまう不具合があった。
-  // (時刻+震源地が完全一致する別々の地震が同時に起きる可能性は極めて低いため、
-  //  M・深さを条件から外しても誤結合のリスクは実用上問題にならない)
-  const groupKey = q => `${q.time}|${q.place}`;
 
-  // 各グループについて、最も情報量の多い(震度情報を持つ)レコードだけを残す。
-  // listは常に新しい順(newest-first)で渡ってくる(/history統合時・WebSocket
-  // 受信時のどちらも、呼び出し側で新しい順に並べてから渡している)。そのため
-  // 「リスト内で先に出てきた方」が常により新しいレコードになる。
-  const bestInGroup = new Map(); // groupKey -> 現時点で最良のレコード
-  for (const q of list) {
-    const key = groupKey(q);
-    const existing = bestInGroup.get(key);
-    if (!existing) {
-      bestInGroup.set(key, q);
-      continue;
-    }
-    const existingSubstantial = existing.points.length > 0 || (existing.maxIntensity !== "0" && existing.maxIntensity !== "?");
-    const qSubstantial = q.points.length > 0 || (q.maxIntensity !== "0" && q.maxIntensity !== "?");
-    // 震度情報を持たないexisting(震源情報のみ)を、震度情報を持つqで補完する
-    // 場合だけ上書きする。それ以外(情報量が同じレベル)は、先に出てきた
-    // existing(=より新しいレコード)を残す。
-    // 以前は「情報量が同じレベルなら後の方(=list内で後)を採用する」ロジックに
-    // なっていたが、これは「後の方が新しい」という誤った前提に基づいており、
-    // 実際には新しい順のlistでは後の方が古いレコードだったため、M・深さの
-    // 修正や津波警報→注意報への切り下げなど、後から更新された内容が反映されず、
-    // 古いレコードの内容(古いdomesticTsunamiの値など)が残ってしまっていた。
-    if (qSubstantial && !existingSubstantial) {
-      bestInGroup.set(key, q);
-    }
-  }
-
-  // 元のリストの並び順を保ったまま、各グループを1件にまとめて書き出す
-  const order = [];
-  const seen = new Set();
-  for (const q of list) {
-    const key = groupKey(q);
-    if (!seen.has(key)) { seen.add(key); order.push(key); }
-  }
-  return order.map(key => bestInGroup.get(key));
+// 観測点(points)の「情報の詳しさ」を比較するためのランク。
+// 市町村単位(isAreaがfalseの点を含む) > 地域単位(震度速報, isArea:trueのみ) > 無し(空配列)
+function pointsRichness(card) {
+  if (!Array.isArray(card.points) || card.points.length === 0) return 0;
+  return card.points.some(p => p.isArea === false) ? 2 : 1;
 }
+
+// 震源(震源地名)が判明しているかどうか。"震源地不明"はtoQuakeCardが付ける既定値。
+function hasKnownHypocenter(card) {
+  return card.place !== "震源地不明";
+}
+
+// 同じ地震(同じ発生時刻)について、2件のカードをフィールド単位でマージする。
+// a・bどちらが渡されても結果が変わらないよう、常にissueTime(電文の発表時刻)を
+// 見てどちらが新しい電文かを判定してから、フィールドごとに採用元を決める。
+function mergeQuakeCards(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+
+  const bIsNewer = (b.issueTime || "") >= (a.issueTime || "");
+  const newer = bIsNewer ? b : a;
+  const older = bIsNewer ? a : b;
+
+  // 震源(震源地名・緯度経度・M・深さ): 判明している方を優先。両方判明していれば新しい方。
+  const hypoSrc = hasKnownHypocenter(newer) ? newer : (hasKnownHypocenter(older) ? older : newer);
+
+  // 震度分布(points・maxIntensity): より詳しい方を優先。同格なら新しい方
+  // (件数が増えている・確定値に更新されている可能性が高いため)。
+  const newerRichness = pointsRichness(newer);
+  const olderRichness = pointsRichness(older);
+  const pointsSrc = newerRichness >= olderRichness ? newer : older;
+
+  // 発表段階(バッジ表示用): これまでに届いた電文のうち最も進んだ段階を保持する
+  // (震度速報だけ→震源情報が届いた後に、また震度速報の段階に戻ることはないため)。
+  const stageRank = s => QUAKE_STAGE_RANK[s] || 0;
+  const finalStage = stageRank(a.stage) >= stageRank(b.stage) ? a.stage : b.stage;
+
+  // id: 本物のid(noid_で始まらないもの)を優先。新しい方の電文がまだidを
+  // 確定できていない場合に備えて、古い方が本物のidを持っていればそちらを使う。
+  const isRealId = id => typeof id === "string" && !id.startsWith("noid_");
+  const id = isRealId(newer.id) ? newer.id : (isRealId(older.id) ? older.id : newer.id);
+
+  return {
+    id,
+    time: a.time, // グループ化キーなので両者で同じ
+    issueTime: newer.issueTime,
+    stage: finalStage,
+    place: hypoSrc.place,
+    magnitude: hypoSrc.magnitude,
+    depth: hypoSrc.depth,
+    latitude: hypoSrc.latitude,
+    longitude: hypoSrc.longitude,
+    longPeriod: hypoSrc.longPeriod,
+    maxIntensity: pointsSrc.maxIntensity,
+    points: pointsSrc.points,
+    isForeign: newer.isForeign,
+    // 津波判定・付加文は、その時点で最新の電文の内容が常に正しい(後から
+    // 警報→注意報に切り下がる、付加文が追記される、といった更新がありうるため)。
+    domesticTsunami: newer.domesticTsunami,
+    freeFormComment: newer.freeFormComment ?? older.freeFormComment ?? null,
+  };
+}
+
+function dedupeQuakeList(list) {
+  // listは常に新しい順(newest-first)で渡ってくるが、mergeQuakeCards自体は
+  // 渡す順序に依存せず正しい結果になるようissueTimeで新旧を判定しているため、
+  // ここでは単に同じグループのカードを順にマージしていくだけでよい。
+  const order = []; // グループの初出順(=一覧の表示順)を保つ
+  const merged = new Map(); // time -> マージ済みカード
+  for (const q of list) {
+    const key = q.time;
+    if (!merged.has(key)) {
+      order.push(key);
+      merged.set(key, q);
+    } else {
+      merged.set(key, mergeQuakeCards(merged.get(key), q));
+    }
+  }
+  return order.map(key => merged.get(key));
+}
+
 
 /* ─────────────────────────────────────────────────────
    津波情報(P2P地震情報 JMATsunami, code:552)
@@ -4225,9 +4304,14 @@ async function fetchRecentQuakes(limit = QUAKE_FETCH_LIMIT_DEFAULT) {
     if (page.length < pageSize) break;
   }
 
-  // 「震度速報のみ」等、震源情報が欠けているレコードを除外
+  // 以前は「震源(hypocenter.name)が無いレコード」を丸ごと除外していたが、
+  // これだと震度速報(ScalePrompt, 震源不明)や震源に関する情報(Destination,
+  // 震度分布なし)がまるごと一覧から消えてしまい、確定報(DetailScale)が
+  // 出るまでその地震自体が見えなくなってしまっていた。
+  // → earthquakeオブジェクト自体が無いレコード(不完全なデータ)だけ除外し、
+  //   段階ごとの情報の組み合わせはdedupeQuakeList(mergeQuakeCards)に任せる。
   const list = results
-    .filter(item => item.earthquake && item.earthquake.hypocenter && item.earthquake.hypocenter.name)
+    .filter(item => item.earthquake)
     .map(toQuakeCard);
   return dedupeQuakeList(list);
 }
@@ -4575,6 +4659,9 @@ const P2PQUAKE_WS_URL = "wss://api.p2pquake.net/v2/ws";
 
 // WebSocketで受信した1件を、地震情報(code:551)であれば変換して返す。
 // 対象外(津波予報や緊急地震速報など、このアプリでまだ扱っていない種別)はnullを返す。
+// 以前は震源(hypocenter.name)が無いレコード(震度速報・震源に関する情報)を
+// ここで弾いていたが、それだと確定報が出るまでその地震自体が見れなかったため、
+// earthquakeオブジェクト自体が無い(不完全な)レコードだけを除外するようにした。
 function wsMessageToQuakeCard(raw) {
   let data;
   try {
@@ -4583,7 +4670,7 @@ function wsMessageToQuakeCard(raw) {
     return null;
   }
   if (data.code !== 551) return null;
-  if (!data.earthquake || !data.earthquake.hypocenter || !data.earthquake.hypocenter.name) return null;
+  if (!data.earthquake) return null;
   return toQuakeCard(data);
 }
 
@@ -4706,9 +4793,35 @@ function matchStation(stations, point) {
 
 // points[]と観測点マスタを突き合わせ、地図・一覧で使える形(緯度経度+震度キー付き)に変換する。
 // マスタに見つからなかった観測点は、地図には出せないが一覧には残すため latitude/longitude が null のまま返す。
-// areaCode(気象庁の細分区域コード)も一緒に引いておき、区域単位の震度分布の塗り分けに使う。
-function resolveStationPoints(points, stations) {
+// areaCodes(気象庁の細分区域コード。通常1件だが、同名区域が複数featureに分かれている場合は複数)
+// も一緒に引いておき、区域単位の震度分布の塗り分けに使う。
+//
+// 震度速報(isArea:true)の点は、観測点マスタではなく「岩手県沿岸北部」のような
+// 細分区域名そのものなので、matchStation(観測点名の突き合わせ)は使えない。
+// 代わりにEEWで使っているfindAreaCodesByName(areasGeoJSON=細分区域.jsonを
+// 地域名で引く)で区域コードを求め、個別のピンではなく区域の塗り分けだけで表示する
+// (個々の観測点の緯度経度はそもそも震度速報には含まれないため、ピンは立てられない)。
+function resolveStationPoints(points, stations, areasGeoJSON) {
   return points.map(p => {
+    if (p.isArea) {
+      const areaCodes = findAreaCodesByName(areasGeoJSON, p.addr);
+      if (areaCodes.length === 0) {
+        // eslint-disable-next-line no-console
+        console.warn(`[細分区域未一致] ${p.pref} ${p.addr} — 細分区域.jsonに無い地域名表記かもしれません(震度速報)`);
+      }
+      return {
+        pref: p.pref,
+        addr: p.addr,
+        city: null,
+        intensityKey: maxScaleToIntensityKey(p.scale),
+        latitude: null,
+        longitude: null,
+        areaCode: areaCodes[0] || null,
+        areaCodes,
+        isArea: true,
+      };
+    }
+
     const station = matchStation(stations, p);
     if (!station) {
       // eslint-disable-next-line no-console
@@ -4722,6 +4835,8 @@ function resolveStationPoints(points, stations) {
       latitude: station ? parseFloat(station.lat) : null,
       longitude: station ? parseFloat(station.lon) : null,
       areaCode: station?.area?.code || null,
+      areaCodes: station?.area?.code ? [station.area.code] : [],
+      isArea: false,
     };
   });
 }
@@ -4729,15 +4844,19 @@ function resolveStationPoints(points, stations) {
 // 観測点(緯度経度+震度キー付き)の配列を、細分区域コードごとに集計する。
 // 各区域には、その区域内の観測点で観測された「最大震度」を割り当てる
 // (気象庁の震度分布図と同じ考え方: 区域内で一番揺れが大きかった地点の震度で塗る)。
+// areaCodes(複数)があればそちらを使い、無ければ従来のareaCode(単数)にフォールバックする
+// (buildEqdbQuakeCard等、areaCodesを持たない古い形式のresolvedPointsとの互換のため)。
 function aggregateByArea(resolvedPoints) {
   const INTENSITY_ORDER = ["0","1","2","3","4","5","5-","5u","5+","6","6-","6+","7"];
   const maxByArea = new Map(); // areaCode -> intensityKey
 
   for (const p of resolvedPoints) {
-    if (!p.areaCode) continue;
-    const current = maxByArea.get(p.areaCode);
-    if (!current || INTENSITY_ORDER.indexOf(p.intensityKey) > INTENSITY_ORDER.indexOf(current)) {
-      maxByArea.set(p.areaCode, p.intensityKey);
+    const codes = (p.areaCodes && p.areaCodes.length > 0) ? p.areaCodes : (p.areaCode ? [p.areaCode] : []);
+    for (const code of codes) {
+      const current = maxByArea.get(code);
+      if (!current || INTENSITY_ORDER.indexOf(p.intensityKey) > INTENSITY_ORDER.indexOf(current)) {
+        maxByArea.set(code, p.intensityKey);
+      }
     }
   }
   return maxByArea;
@@ -5902,11 +6021,24 @@ function QuakeDetailCard({ quake }) {
         display: "flex",
         alignItems: "center",
         gap: 14,
+        position: "relative",
         background: `linear-gradient(135deg, ${style.bg}2E, ${style.bg}14)`,
         boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
+      {/* 発表段階バッジ。震度速報(震源不明)・震源速報(震度分布なし)の間だけ表示し、
+          確定報(DetailScale)が届いたら消える。まだ情報が出揃っていないことを示す。 */}
+      {QUAKE_STAGE_LABEL[quake.stage] && (
+        <span style={{
+          position: "absolute", top: 8, right: 12,
+          fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+          background: `rgba(${tokens.ink},0.12)`, color: `rgba(${tokens.ink},0.7)`,
+          whiteSpace: "nowrap", lineHeight: 1.5,
+        }}>
+          {QUAKE_STAGE_LABEL[quake.stage]}
+        </span>
+      )}
       {/* 最大震度バッジ — 遠地地震は震度が観測されないため「遠地」表示にする */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, whiteSpace: "nowrap", lineHeight: 1.1 }}>
@@ -6080,7 +6212,9 @@ function StationPointsList({ points, displayMode = "list", openKey, onOpenKeyCha
 
   // 観測点マスタに見つからず、緯度経度が引けなかった(=地図上には表示されていない)観測点の数。
   // 地図上で「無いことに気づけない」状態を防ぐため、要約画面の最下部に件数を明示しておく。
-  const unmappedCount = sorted.filter(p => p.latitude == null || p.longitude == null).length;
+  // 震度速報(isArea:true)の点は、そもそも個別の緯度経度を持たず区域塗り分けで
+  // 表示される(観測点マスタに無いのとは違う)ため、この「地図に出せない件数」には含めない。
+  const unmappedCount = sorted.filter(p => !p.isArea && (p.latitude == null || p.longitude == null)).length;
 
   const VISIBLE_COUNT = 10;
   const visible = expanded ? sorted : sorted.slice(0, VISIBLE_COUNT);
@@ -7232,7 +7366,8 @@ function BottomDock({
       if (isRecentEpisode) {
         const p2pMatch = await findCausingQuakeFromP2p(winStart, winEnd);
         if (p2pMatch) {
-          const resolvedPoints = resolveStationPoints(p2pMatch.points, stations);
+          const geo2 = await loadGeoData(); // キャッシュ済みのため実質即座に解決する
+          const resolvedPoints = resolveStationPoints(p2pMatch.points, stations, geo2?.areas);
           setCausingQuakeState(prev => ({ ...prev, [id]: { status: "done", quake: { ...p2pMatch, resolvedPoints } } }));
           return;
         }
@@ -8972,11 +9107,22 @@ function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect, loading = 
             {q.isForeign ? "遠地" : q.maxIntensity === "?" ? "調査中" : q.maxIntensity === "5u" ? "未入電" : style.label}
           </span>
         )}
-        <span style={{
-          flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: tokens.text,
-          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-        }}>
-          {loading ? `${q.place}を読み込み中…` : q.place}
+        <span style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 5 }}>
+          {!loading && QUAKE_STAGE_LABEL[q.stage] && (
+            <span style={{
+              flexShrink: 0, fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 5,
+              background: `rgba(${tokens.ink},0.1)`, color: `rgba(${tokens.ink},0.65)`,
+              whiteSpace: "nowrap", lineHeight: 1.5,
+            }}>
+              {QUAKE_STAGE_LABEL[q.stage]}
+            </span>
+          )}
+          <span style={{
+            minWidth: 0, fontSize: 13, fontWeight: 600, color: tokens.text,
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}>
+            {loading ? `${q.place}を読み込み中…` : q.place}
+          </span>
         </span>
         {!loading && (q.magnitude != null || q.depth != null) && (
           <span className="mono" style={{
@@ -13441,6 +13587,20 @@ export default function App() {
   // 観測点マスタ(緯度経度付き)。points[]との突き合わせに使う。
   const [stations, setStations] = useState(null);
 
+  // 細分区域.json(EEWの地域塗り分けで使っているものと同じデータ)。
+  // 震度速報(ScalePrompt)のisArea:trueな点は観測点マスタでは解決できず、
+  // 地域名→区域コードのこちらの変換が必要なため、resolveStationPointsに渡す。
+  // loadGeoData()はモジュール内でPromiseをキャッシュしているため、地図側で
+  // 既に読み込み済みであれば実質即座に解決する。
+  const [areasGeoJSON, setAreasGeoJSON] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    loadGeoData()
+      .then(({ areas }) => { if (!cancelled) setAreasGeoJSON(areas); })
+      .catch(err => console.error("細分区域データの取得に失敗:", err));
+    return () => { cancelled = true; };
+  }, []);
+
   // 気象庁 震度データベース(eqdb)検索で開いた地震。直近一覧(quakes)には混ぜず、
   // ここだけで別管理する(P2P地震情報のWebSocket更新・件数上限に巻き込まれないようにするため)。
   const [searchQuake, setSearchQuake] = useState(null);
@@ -13535,11 +13695,11 @@ export default function App() {
     setStationPointsProcessing(true);
     const points = selectedQuake.points;
     const timer = setTimeout(() => {
-      setSelectedQuakePoints(resolveStationPoints(points, stations));
+      setSelectedQuakePoints(resolveStationPoints(points, stations, areasGeoJSON));
       setStationPointsProcessing(false);
     }, 0);
     return () => clearTimeout(timer);
-  }, [selectedQuake, stations]);
+  }, [selectedQuake, stations, areasGeoJSON]);
 
   // 震源(バツ印表示・ズーム用)。複数震源(eqdbのhypocenters)があればその全件、
   // 無ければ従来通り単一のlatitude/longitudeを1件だけの配列にして使う。
@@ -13620,15 +13780,17 @@ export default function App() {
           // 別idを採用することがある(アプリを開いている間に新着地震を選択した
           // 直後、/historyの取得が完了してより詳細なレコードに差し替わる場合など)。
           // ここでも同様に、消えたレコードのidだけを見て即座に選択解除するのでは
-          // なく、まず「同じ発生時刻+震源地」の後継レコードを探し、見つかれば
+          // なく、まず「同じ発生時刻」の後継レコードを探し、見つかれば
           // そちらに選択を引き継ぐ(見つからない場合だけ選択解除する)。これが
           // 無いと、新着地震を選んだ直後に選択が解除され、詳細画面が一覧表示に
           // 戻ってしまう(ボタンバーは出たまま、戻るボタンは出ない)不具合になる。
+          // (以前はtime+placeの一致で判定していたが、震度速報→震源に関する情報の
+          // 間でplaceが「震源地不明」→実際の地名に変わるため、時刻のみで判定する)
           const selId = selectedQuakeIdRef.current;
           if (selId != null && !String(selId).startsWith("eqdb_") && !result.some(q => q.id === selId)) {
             const prevSelected = prev.find(q => q.id === selId) || null;
             const successor = prevSelected
-              ? result.find(q => q.time === prevSelected.time && q.place === prevSelected.place)
+              ? result.find(q => q.time === prevSelected.time)
               : null;
             console.log("[quake-select-diag][history-merge] 選択中の地震が一覧から消失", {
               selId,
@@ -13716,16 +13878,14 @@ export default function App() {
           const result = dedupeQuakeList(merged);
 
           // 選択中だった地震が、上記の処理で一覧から消えていないか確認する。
-          // 消えていて、かつ「同じ発生時刻+震源地」の後継レコードが
+          // 消えていて、かつ「同じ発生時刻」の後継レコードが
           // 残っている場合は、そちらに選択状態を引き継ぐ(カード表示が
           // 突然一覧表示に戻ってしまう・戻るボタンだけ残る、といった
           // ズレを防ぐため)。完全に消えた(後継も無い)場合は選択解除する。
-          // (M・深さは後から修正されることがあるため、一致条件には含めない)
+          // (M・深さ・placeは電文の段階が進むにつれて修正・確定されることが
+          // あるため、一致条件には含めず時刻のみで判定する)
           if (prevSelected && !result.some(q => q.id === prevSelected.id)) {
-            const successor = result.find(q =>
-              q.time === prevSelected.time &&
-              q.place === prevSelected.place
-            );
+            const successor = result.find(q => q.time === prevSelected.time);
             console.log("[quake-select-diag][ws-receive] 選択中の地震が一覧から消失", {
               prevSelected: { id: prevSelected.id, time: prevSelected.time, place: prevSelected.place },
               newQuake: { id: newQuake.id, time: newQuake.time, place: newQuake.place },
