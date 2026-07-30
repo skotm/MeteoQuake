@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.4";
+const APP_VERSION = "1.4.5";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -3512,8 +3512,20 @@ function toQuakeCard(item) {
     maxScale = points.reduce((max, p) => (typeof p.scale === "number" && p.scale > max ? p.scale : max), -1);
   }
 
+  // WebSocketのリアルタイム配信では、ごく最初の1通だけAPI上本来必須のはずの
+  // idが未確定/欠落した状態で届くことがある(/historyで同じ地震を取得し直すと
+  // idが付いている)。idがundefinedのままだと、selectedQuakeIdもundefinedに
+  // なってしまい、UI側の「selectedQuakeId != null」のようなnullとの比較で
+  // (undefined == nullがtrueになるため)「未選択」と区別が付かなくなる
+  // ―― 具体的には、選択してもボタンバーが引っ込まず、戻るボタンも出ない
+  // 不具合として現れる。そのため、idが無い場合はtime+placeから作った
+  // 安定な代替idにフォールバックし、常にnull/undefinedにならないようにする。
+  // (本物のidを持つレコードが後から届いた場合は、既存のtime+place一致による
+  // 「後継への選択引き継ぎ」ロジックがそのまま機能する)
+  const id = item.id || `noid_${eq?.time || "?"}_${hypo?.name || "?"}`;
+
   return {
-    id: item.id,
+    id,
     time: formatQuakeTime(eq?.time),
     place: hypo?.name || "震源地不明",
     maxIntensity: isForeign ? "?" : maxScaleToIntensityKey(maxScale),
