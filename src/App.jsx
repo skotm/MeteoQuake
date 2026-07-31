@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.8";
+const APP_VERSION = "1.4.8a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10539,14 +10539,22 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
     (async () => {
       setStatus("loading");
       try {
+        // epi[]は震央地名の自由入力ではなく、コード化された地域選択(pref[]/city[]/
+        // station[]と同様に「99」=指定なし、等の数値コード)を受け付ける項目で、
+        // 震源地名の文字列(例:「福井県嶺北」)をそのまま渡すと不正な値として
+        // 気象庁側のAPIに拒否され、地震の種類によらず必ず「取得に失敗しました」に
+        // なっていた。震央地名で絞り込む項目自体がAPIに無いため、ここでは
+        // epi[]を指定せず(=全地域が対象)全期間を検索し、返ってきた結果を
+        // クライアント側で震源地名が完全一致するものだけに絞り込む。
         const { list, errMsg } = await fetchEqdbSearch({
           startDate: EQDB_MIN_DATE, endDate: eqdbMaxEndDate(),
-          minMag: 0, maxInt: "1", sort: "S2", epi: place,
+          minMag: 0, maxInt: "1", sort: "S2",
         });
         if (cancelled) return;
         if (errMsg) { setStatus("error"); setResults([]); return; }
-        nearbyQuakeSearchCache.set(place, list);
-        setResults(list);
+        const filtered = list.filter(eq => eq.name === place);
+        nearbyQuakeSearchCache.set(place, filtered);
+        setResults(filtered);
         setStatus("done");
       } catch (e) {
         if (!cancelled) { setStatus("error"); setResults([]); }
