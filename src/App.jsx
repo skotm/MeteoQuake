@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.6";
+const APP_VERSION = "1.4.7";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -3485,13 +3485,13 @@ function maxScaleToIntensityKey(maxScale) {
                                    震度分布のどちらも確定。
    同じ地震について複数の段階の電文が別々に届くため、アプリ内では
    「これまでに届いた電文のうち最も進んだ段階」をstageとして保持し、
-   一覧・詳細画面に「震度速報」「震源速報」等のバッジを出す。
+   一覧・詳細画面に「震度速報」「震源情報」等のバッジを出す。
    ③まで届けば全情報が揃うため、バッジは表示しない。
    ───────────────────────────────────────────────────── */
 const QUAKE_STAGE_RANK = { prompt: 1, destination: 2, detail: 3 };
 const QUAKE_STAGE_LABEL = {
   prompt: "震度速報",
-  destination: "震源速報",
+  destination: "震源情報",
   // detail(確定)はバッジ無し
 };
 function quakeStageFromIssueType(issueType) {
@@ -3585,6 +3585,7 @@ function toQuakeCard(item) {
   // (本物のidを持つレコードが後から届いた場合は、既存のtime+place一致による
   // 「後継への選択引き継ぎ」ロジックがそのまま機能する)
   const id = item.id || `noid_${eq?.time || "?"}_${hypo?.name || "?"}`;
+  const stage = quakeStageFromIssueType(item?.issue?.type);
 
   return {
     id,
@@ -3593,8 +3594,10 @@ function toQuakeCard(item) {
     // どちらが新しい電文かを判定するのに使う(mergeQuakeCards参照)。
     issueTime: item?.issue?.time || null,
     // 発表段階(震度速報/震源に関する情報/確定)。バッジ表示・マージ時の情報量比較に使う。
-    stage: quakeStageFromIssueType(item?.issue?.type),
-    place: hypo?.name || "震源地不明",
+    stage,
+    // 震度速報(prompt)の段階では、震源はまだ「分からない」のではなく「調査中」
+    // なので、他の段階と同じ「震源地不明」ではなく、より実態に合った文言にする。
+    place: hypo?.name || (stage === "prompt" ? "震源調査中" : "震源地不明"),
     maxIntensity: isForeign ? "?" : (maxScaleUnknown ? "?" : maxScaleToIntensityKey(maxScale)),
     isForeign,
     magnitude: typeof hypo?.magnitude === "number" && hypo.magnitude > 0 ? hypo.magnitude : null,
@@ -3675,9 +3678,10 @@ function pointsRichness(card) {
   return card.points.some(p => p.isArea === false) ? 2 : 1;
 }
 
-// 震源(震源地名)が判明しているかどうか。"震源地不明"はtoQuakeCardが付ける既定値。
+// 震源(震源地名)が判明しているかどうか。"震源地不明"「震源調査中」はどちらも
+// toQuakeCardが付ける既定値(震源がまだ判明していないことを示す)。
 function hasKnownHypocenter(card) {
-  return card.place !== "震源地不明";
+  return card.place !== "震源地不明" && card.place !== "震源調査中";
 }
 
 // 同じ地震(同じ発生時刻)について、2件のカードをフィールド単位でマージする。
@@ -5287,7 +5291,7 @@ function buildTestQuakeStageCard(stage, form, time, issueTimeStr, areasGeoJSON) 
     return {
       id: `test_${time}_prompt`,
       time, issueTime: issueTimeStr, stage: "prompt",
-      place: "震源地不明",
+      place: "震源調査中",
       maxIntensity: maxIntensityKey,
       isForeign: false,
       magnitude: null, depth: null, latitude: null, longitude: null, longPeriod: null,
@@ -6164,18 +6168,6 @@ function QuakeDetailCard({ quake }) {
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
-      {/* 発表段階バッジ。震度速報(震源不明)・震源速報(震度分布なし)の間だけ表示し、
-          確定報(DetailScale)が届いたら消える。まだ情報が出揃っていないことを示す。 */}
-      {QUAKE_STAGE_LABEL[quake.stage] && (
-        <span style={{
-          position: "absolute", top: 8, right: 12,
-          fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
-          background: `rgba(${tokens.ink},0.12)`, color: `rgba(${tokens.ink},0.7)`,
-          whiteSpace: "nowrap", lineHeight: 1.5,
-        }}>
-          {QUAKE_STAGE_LABEL[quake.stage]}
-        </span>
-      )}
       {/* 最大震度バッジ — 遠地地震は震度が観測されないため「遠地」表示にする */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, whiteSpace: "nowrap", lineHeight: 1.1 }}>
@@ -6221,7 +6213,20 @@ function QuakeDetailCard({ quake }) {
       {/* 震源地 / M・深さ / 発生時刻 — 中央寄せで大きめに表示する */}
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0, lineHeight: 1.1 }}>
-          <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>震源地</span>
+          {/* 発表段階バッジ。震度速報・震源に関する情報の間だけ「震源地」ラベルの
+              代わりに表示し、確定報(DetailScale)が届いたら通常の「震源地」に戻る。
+              ラベルの位置にそのまま差し替えるだけなので、他の行・列の並びは変わらない。 */}
+          {QUAKE_STAGE_LABEL[quake.stage] ? (
+            <span style={{
+              flexShrink: 0, fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+              background: `rgba(${tokens.ink},0.14)`, color: `rgba(${tokens.ink},0.75)`,
+              whiteSpace: "nowrap", lineHeight: 1.5,
+            }}>
+              {QUAKE_STAGE_LABEL[quake.stage]}
+            </span>
+          ) : (
+            <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>震源地</span>
+          )}
           <AutoFitText
             text={quake.place}
             maxFontSize={30}
@@ -11531,7 +11536,7 @@ function QuakeTestBroadcastPanel({ testQuake, onAction, quakeTestForm, quakeEpic
               ① 震度速報
             </PressableButton>
             <PressableButton type="button" onClick={() => onAction?.("broadcastStage", { stage: "destination" })} disabled={disabled} style={stageBtnStyle("#0A84FF", disabled)}>
-              ② 震源速報
+              ② 震源情報
             </PressableButton>
             <PressableButton type="button" onClick={() => onAction?.("broadcastStage", { stage: "detail" })} disabled={disabled} style={stageBtnStyle("#30D158", disabled)}>
               ③ 確定
