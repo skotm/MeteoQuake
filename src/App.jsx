@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.8a";
+const APP_VERSION = "1.4.8b";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10331,19 +10331,72 @@ function eqdbDateValue(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
 
-// 開始日に指定できる最も古い日付。気象庁 震度データベースの対象期間が
-// 1919年1月1日以降のため、これより前は選べないようにする。
+/* ─────────────────────────────────────────────────────
+   気象庁 震度データベースの実際の収録期間
+   これまでは終了日の上限を「現在の2日前」という決め打ちの目安値で計算していたが、
+   実際のデータベースへの反映にはこれより長いタイムラグが生じることがあり、
+   その場合は「まだ収録されていない期間」を終了日に指定してしまい、検索そのものが
+   エラーになっていた(地震の内容に関わらず、その時点でのタイムラグの長さ次第で
+   毎回失敗する形になっていた)。
+   date.json(https://www.data.jma.go.jp/eqdb/data/shindo/js/date.json)に
+   実際の収録期間 { st: "1919-01-01", en: "YYYY-MM-DD" } が公開されているため、
+   これを取得して実際の範囲に合わせる。取得できるまで・取得に失敗した場合は、
+   従来の決め打ち値をフォールバックとして使う。
+   ───────────────────────────────────────────────────── */
+const EQDB_DATE_RANGE_URL = "https://www.data.jma.go.jp/eqdb/data/shindo/js/date.json";
+
+let eqdbDateRangePromise = null;
+function loadEqdbDateRange() {
+  if (!eqdbDateRangePromise) {
+    eqdbDateRangePromise = fetch(EQDB_DATE_RANGE_URL)
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(data => {
+        if (!data || typeof data.st !== "string" || typeof data.en !== "string") {
+          throw new Error("date.jsonの形式が想定と異なります");
+        }
+        return { st: data.st, en: data.en };
+      })
+      .catch(err => {
+        eqdbDateRangePromise = null; // 失敗時は次回呼び出しで再取得を試みられるようにする
+        throw err;
+      });
+  }
+  return eqdbDateRangePromise;
+}
+
+// 実際の収録期間(date.json)を取得して { st, en } | null を返すフック。
+// 未取得・取得失敗の間はnullを返すので、呼び出し側は従来のフォールバック値
+// (EQDB_MIN_DATE / eqdbMaxEndDate())と組み合わせて使う。
+function useEqdbDateRange() {
+  const [range, setRange] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    loadEqdbDateRange()
+      .then(r => { if (!cancelled) setRange(r); })
+      .catch(err => { console.error("震度データベースの収録期間(date.json)の取得に失敗しました:", err); });
+    return () => { cancelled = true; };
+  }, []);
+  return range;
+}
+
+// 開始日に指定できる最も古い日付のフォールバック値。実際の収録期間(date.json のst)が
+// 取得できていればそちらを優先する(理論上は常に1919-01-01のはずだが、念のため)。
 const EQDB_MIN_DATE = "1919-01-01";
 
-// 終了日に指定できる最新日(=現在の2日前)。気象庁 震度データベースは直近の地震が
-// 登録されるまでにタイムラグがあるため、終了日はここより新しい日付を選べないようにする。
-function eqdbMaxEndDate() {
+// 終了日に指定できる最新日のフォールバック値(=現在の2日前という決め打ちの目安)。
+// 実際の収録期間(date.jsonのen)が取得できていればそちらを優先して使うべきで、
+// これはあくまで取得できるまでの・取得に失敗した場合の暫定値。
+function eqdbMaxEndDate(realEn) {
+  if (realEn) return realEn;
   const d = new Date();
   d.setDate(d.getDate() - 2);
   return eqdbDateValue(d);
 }
 
-// 検索フォームの初期値。開始日=1か月前、終了日=選べる最新日(現在の2日前)。
+// 検索フォームの初期値。開始日=1か月前、終了日=選べる最新日(現在の2日前が目安)。
 function defaultEqdbDateRange() {
   const start = new Date();
   start.setMonth(start.getMonth() - 1);
@@ -10519,6 +10572,10 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
   const [sortDesc, setSortDesc] = useState(true);
   const [loadingId, setLoadingId] = useState(null);
 
+  // 実際の震度データベースの収録期間(date.json)。取得できるまでは
+  // nullなので、fetchEqdbSearchの呼び出し側でフォールバック値と組み合わせる。
+  const eqdbDateRange = useEqdbDateRange();
+
   // 震央分布(地図上の丸)用に、resultsの座標をバックグラウンドで少しずつ解決し、
   // 呼び出し元(BottomDock)へ伝える。まだ解決しきっていない間はonLoadingChangeで
   // 「読み込み中」も伝え、地図上にローディング表示を出せるようにする。
@@ -10539,29 +10596,38 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
     (async () => {
       setStatus("loading");
       try {
-        // epi[]は震央地名の自由入力ではなく、コード化された地域選択(pref[]/city[]/
-        // station[]と同様に「99」=指定なし、等の数値コード)を受け付ける項目で、
-        // 震源地名の文字列(例:「福井県嶺北」)をそのまま渡すと不正な値として
-        // 気象庁側のAPIに拒否され、地震の種類によらず必ず「取得に失敗しました」に
-        // なっていた。震央地名で絞り込む項目自体がAPIに無いため、ここでは
-        // epi[]を指定せず(=全地域が対象)全期間を検索し、返ってきた結果を
-        // クライアント側で震源地名が完全一致するものだけに絞り込む。
-        const { list, errMsg } = await fetchEqdbSearch({
-          startDate: EQDB_MIN_DATE, endDate: eqdbMaxEndDate(),
-          minMag: 0, maxInt: "1", sort: "S2",
+        const startDate = eqdbDateRange?.st || EQDB_MIN_DATE;
+        const endDate = eqdbMaxEndDate(eqdbDateRange?.en);
+        console.log("[nearby-quake-diag] 検索開始", { place, startDate, endDate });
+        const { list, errMsg, summary } = await fetchEqdbSearch({
+          startDate, endDate,
+          minMag: 0, maxInt: "1", sort: "S2", epi: place,
         });
         if (cancelled) return;
+        console.log("[nearby-quake-diag] 検索結果", {
+          place, errMsg, summary, 件数: list.length,
+        });
         if (errMsg) { setStatus("error"); setResults([]); return; }
+        // eqdbのepi[]は本来コード化された地域選択用の項目で、震源地名の
+        // 文字列そのものを条件にする項目はAPIに無いため、念のため返ってきた
+        // 結果を震源地名の完全一致でもクライアント側から絞り込んでおく
+        // (epi[]が実際に地名文字列でどこまで絞り込んでくれているか不明なため、
+        // 二重チェックとして残す。ここでの絞り込みで結果が0件になる場合、
+        // epi[]側では絞り込めていなかった可能性が高い)。
         const filtered = list.filter(eq => eq.name === place);
+        console.log("[nearby-quake-diag] 震源地名完全一致で絞り込み後", {
+          place, 絞り込み前: list.length, 絞り込み後: filtered.length,
+        });
         nearbyQuakeSearchCache.set(place, filtered);
         setResults(filtered);
         setStatus("done");
       } catch (e) {
+        console.error("[nearby-quake-diag] 検索失敗(例外)", { place, message: e?.message, name: e?.name });
         if (!cancelled) { setStatus("error"); setResults([]); }
       }
     })();
     return () => { cancelled = true; };
-  }, [place]);
+  }, [place, eqdbDateRange]);
 
   const sorted = useMemo(() => {
     const arr = [...results];
@@ -10665,7 +10731,24 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
 function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, search, onChangeSearch, onSearchExecuted, scrollContainerRef, onPointsChange, onLoadingChange, epicenterCirclesEnabled }) {
   const { tokens, mode } = useContext(ThemeContext);
 
-  const maxEndDate = eqdbMaxEndDate(); // 終了日に選べる最新日(=現在の2日前)。固定なので毎回同じ値。
+  // 実際の震度データベースの収録期間(date.json)。取得できるまでは
+  // nullなので、従来の決め打ちのフォールバック値と組み合わせて使う。
+  const eqdbDateRange = useEqdbDateRange();
+  const minStartDate = eqdbDateRange?.st || EQDB_MIN_DATE;
+  const maxEndDate = eqdbMaxEndDate(eqdbDateRange?.en); // 終了日に選べる最新日(収録期間の実際の終端、取得できるまでは現在の2日前が目安)。
+
+  // 収録期間が(取得前の目安値より)実際には手前までしか無かった場合、既に
+  // フォームにセットされている終了日がそれを超えていることがあるため、実際の
+  // 範囲が判明した時点で一度だけ補正する(ユーザーが日付を選び直す手間を省く)。
+  useEffect(() => {
+    if (!eqdbDateRange) return;
+    onChangeSearch(prev => {
+      let next = prev;
+      if (prev.endDate && prev.endDate > maxEndDate) next = { ...next, endDate: maxEndDate };
+      if (next.startDate && next.startDate < minStartDate) next = { ...next, startDate: minStartDate };
+      return next;
+    });
+  }, [eqdbDateRange]);
 
   const {
     startDate, endDate, minMag, maxInt, sort,
@@ -10729,12 +10812,12 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
     if (isSearching) return;
     justSearchedRef.current = true;
 
-    // 検索前に、終了日が現在の2日前を超えていないか・開始日が終了日より後や
-    // 1919年1月1日より前になっていないかを念のため補正する
+    // 検索前に、終了日が実際の収録期間の終端を超えていないか・開始日が終了日より後や
+    // 収録期間の始端より前になっていないかを念のため補正する
     // (input[type=date]のmax/min属性で通常は防げるが、念のためここでも二重にチェックしておく)。
     let effectiveEnd = endDate > maxEndDate ? maxEndDate : endDate;
     let effectiveStart = startDate > effectiveEnd ? effectiveEnd : startDate;
-    if (effectiveStart < EQDB_MIN_DATE) effectiveStart = EQDB_MIN_DATE;
+    if (effectiveStart < minStartDate) effectiveStart = minStartDate;
 
     if (!effectiveStart || !effectiveEnd) { patch({ status: "開始日・終了日を指定してください" }); justSearchedRef.current = false; return; }
 
@@ -10799,11 +10882,11 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
       <div style={{ padding: "2px 14px 6px", display: "flex", flexDirection: "column", gap: 5 }}>
         <div style={{ display: "flex", gap: 8 }}>
           <EqdbFormField label="開始日">
-            <input type="date" value={startDate} min={EQDB_MIN_DATE} max={endDate || maxEndDate}
-              onChange={e => patch({ startDate: e.target.value < EQDB_MIN_DATE ? EQDB_MIN_DATE : e.target.value })} style={eqdbDateInputStyle(tokens, mode)}/>
+            <input type="date" value={startDate} min={minStartDate} max={endDate || maxEndDate}
+              onChange={e => patch({ startDate: e.target.value < minStartDate ? minStartDate : e.target.value })} style={eqdbDateInputStyle(tokens, mode)}/>
           </EqdbFormField>
           <EqdbFormField label="終了日">
-            <input type="date" value={endDate} min={startDate || EQDB_MIN_DATE} max={maxEndDate}
+            <input type="date" value={endDate} min={startDate || minStartDate} max={maxEndDate}
               onChange={e => patch({ endDate: e.target.value > maxEndDate ? maxEndDate : e.target.value })} style={eqdbDateInputStyle(tokens, mode)}/>
           </EqdbFormField>
         </div>
