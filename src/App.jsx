@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.7";
+const APP_VERSION = "1.4.8";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -3732,6 +3732,9 @@ function mergeQuakeCards(a, b) {
     // 警報→注意報に切り下がる、付加文が追記される、といった更新がありうるため)。
     domesticTsunami: newer.domesticTsunami,
     freeFormComment: newer.freeFormComment ?? older.freeFormComment ?? null,
+    // テスト配信(地震情報テスト配信機能)由来かどうか。どちらか一方でもテストなら
+    // テスト扱いにする(実運用でテストと実データが混ざることは無いが念のため)。
+    isTest: !!(newer.isTest || older.isTest),
   };
 }
 
@@ -4935,8 +4938,12 @@ const EQDB_MAX_INT_SCALE = { "1": 10, "2": 20, "3": 30, "4": 40, "A": 45, "B": 5
 
 // 「この震源の近傍で発生した地震」ボタンを出す条件。
 // P2P地震情報(リアルタイム)側の地震であれば、震度・マグニチュードに関わらず表示する。
+// ただし震源がまだ判明していない段階(震度速報「震源調査中」・稀な「震源地不明」)は、
+// 検索条件になる震源地名そのものが無いため、気象庁震度データベースを検索しても
+// 一致するはずがない(=ボタンを出しても必ず0件になる)。そのため震源が判明してから
+// (震源に関する情報 or 確定報が届いてから)だけボタンを表示するようにする。
 function shouldShowNearbyQuakeButton(quake) {
-  return !!quake && !quake.isEqdb;
+  return !!quake && !quake.isEqdb && hasKnownHypocenter(quake);
 }
 
 const EQDB_SORT_OPTIONS = [
@@ -5298,6 +5305,7 @@ function buildTestQuakeStageCard(stage, form, time, issueTimeStr, areasGeoJSON) 
       points,
       domesticTsunami: "Checking",
       freeFormComment: null,
+      isTest: true,
     };
   }
   if (stage === "destination") {
@@ -5311,6 +5319,7 @@ function buildTestQuakeStageCard(stage, form, time, issueTimeStr, areasGeoJSON) 
       points: [],
       domesticTsunami: "Checking",
       freeFormComment: null,
+      isTest: true,
     };
   }
   // detail(確定)
@@ -5324,6 +5333,7 @@ function buildTestQuakeStageCard(stage, form, time, issueTimeStr, areasGeoJSON) 
     points,
     domesticTsunami: form.domesticTsunami || "None",
     freeFormComment: null,
+    isTest: true,
   };
 }
 
@@ -6182,6 +6192,19 @@ function QuakeDetailCard({ quake }) {
             display: "flex", alignItems: "center", justifyContent: "center",
           }}
         >
+          {/* テスト配信バッジ — 津波警報テスト配信(TsunamiDetailCard)と全く同じ見た目を
+              そのまま流用する。最大震度アイコンの角に乗せることで、一目でテストデータだと
+              分かるようにする。 */}
+          {quake.isTest && (
+            <span style={{
+              position: "absolute", top: -8, left: -8,
+              fontSize: 9.5, fontWeight: 800, color: "#fff",
+              background: "#FF453A", borderRadius: 4, padding: "2px 6px",
+              whiteSpace: "nowrap",
+            }}>
+              テスト配信
+            </span>
+          )}
           {quake.isForeign ? (
             <span style={{ fontSize: 14, fontWeight: 800, lineHeight: 1.2 }}>不明</span>
           ) : quake.maxIntensity === "?" ? (
