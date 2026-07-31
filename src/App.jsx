@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.8b";
+const APP_VERSION = "1.4.8c";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -13876,7 +13876,18 @@ export default function App() {
       // (地図表示時に読み込み済みなので、実際にはほぼ即座に解決する)。
       loadGeoData().then(({ areas: areasGeoJSON }) => {
         const card = buildTestQuakeStageCard(stage, quakeTestForm, time, issueTimeStr, areasGeoJSON);
-        setTestQuake(prev => mergeQuakeCards(prev, card));
+        setTestQuake(prev => {
+          const merged = mergeQuakeCards(prev, card);
+          // 段階が進むとtestQuakeのid(test_..._prompt→test_..._destination等)が
+          // 変わるため、実際のP2P地震情報のWebSocket受信時と同じ理由で、選択中の
+          // まま何もしないと選択が外れて詳細画面が一覧表示に戻ってしまう。
+          // 選択中のテスト地震がこの続報の対象そのものであれば、新しいidへ
+          // 選択を引き継ぐ。
+          if (prev && selectedQuakeIdRef.current === prev.id && merged.id !== prev.id) {
+            selectQuake(merged.id);
+          }
+          return merged;
+        });
       }).catch(err => {
         console.error("細分区域データの読み込みに失敗しました(地震情報テスト):", err);
       });
