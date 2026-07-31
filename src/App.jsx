@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.8c";
+const APP_VERSION = "1.4.8d";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1166,6 +1166,8 @@ function MapCanvas({
           // 観測点(震度)マーカー用のアイコン(丸+白フチ+数字)を、
           // 現在の配色スキームに合わせて生成・登録しておく。
           registerStationIcons(map, colorScheme);
+          // 震度速報・震源に関する情報(細分区域単位)専用の角丸正方形アイコン。
+          registerAreaIcons(map, colorScheme);
 
           // 観測点マーカー本体。circleではなくsymbolレイヤーにすることで、
           // registerStationIconsで焼いたbitmap(白フチ+数字入り)をそのまま使う。
@@ -1239,6 +1241,39 @@ function MapCanvas({
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
               // 震度が大きいほど後(=前面)に描画されるよう、sort-keyに震度の並び順を使う。
+              "symbol-sort-key": ["get", "sortOrder"],
+            },
+          });
+
+          // 震度速報・震源に関する情報(細分区域単位、isArea:true)専用のマーカー。
+          // 通常の観測点マーカー(station-points、円形アイコン)とは別のソース・
+          // レイヤーにして、角丸正方形アイコン(area-icon-*)を使う。
+          // 1つの地震のpointsは常に「全部isArea:true」か「全部isArea:false」の
+          // どちらかで、両方が混ざることは無いため、重なり順は特に気にしなくてよい。
+          map.addSource("area-points", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "area-points-symbol",
+            type: "symbol",
+            source: "area-points",
+            layout: {
+              "icon-image": [
+                "step", ["zoom"],
+                ["concat", "area-icon-", ["get", "intensityKey"], "-dot"],
+                6, ["concat", "area-icon-", ["get", "intensityKey"], "-num"],
+              ],
+              "icon-size": [
+                "interpolate", ["linear"], ["zoom"],
+                4, 5 / STATION_ICON_BASE_RADIUS,
+                7, 10 / STATION_ICON_BASE_RADIUS,
+                9, 14 / STATION_ICON_BASE_RADIUS,
+                11, 20 / STATION_ICON_BASE_RADIUS,
+                14, 30 / STATION_ICON_BASE_RADIUS,
+              ],
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
               "symbol-sort-key": ["get", "sortOrder"],
             },
           });
@@ -1649,26 +1684,33 @@ function MapCanvas({
   // 緯度経度が引けなかった観測点(マスタに見つからなかったもの)は地図には出さない。
   // sortOrder(震度の小さい順の連番)をsymbol-sort-keyに渡すことで、
   // 震度が大きい観測点ほど前面に描画されるようにする。
+  // 震度速報・震源に関する情報(isArea:true、細分区域単位)は、通常の観測点とは
+  // 別のソース(area-points、角丸正方形アイコン)に分けて表示する。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
 
-    const source = map.getSource("station-points");
-    if (!source) return;
+    const stationSource = map.getSource("station-points");
+    const areaSource = map.getSource("area-points");
+    if (!stationSource || !areaSource) return;
 
-    const features = stationMarkersVisible
-      ? (stationPoints || [])
-          .filter(p => p.latitude != null && p.longitude != null)
-          .map(p => ({
-            type: "Feature",
-            geometry: { type: "Point", coordinates: [p.longitude, p.latitude] },
-            properties: {
-              intensityKey: STATION_ICON_KEYS.includes(p.intensityKey) ? p.intensityKey : "0",
-              sortOrder: STATION_ICON_KEYS.indexOf(p.intensityKey),
-            },
-          }))
+    const toFeature = (p) => ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [p.longitude, p.latitude] },
+      properties: {
+        intensityKey: STATION_ICON_KEYS.includes(p.intensityKey) ? p.intensityKey : "0",
+        sortOrder: STATION_ICON_KEYS.indexOf(p.intensityKey),
+      },
+    });
+
+    const resolvedPoints = stationMarkersVisible
+      ? (stationPoints || []).filter(p => p.latitude != null && p.longitude != null)
       : [];
-    source.setData({ type: "FeatureCollection", features });
+    const stationFeatures = resolvedPoints.filter(p => !p.isArea).map(toFeature);
+    const areaFeatures = resolvedPoints.filter(p => p.isArea).map(toFeature);
+
+    stationSource.setData({ type: "FeatureCollection", features: stationFeatures });
+    areaSource.setData({ type: "FeatureCollection", features: areaFeatures });
   }, [stationPoints, status, stationMarkersVisible]);
 
   // 緊急地震速報: P波・S波の伝播円と震源マーカーをリアルタイムに更新する。
@@ -1791,6 +1833,7 @@ function MapCanvas({
     const map = mapRef.current;
     if (!map || status !== "ready") return;
     registerStationIcons(map, colorScheme);
+    registerAreaIcons(map, colorScheme);
   }, [colorScheme, status]);
 
   // 震度分布(細分区域ごとの塗り分け)を更新する。
@@ -2874,6 +2917,62 @@ function registerStationIcons(map, scheme) {
     const numImg = buildStationIconCanvas(style.bg, style.fg, label, true, strokeColor);
     const dotId = `station-icon-${key}-dot`;
     const numId = `station-icon-${key}-num`;
+    if (map.hasImage(dotId)) map.updateImage(dotId, dotImg); else map.addImage(dotId, dotImg);
+    if (map.hasImage(numId)) map.updateImage(numId, numImg); else map.addImage(numId, numImg);
+  });
+}
+
+// buildStationIconCanvasの角丸正方形(スクイーカル)版。震度速報・震源に関する情報
+// (細分区域単位、isArea:true)専用のアイコンに使う。観測点一覧の同じ場面で使っている
+// 角丸正方形バッジと見た目を揃え、「これは区域単位のざっくりした震度」だと地図上でも
+// 一目で分かるようにする。
+function buildAreaIconCanvas(bg, fg, label, withText, strokeColor = "#ffffff") {
+  const size = STATION_ICON_BASE_RADIUS * 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const inset = 5; // 縁の線幅分、正方形を少し内側に描く(はみ出し防止)
+  const rectSize = size - inset * 2;
+  const cornerRadius = rectSize * 0.32; // 角の丸め具合(値が大きいほど丸くなる)
+
+  ctx.beginPath();
+  ctx.roundRect(inset, inset, rectSize, rectSize, cornerRadius);
+  ctx.fillStyle = bg;
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = strokeColor;
+  ctx.stroke();
+
+  if (withText) {
+    const STATION_ICON_FONT_STACK =
+      '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "Noto Sans JP", sans-serif';
+    const maxTextWidth = rectSize * 0.72;
+    let fontSize = rectSize * 0.5;
+    ctx.font = `800 ${fontSize}px ${STATION_ICON_FONT_STACK}`;
+    const width = ctx.measureText(label).width;
+    if (width > maxTextWidth) {
+      fontSize *= maxTextWidth / width;
+      ctx.font = `800 ${fontSize.toFixed(1)}px ${STATION_ICON_FONT_STACK}`;
+    }
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = fg;
+    ctx.fillText(label, size / 2, size / 2 + 1);
+  }
+  return ctx.getImageData(0, 0, size, size);
+}
+
+// registerStationIconsの角丸正方形版。area-icon-{key}-dot / -num を生成・登録する。
+function registerAreaIcons(map, scheme) {
+  STATION_ICON_KEYS.forEach(key => {
+    const style = scheme.colors[key === "5u" ? "5-" : key] || scheme.colors["0"];
+    const label = key === "5u" ? "未" : key;
+    const strokeColor = (scheme.id === "jma" && key === "1") ? "#000000" : "#ffffff";
+    const dotImg = buildAreaIconCanvas(style.bg, style.fg, label, false, strokeColor);
+    const numImg = buildAreaIconCanvas(style.bg, style.fg, label, true, strokeColor);
+    const dotId = `area-icon-${key}-dot`;
+    const numId = `area-icon-${key}-num`;
     if (map.hasImage(dotId)) map.updateImage(dotId, dotImg); else map.addImage(dotId, dotImg);
     if (map.hasImage(numId)) map.updateImage(numId, numImg); else map.addImage(numId, numImg);
   });
@@ -4841,18 +4940,28 @@ function matchStation(stations, point) {
 function resolveStationPoints(points, stations, areasGeoJSON) {
   return points.map(p => {
     if (p.isArea) {
-      const areaCodes = findAreaCodesByName(areasGeoJSON, p.addr);
-      if (areaCodes.length === 0) {
+      const features = findAreaFeaturesByName(areasGeoJSON, p.addr);
+      if (features.length === 0) {
         // eslint-disable-next-line no-console
         console.warn(`[細分区域未一致] ${p.pref} ${p.addr} — 細分区域.jsonに無い地域名表記かもしれません(震度速報)`);
+      }
+      const areaCodes = features.map(f => f.properties?.code).filter(c => c != null);
+      // 地図上にこの区域のアイコンを置くための代表点(区域ポリゴンの重心)。
+      // 同じ区域名が複数のポリゴンに分かれている場合は、それぞれの重心を平均する。
+      // 個々の観測点座標が無い震度速報でも、区域アイコンとして地図上に表示できるようにする。
+      let latitude = null, longitude = null;
+      const centroids = features.map(f => polygonRoughCentroid(f.geometry)).filter(Boolean);
+      if (centroids.length > 0) {
+        latitude = centroids.reduce((sum, c) => sum + c.lat, 0) / centroids.length;
+        longitude = centroids.reduce((sum, c) => sum + c.lon, 0) / centroids.length;
       }
       return {
         pref: p.pref,
         addr: p.addr,
         city: null,
         intensityKey: maxScaleToIntensityKey(p.scale),
-        latitude: null,
-        longitude: null,
+        latitude,
+        longitude,
         areaCode: areaCodes[0] || null,
         areaCodes,
         isArea: true,
@@ -5622,14 +5731,19 @@ function normalizeAreaNameForMatch(name) {
   // 全角数字を半角に変換してから比較する(「２３区」→「23区」)
   return name.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).trim();
 }
-function findAreaCodesByName(areasGeoJSON, name) {
+// 細分区域.jsonのfeatureを地域名で探す(完全一致優先、無ければ表記ゆれを吸収した
+// あいまい一致)。同名の区域が複数のポリゴンに分かれていることがあるため、
+// 該当するfeatureをすべて返す。
+function findAreaFeaturesByName(areasGeoJSON, name) {
   if (!areasGeoJSON || !Array.isArray(areasGeoJSON.features) || !name) return [];
   const exact = areasGeoJSON.features.filter(f => f.properties?.name === name);
-  if (exact.length > 0) return exact.map(f => f.properties?.code).filter(c => c != null);
-
+  if (exact.length > 0) return exact;
   const normalizedTarget = normalizeAreaNameForMatch(name);
-  const fuzzy = areasGeoJSON.features.filter(f => normalizeAreaNameForMatch(f.properties?.name) === normalizedTarget);
-  return fuzzy.map(f => f.properties?.code).filter(c => c != null);
+  return areasGeoJSON.features.filter(f => normalizeAreaNameForMatch(f.properties?.name) === normalizedTarget);
+}
+
+function findAreaCodesByName(areasGeoJSON, name) {
+  return findAreaFeaturesByName(areasGeoJSON, name).map(f => f.properties?.code).filter(c => c != null);
 }
 
 // ep.json(気象庁の震央地名区域)のポリゴンを走査し、点(lat,lon)を
@@ -6534,14 +6648,25 @@ function StationPointsList({ points, displayMode = "list", openKey, onOpenKeyCha
                     cursor: "pointer", textAlign: "left",
                   }}
                 >
-                  <span style={{
-                    flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
-                    background: style.bg, color: style.fg,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: key === "5u" ? 9 : 11, fontWeight: 800,
-                  }}>
-                    {key === "5u" ? "未入電" : style.label}
-                  </span>
+                  {groupPoints[0]?.isArea ? (
+                    <span style={{
+                      flexShrink: 0, width: 34, height: 34, borderRadius: 11,
+                      background: style.bg, color: style.fg,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: key === "5u" ? 8.5 : 13, fontWeight: 800,
+                    }}>
+                      {key === "5u" ? "未入電" : style.label}
+                    </span>
+                  ) : (
+                    <span style={{
+                      flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
+                      background: style.bg, color: style.fg,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: key === "5u" ? 9 : 11, fontWeight: 800,
+                    }}>
+                      {key === "5u" ? "未入電" : style.label}
+                    </span>
+                  )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: tokens.text }}>
                       震度{style.label}
@@ -6570,14 +6695,30 @@ function StationPointsList({ points, displayMode = "list", openKey, onOpenKeyCha
               <div key={`${p.pref}-${p.addr}-${i}`}>
                 {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.08)`, marginLeft: 12 }}/>}
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px" }}>
-                  <span style={{
-                    flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
-                    background: style.bg, color: style.fg,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: p.intensityKey === "5u" ? 9 : 11, fontWeight: 800,
-                  }}>
-                    {p.intensityKey === "5u" ? "未入電" : style.label}
-                  </span>
+                  {/* 震度速報・震源に関する情報(isArea:true、細分区域単位)専用の
+                      アイコン。個々の観測点(市町村単位)の小さい角丸バッジとは
+                      見た目を変え、正方形に近い・角がより丸い(スクイーカル風の)
+                      アイコンにすることで、区域単位のざっくりした震度だと
+                      一目で分かるようにする。 */}
+                  {p.isArea ? (
+                    <span style={{
+                      flexShrink: 0, width: 34, height: 34, borderRadius: 11,
+                      background: style.bg, color: style.fg,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: p.intensityKey === "5u" ? 8.5 : 13, fontWeight: 800,
+                    }}>
+                      {p.intensityKey === "5u" ? "未入電" : style.label}
+                    </span>
+                  ) : (
+                    <span style={{
+                      flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
+                      background: style.bg, color: style.fg,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: p.intensityKey === "5u" ? 9 : 11, fontWeight: 800,
+                    }}>
+                      {p.intensityKey === "5u" ? "未入電" : style.label}
+                    </span>
+                  )}
                   <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.4)`, flexShrink: 0 }}>
                     {p.pref}
                   </span>
