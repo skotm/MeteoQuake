@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.5";
+const APP_VERSION = "1.4.6";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -996,6 +996,7 @@ function MapCanvas({
   tsunamiAreaPickActive = false, onPickTsunamiArea, pickedTsunamiAreas = [],
   eews = [],
   eewEpicenterPickActive = false, onPickEewEpicenter,
+  quakeEpicenterPickActive = false, onPickQuakeEpicenter,
   eewDetailOpen = false,
 }) {
   const containerRef = useRef(null);
@@ -1040,6 +1041,13 @@ function MapCanvas({
   eewEpicenterPickActiveRef.current = eewEpicenterPickActive;
   const onPickEewEpicenterRef = useRef(onPickEewEpicenter);
   onPickEewEpicenterRef.current = onPickEewEpicenter;
+  // 地震情報テスト配信の「地図をタップして震源を指定」モード用。EEWのピックモードと
+  // 同じ考え方・同じep.jsonの震央地名検索を共有し、activeな方だけ反応させる(両方
+  // 同時にONにはならない)。
+  const quakeEpicenterPickActiveRef = useRef(quakeEpicenterPickActive);
+  quakeEpicenterPickActiveRef.current = quakeEpicenterPickActive;
+  const onPickQuakeEpicenterRef = useRef(onPickQuakeEpicenter);
+  onPickQuakeEpicenterRef.current = onPickQuakeEpicenter;
   // 震央地名データは、緊急地震速報テスト配信のピックモードが最初にONになった時だけ
   // 遅延読み込みする(実験的機能なので、使わないユーザーには一切通信させない)。
   const epicenterNamesGeoDataRef = useRef(null);
@@ -1542,6 +1550,28 @@ function MapCanvas({
             }
           });
 
+          // 地震情報テスト配信「地図をタップして震源を指定」モード用。EEWの震源ピックと
+          // 全く同じ処理(ep.jsonでの震央地名検索)を、行き先(onPickQuakeEpicenter)だけ
+          // 変えて共有する。
+          map.on("click", (e) => {
+            if (!quakeEpicenterPickActiveRef.current) return;
+            const { lat, lng } = e.lngLat;
+            const geo = epicenterNamesGeoDataRef.current;
+            if (geo) {
+              const name = findEpicenterNameByPoint(geo, lat, lng);
+              onPickQuakeEpicenterRef.current?.(lat, lng, name);
+            } else {
+              loadEpicenterNamesData().then((loaded) => {
+                epicenterNamesGeoDataRef.current = loaded;
+                const name = findEpicenterNameByPoint(loaded, lat, lng);
+                onPickQuakeEpicenterRef.current?.(lat, lng, name);
+              }).catch((err) => {
+                console.error("震央地名データの読み込みに失敗しました:", err);
+                onPickQuakeEpicenterRef.current?.(lat, lng, null);
+              });
+            }
+          });
+
           // 緊急地震速報(EEW)の地域ごとの予測震度塗りつぶしは、専用レイヤーは
           // 持たず、地震情報の震度分布と同じ"areas"ソース/"areas-intensity-fill"・
           // "areas-intensity-line"レイヤー(feature-state)を共用する(下のuseEffectで
@@ -1883,9 +1913,9 @@ function MapCanvas({
     const map = mapRef.current;
     if (!map || status !== "ready") return;
 
-    map.getCanvas().style.cursor = (tsunamiAreaPickActive || eewEpicenterPickActive) ? "crosshair" : "";
+    map.getCanvas().style.cursor = (tsunamiAreaPickActive || eewEpicenterPickActive || quakeEpicenterPickActive) ? "crosshair" : "";
 
-    if (eewEpicenterPickActive && !epicenterNamesLoadedRef.current) {
+    if ((eewEpicenterPickActive || quakeEpicenterPickActive) && !epicenterNamesLoadedRef.current) {
       epicenterNamesLoadedRef.current = true;
       loadEpicenterNamesData()
         .then((geojson) => { epicenterNamesGeoDataRef.current = geojson; })
@@ -1894,7 +1924,7 @@ function MapCanvas({
           epicenterNamesLoadedRef.current = false; // 失敗時は次回ONで再試行できるようにする
         });
     }
-  }, [eewEpicenterPickActive, tsunamiAreaPickActive, status]);
+  }, [eewEpicenterPickActive, quakeEpicenterPickActive, tsunamiAreaPickActive, status]);
 
   // ピックモードで選ばれている予報区(pickedTsunamiAreas、複数・グレード別可)を、
   // それぞれの実際の配色で強調レイヤーに反映する。buildTsunamiAreaColorExprは
@@ -5186,6 +5216,113 @@ function calcTestEewAreasByAttenuation(areasGeoJSON, lat, lon, magnitude, depthK
   return { areas, maxIntensityKey: overallMaxKey || "?" };
 }
 
+/* ─────────────────────────────────────────────────────
+   地震情報テスト配信専用: 震源(緯度・経度・M・深さ)から、震度速報・震度に関する情報の
+   段階で使うダミーの観測点分布(points)を作る。
+   calcTestEewAreasByAttenuationと同じ距離減衰式をそのまま使い回すが、EEW側は
+   「地図に塗る震度4以上の地域」だけに絞っているのに対し、こちらは震度速報の
+   雰囲気を再現するため震度1以上の地域も含める(細分区域.json全域を計算するため、
+   通常の震源だとEEWよりだいぶ多い件数になる)。
+   本来のP2P地震情報の観測点(points)は市町村・観測点単位(isArea:false)だが、
+   このテスト機能では細分区域単位(isArea:true)の粒度で簡易的に生成する
+   (震度速報と同じ粒度。実際の詳細報もこの粒度で代用する簡略化版)。
+   ───────────────────────────────────────────────────── */
+function calcTestQuakePointsByAttenuation(areasGeoJSON, lat, lon, magnitude, depthKm) {
+  if (!areasGeoJSON || !Array.isArray(areasGeoJSON.features)) return { points: [], maxIntensityKey: "?" };
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(magnitude)) {
+    return { points: [], maxIntensityKey: "?" };
+  }
+  const D = Number.isFinite(depthKm) ? Math.max(0, depthKm) : 10;
+  const Mw = magnitude - 0.171;
+  const faultLengthKm = Math.pow(10, 0.5 * Mw - 1.85);
+  const sourceRadiusKm = faultLengthKm / 2;
+
+  const points = [];
+  let overallMaxValue = -Infinity;
+  let overallMaxKey = null;
+
+  for (const feature of areasGeoJSON.features) {
+    const name = feature.properties?.name;
+    if (!name) continue;
+    const center = polygonRoughCentroid(feature.geometry);
+    if (!center) continue;
+
+    const epicentralKm = Math.sqrt(fastDist2(lat, lon, center.lat, center.lon));
+    const hypocentralKm = Math.sqrt(epicentralKm * epicentralKm + D * D);
+    const shortestKm = Math.max(3, hypocentralKm - sourceRadiusKm);
+
+    const logPGV600 = 0.58 * Mw + 0.0038 * D - 1.29
+      - Math.log10(shortestKm + 0.0028 * Math.pow(10, 0.5 * Mw))
+      - 0.002 * shortestKm;
+    const PGV600 = Math.pow(10, logPGV600);
+    const PGVs = PGV600 * SITE_AMPLIFICATION_FACTOR;
+
+    const instrIntensity = 2.68 + 1.72 * Math.log10(PGVs);
+    if (!Number.isFinite(instrIntensity)) continue;
+
+    const key = instrumentalIntensityToScaleKey(instrIntensity);
+    if (instrIntensity > overallMaxValue) {
+      overallMaxValue = instrIntensity;
+      overallMaxKey = key;
+    }
+    if (instrIntensity < 1) continue; // 震度1未満の地域は載せない(震度速報の実際の見え方に合わせる)
+
+    points.push({ pref: "", addr: name, scale: INTENSITY_SCALE_CODE[key] ?? 10, isArea: true });
+  }
+  return { points, maxIntensityKey: overallMaxKey || "?" };
+}
+
+// 地震情報テスト配信: 発表段階(stage)ごとに、実際のtoQuakeCard()と同じ形のカードを作る。
+// ①震度速報(prompt): 震源不明、地域単位の震度分布あり、津波は調査中。
+// ②震源に関する情報(destination): 震源は判明、震度分布はまだ無い(maxIntensityは"?")。
+// ③震度に関する情報(detail): 震源・震度分布ともに確定。津波はフォームの指定値。
+// time(発生時刻)は同じ地震の複数段階を通じて固定し、issueTimeStrだけ毎回「今」を渡す
+// ことで、実際のmergeQuakeCards(dedupeQuakeList)と同じ仕組みでApp側が段階的に統合できる。
+function buildTestQuakeStageCard(stage, form, time, issueTimeStr, areasGeoJSON) {
+  const { points, maxIntensityKey } = calcTestQuakePointsByAttenuation(
+    areasGeoJSON, form.latitude, form.longitude, form.magnitude, form.depth
+  );
+
+  if (stage === "prompt") {
+    return {
+      id: `test_${time}_prompt`,
+      time, issueTime: issueTimeStr, stage: "prompt",
+      place: "震源地不明",
+      maxIntensity: maxIntensityKey,
+      isForeign: false,
+      magnitude: null, depth: null, latitude: null, longitude: null, longPeriod: null,
+      points,
+      domesticTsunami: "Checking",
+      freeFormComment: null,
+    };
+  }
+  if (stage === "destination") {
+    return {
+      id: `test_${time}_destination`,
+      time, issueTime: issueTimeStr, stage: "destination",
+      place: form.place || "震源地不明",
+      maxIntensity: "?",
+      isForeign: false,
+      magnitude: form.magnitude, depth: form.depth, latitude: form.latitude, longitude: form.longitude, longPeriod: null,
+      points: [],
+      domesticTsunami: "Checking",
+      freeFormComment: null,
+    };
+  }
+  // detail(確定)
+  return {
+    id: `test_${time}_detail`,
+    time, issueTime: issueTimeStr, stage: "detail",
+    place: form.place || "震源地不明",
+    maxIntensity: maxIntensityKey,
+    isForeign: false,
+    magnitude: form.magnitude, depth: form.depth, latitude: form.latitude, longitude: form.longitude, longPeriod: null,
+    points,
+    domesticTsunami: form.domesticTsunami || "None",
+    freeFormComment: null,
+  };
+}
+
 // 潮位観測点(1点)から一番近い津波予報区を、tsunami-areas.json(海岸線の座標データ、
 // 都道府県名などのあいまいな情報に頼らず地図描画に実際使っている正式なデータ)との
 // 距離計算で求める。各予報区のMultiLineStringの頂点との最短距離で近似している
@@ -7119,6 +7256,7 @@ function BottomDock({
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
   eewTestForm, eewEpicenterPickActive,
+  testQuake, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeTestAutoPlaying,
   eews = EMPTY_EQDB_LIST, eewDetailOpen, eewOpenSignal, onOpenEewDetail, onCloseEewDetail,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
@@ -8617,6 +8755,11 @@ function BottomDock({
                   onTestEewAction={onTestEewAction}
                   eewTestForm={eewTestForm}
                   eewEpicenterPickActive={eewEpicenterPickActive}
+                  testQuake={testQuake}
+                  onTestQuakeAction={onTestQuakeAction}
+                  quakeTestForm={quakeTestForm}
+                  quakeEpicenterPickActive={quakeEpicenterPickActive}
+                  quakeTestAutoPlaying={quakeTestAutoPlaying}
                   tsunamiAreaPickActive={tsunamiAreaPickActive}
                   onStartTsunamiAreaPick={onStartTsunamiAreaPick}
                   pickedTsunamiAreas={pickedTsunamiAreas}
@@ -11250,6 +11393,197 @@ function EewTestBroadcastPanel({ testEews, onAction, eewTestForm, eewEpicenterPi
   );
 }
 
+// 地震情報テスト配信専用: 確定報(③)で使う津波判定の選択肢。調査中(Checking)は
+// ①②で自動的に使われるため、③で手動選択する対象からは外している。
+const QUAKE_TEST_TSUNAMI_OPTIONS = [
+  { value: "None", label: "心配なし" },
+  { value: "NonEffective", label: "若干の海面変動" },
+  { value: "Watch", label: "津波注意報等" },
+  { value: "Warning", label: "津波警報等" },
+  { value: "MajorWarning", label: "大津波警報等" },
+];
+
+function QuakeTestBroadcastPanel({ testQuake, onAction, quakeTestForm, quakeEpicenterPickActive, quakeTestAutoPlaying }) {
+  const { tokens } = useContext(ThemeContext);
+  const f = quakeTestForm;
+
+  const inputStyle = {
+    width: "100%", padding: "8px 10px", borderRadius: 8, border: "none",
+    background: `rgba(${tokens.ink},0.08)`, color: tokens.text,
+    fontSize: 13, fontWeight: 600, boxSizing: "border-box",
+  };
+  const labelStyle = {
+    display: "block", fontSize: 11, fontWeight: 600,
+    color: `rgba(${tokens.ink},0.5)`, marginBottom: 4,
+  };
+  function stageBtnStyle(color, disabled) {
+    return {
+      flex: 1, padding: "10px 8px", borderRadius: 10, border: "none", cursor: disabled ? "default" : "pointer",
+      background: `${color}1F`, color, fontSize: 12, fontWeight: 700, textAlign: "center",
+      opacity: disabled ? 0.4 : 1,
+    };
+  }
+  function patchForm(patch) {
+    onAction?.("patchForm", patch);
+  }
+
+  const disabled = !!quakeTestAutoPlaying;
+
+  return (
+    <>
+      <div style={{ margin: "-4px 14px 10px", fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.7 }}>
+        実際の気象庁発表ではない、動作確認用のダミーデータです。①震度速報→②震源に関する情報→
+        ③震度に関する情報、と実際の発表段階を再現して個別に配信できるほか、まとめて自動再生も
+        できます。①②の震度分布はM・深さ・震源からの距離による減衰式で自動計算されます
+        (簡略化のため、実際の観測点単位ではなく細分区域単位で生成しています)。
+        「配信を削除」で元に戻ります。
+      </div>
+
+      <div style={{ margin: "18px 14px 6px" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: `rgba(${tokens.ink},0.7)` }}>
+          震源(②③で使用。①は震源不明のまま配信されます)
+        </span>
+      </div>
+      <SettingsCard>
+        <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div>
+            <label style={labelStyle}>震源</label>
+            <PressableButton
+              type="button"
+              onClick={() => onAction?.(quakeEpicenterPickActive ? "cancelEpicenterPick" : "startEpicenterPick")}
+              disabled={disabled}
+              style={{
+                width: "100%", padding: "10px 12px", borderRadius: 8, border: "none", cursor: disabled ? "default" : "pointer",
+                textAlign: "left",
+                background: quakeEpicenterPickActive ? "rgba(255,69,58,0.18)" : `rgba(${tokens.ink},0.08)`,
+                color: quakeEpicenterPickActive ? "#FF453A" : tokens.text,
+                opacity: disabled ? 0.5 : 1,
+              }}
+            >
+              {quakeEpicenterPickActive ? (
+                <span style={{ fontSize: 13, fontWeight: 700 }}>地図をタップして震源を指定してください…</span>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{f.place || "(震源未指定)"}</div>
+                  <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, marginTop: 2 }}>
+                    北緯{f.latitude?.toFixed?.(2) ?? "-.--"}° ・ 東経{f.longitude?.toFixed?.(2) ?? "-.--"}° ・ タップして地図で選び直す
+                  </div>
+                </div>
+              )}
+            </PressableButton>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <label style={labelStyle}>深さ(km)</label>
+              <select
+                value={f.depth}
+                onChange={e => patchForm({ depth: parseFloat(e.target.value) })}
+                disabled={disabled}
+                style={inputStyle}
+              >
+                {EEW_TEST_DEPTH_OPTIONS.map(d => (
+                  <option key={d} value={d}>{d}km</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <label style={labelStyle}>M(マグニチュード)</label>
+              <select
+                value={f.magnitude}
+                onChange={e => patchForm({ magnitude: parseFloat(e.target.value) })}
+                disabled={disabled}
+                style={inputStyle}
+              >
+                {EEW_TEST_MAGNITUDE_OPTIONS.map(m => (
+                  <option key={m} value={m}>{m.toFixed(1)}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label style={labelStyle}>津波判定(③確定報で使用)</label>
+            <select
+              value={f.domesticTsunami}
+              onChange={e => patchForm({ domesticTsunami: e.target.value })}
+              disabled={disabled}
+              style={inputStyle}
+            >
+              {QUAKE_TEST_TSUNAMI_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.6 }}>
+            ①②は津波「調査中」で固定配信されます(実際の電文と同じ挙動)。③でここの判定に切り替わります。
+          </div>
+        </div>
+      </SettingsCard>
+
+      <div style={{ margin: "18px 14px 6px" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: `rgba(${tokens.ink},0.7)` }}>
+          段階を配信
+        </span>
+      </div>
+      <SettingsCard>
+        <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <PressableButton type="button" onClick={() => onAction?.("broadcastStage", { stage: "prompt" })} disabled={disabled} style={stageBtnStyle("#FF9F0A", disabled)}>
+              ① 震度速報
+            </PressableButton>
+            <PressableButton type="button" onClick={() => onAction?.("broadcastStage", { stage: "destination" })} disabled={disabled} style={stageBtnStyle("#0A84FF", disabled)}>
+              ② 震源速報
+            </PressableButton>
+            <PressableButton type="button" onClick={() => onAction?.("broadcastStage", { stage: "detail" })} disabled={disabled} style={stageBtnStyle("#30D158", disabled)}>
+              ③ 確定
+            </PressableButton>
+          </div>
+          <PressableButton
+            type="button"
+            onClick={() => onAction?.("autoPlaySequence")}
+            disabled={disabled}
+            style={{
+              width: "100%", padding: "10px 14px", borderRadius: 10, border: "none",
+              cursor: disabled ? "default" : "pointer",
+              background: "rgba(191,90,242,0.16)", color: "#BF5AF2",
+              fontSize: 13, fontWeight: 700, textAlign: "center",
+              opacity: disabled ? 0.6 : 1,
+            }}
+          >
+            {quakeTestAutoPlaying ? "自動配信中…(①→②→③を3秒間隔で配信しています)" : "①→②→③を自動配信(新規)"}
+          </PressableButton>
+          <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.6 }}>
+            ①②③は好きな順番・組み合わせで押せます(実際の電文の届く順序が前後することがあるため)。
+            同じテスト地震への続報として、これまでの配信内容と自動的に統合されます
+            (震源は分かっている方を、震度分布はより詳しい方を優先)。新しい地震として最初からやり直すには
+            「配信を削除」を押してください。
+          </div>
+        </div>
+      </SettingsCard>
+
+      <SettingsCard>
+        <PressableButton
+          type="button"
+          onClick={() => onAction?.("clearAll")}
+          style={{
+            width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
+            background: "transparent", textAlign: "center",
+            fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.45)`,
+          }}
+        >
+          配信を削除(片付ける)
+        </PressableButton>
+      </SettingsCard>
+
+      {testQuake && (
+        <div style={{ margin: "6px 14px 10px", fontSize: 11, color: `rgba(${tokens.ink},0.5)`, lineHeight: 1.7 }}>
+          現在の配信状況: {QUAKE_STAGE_LABEL[testQuake.stage] || "確定"}
+          ・{testQuake.place}・最大震度{testQuake.maxIntensity === "?" ? "不明" : testQuake.maxIntensity}
+        </div>
+      )}
+    </>
+  );
+}
+
 function TsunamiTestBroadcastPanel({
   testTsunami, onBroadcast, onCancel, onClear,
   tsunamiAreaPickActive, onStartAreaPick, pickedAreas = [], onRemoveAreaPick, onCycleAreaGrade,
@@ -12126,6 +12460,7 @@ function SettingsBody({
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
   eewTestForm, eewEpicenterPickActive,
+  testQuake, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeTestAutoPlaying,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
   pickedTsunamiHeights, onChangeTsunamiHeightPick, onRemoveTsunamiHeightPick,
@@ -12142,14 +12477,14 @@ function SettingsBody({
   // ライト/ダークモード切り替え用。同じくcontext経由で直接購読する。
   const { mode: themeMode, tokens, modePref: themeModePref, setModePref: onChangeThemeModePref } = useContext(ThemeContext);
 
-  // 「津波警報テスト配信」「緊急地震速報テスト配信」画面を開いたまま実験的機能が
-  // OFFに戻された場合、一つ上の階層(実験的・テスト機能メニュー)へ自動的に戻す。
+  // 「津波警報テスト配信」「緊急地震速報テスト配信」「地震情報テスト配信」画面を開いたまま
+  // 実験的機能がOFFに戻された場合、一つ上の階層(実験的・テスト機能メニュー)へ自動的に戻す。
   // (通常はBottomDock側でトグルOFF時にpickモードごと片付けるが、念のためここでも
   // 画面遷移そのものの整合性を保証しておく。setStateはrender中ではなくeffect内で行う。)
   useEffect(() => {
     if (
       path.length >= 2 &&
-      (path[path.length - 1] === "tsunamiTestBroadcast" || path[path.length - 1] === "eewTestBroadcast") &&
+      (path[path.length - 1] === "tsunamiTestBroadcast" || path[path.length - 1] === "eewTestBroadcast" || path[path.length - 1] === "quakeTestBroadcast") &&
       path[path.length - 2] === "experimental" &&
       !experimentalFeaturesEnabled
     ) {
@@ -12392,6 +12727,11 @@ function SettingsBody({
               label="緊急地震速報テスト配信"
               onClick={() => onNavigate([...path, "eewTestBroadcast"])}
             />
+            <SettingsCardDivider/>
+            <SettingsMenuRow
+              label="地震情報テスト配信"
+              onClick={() => onNavigate([...path, "quakeTestBroadcast"])}
+            />
           </SettingsCard>
         )}
       </>
@@ -12437,6 +12777,23 @@ function SettingsBody({
           onAction={onTestEewAction}
           eewTestForm={eewTestForm}
           eewEpicenterPickActive={eewEpicenterPickActive}
+        />
+      </>
+    );
+  }
+
+  // 実験的機能: 地震情報テスト配信メニュー。
+  if (category === "advanced" && leaf === "experimental" && sub === "quakeTestBroadcast") {
+    if (!experimentalFeaturesEnabled) return null;
+    return (
+      <>
+        <SettingsHeader title="地震情報テスト配信"/>
+        <QuakeTestBroadcastPanel
+          testQuake={testQuake}
+          onAction={onTestQuakeAction}
+          quakeTestForm={quakeTestForm}
+          quakeEpicenterPickActive={quakeEpicenterPickActive}
+          quakeTestAutoPlaying={quakeTestAutoPlaying}
         />
       </>
     );
@@ -13322,6 +13679,130 @@ export default function App() {
   const [eewOpenSignal, setEewOpenSignal] = useState(0);
 
   /* ─────────────────────────────────────────────────────
+     実験的機能: 地震情報テスト配信
+     設定の「実験的・テスト機能」がONの時だけ使える、UI確認用のダミー地震情報。
+     緊急地震速報・津波警報のテスト配信と同じ考え方で、実際のquakes(WebSocketで
+     更新され続ける)とは別のstateに持たせ、使う場面(effectiveQuakes)でだけ合成する。
+     ①震度速報→②震源に関する情報→③震度に関する情報、と段階を追って配信できる
+     ようにし、実際のmergeQuakeCards(dedupeQuakeList)がそのまま使えることを
+     確認できるようにする。EEWと違い複数イベントを同時管理する必要は薄いため、
+     testEews(配列)ではなく1件のtestQuakeだけを持つ簡易な設計にしている。
+     ───────────────────────────────────────────────────── */
+  function defaultQuakeTestForm() {
+    return {
+      place: "テスト震源(相模湾)",
+      latitude: 35.2,
+      longitude: 139.3,
+      depth: 20,
+      magnitude: 5.8,
+      domesticTsunami: "None", // ③確定報で使う津波判定
+    };
+  }
+  const [quakeTestForm, setQuakeTestForm] = useState(defaultQuakeTestForm);
+  const [testQuake, setTestQuake] = useState(null); // mergeQuakeCardsで段階的に更新される1件のテスト地震
+  const [quakeEpicenterPickActive, setQuakeEpicenterPickActive] = useState(false);
+  const [quakeTestAutoPlaying, setQuakeTestAutoPlaying] = useState(false);
+  // 配信中のテスト地震の発生時刻(time)。①〜③を同じ地震の続報として統合するための
+  // グループキー。「新規」でクリアするまで、続けて②③を押しても同じ地震として扱われる。
+  const testQuakeTimeRef = useRef(null);
+
+  /**
+   * 地震情報テスト配信パネルからの操作を受け付けるディスパッチャ。
+   * action:
+   *   "patchForm"           フォームの値を部分更新する
+   *   "broadcastStage"      { stage: "prompt"|"destination"|"detail" } の段階を配信する。
+   *                         同じテスト地震(testQuakeTimeRef)への続報として、既存の
+   *                         testQuakeとmergeQuakeCardsで統合する。
+   *   "autoPlaySequence"    新規のテスト地震を①→②→③の順に数秒間隔で自動配信する
+   *   "startEpicenterPick" / "cancelEpicenterPick"  地図タップでの震源指定モードの開始/終了
+   *   "resetForm"           フォームを初期値に戻す
+   *   "clearAll"            配信中のテスト地震・フォームをすべて片付ける
+   */
+  function handleTestQuakeAction(action, payload) {
+    if (action === "patchForm") {
+      setQuakeTestForm(prev => ({ ...prev, ...payload }));
+      return;
+    }
+    if (action === "startEpicenterPick") {
+      setQuakeEpicenterPickActive(true);
+      return;
+    }
+    if (action === "cancelEpicenterPick") {
+      setQuakeEpicenterPickActive(false);
+      return;
+    }
+    if (action === "resetForm") {
+      setQuakeTestForm(defaultQuakeTestForm());
+      return;
+    }
+    if (action === "clearAll") {
+      setTestQuake(null);
+      testQuakeTimeRef.current = null;
+      setQuakeTestAutoPlaying(false);
+      setQuakeTestForm(defaultQuakeTestForm());
+      return;
+    }
+    if (action === "broadcastStage") {
+      const { stage } = payload;
+      if (!testQuakeTimeRef.current) {
+        const now = new Date();
+        const pad2 = n => String(n).padStart(2, "0");
+        testQuakeTimeRef.current = `${now.getFullYear()}/${pad2(now.getMonth() + 1)}/${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+      }
+      const time = testQuakeTimeRef.current;
+      const now2 = new Date();
+      const pad2b = n => String(n).padStart(2, "0");
+      const issueTimeStr = `${now2.getFullYear()}/${pad2b(now2.getMonth() + 1)}/${pad2b(now2.getDate())} ${pad2b(now2.getHours())}:${pad2b(now2.getMinutes())}:${pad2b(now2.getSeconds())}`;
+      // 各地域の震度分布は細分区域.jsonが要るため、loadGeoData()の解決を待ってから計算する
+      // (地図表示時に読み込み済みなので、実際にはほぼ即座に解決する)。
+      loadGeoData().then(({ areas: areasGeoJSON }) => {
+        const card = buildTestQuakeStageCard(stage, quakeTestForm, time, issueTimeStr, areasGeoJSON);
+        setTestQuake(prev => mergeQuakeCards(prev, card));
+      }).catch(err => {
+        console.error("細分区域データの読み込みに失敗しました(地震情報テスト):", err);
+      });
+      return;
+    }
+    if (action === "autoPlaySequence") {
+      // 新規のテスト地震として、①→②→③を数秒間隔で自動配信する。
+      testQuakeTimeRef.current = null;
+      setTestQuake(null);
+      setQuakeTestAutoPlaying(true);
+      const stages = ["prompt", "destination", "detail"];
+      let i = 0;
+      const step = () => {
+        handleTestQuakeAction("broadcastStage", { stage: stages[i] });
+        i += 1;
+        if (i < stages.length) {
+          setTimeout(step, 3000);
+        } else {
+          setQuakeTestAutoPlaying(false);
+        }
+      };
+      step();
+      return;
+    }
+  }
+
+  // 地図タップで震源が確定した時のハンドラ(MapCanvasのonPickEewEpicenterから呼ばれる。
+  // 「今どちらのテスト配信パネルを開いているか」で行き先を切り替えるのではなく、
+  // quakeEpicenterPickActiveがtrueの間だけこちらへ、そうでなければEEW側へ、という
+  // 単純な排他制御にしている(両方同時にONにはならない)。
+  function handlePickQuakeEpicenter(lat, lon, placeName) {
+    setQuakeTestForm(prev => ({
+      ...prev,
+      latitude: lat,
+      longitude: lon,
+      place: placeName || `テスト震源(北緯${lat.toFixed(2)}度 東経${lon.toFixed(2)}度)`,
+    }));
+    setQuakeEpicenterPickActive(false);
+  }
+
+  // テスト配信中は、実際の一覧の先頭にテストデータを合成する。地震タブに関する
+  // App側の判定(一覧・選択中の地震・地図表示)は、以降すべてこちらを使う。
+  const effectiveQuakes = testQuake ? [testQuake, ...quakes] : quakes;
+
+  /* ─────────────────────────────────────────────────────
      実験的機能: 津波警報テスト配信
      設定の「実験的・テスト機能」がONの時だけ使える、UI確認用のダミー津波情報。
      実際のtsunamis(WebSocketで更新され続ける)とは別のstateに持たせ、
@@ -13667,7 +14148,8 @@ export default function App() {
   // 選択中の地震 + 観測点マスタが揃ったら、観測点ごとの震度に緯度経度を割り当てる。
   // 気象庁 震度データベース検索から開いた地震(searchQuake)は quakes には入っていないため、
   // そちらも見つからなかった場合のフォールバックとして探す。
-  const selectedQuake = quakes.find(q => q.id === selectedQuakeId)
+  // (effectiveQuakesを使うことで、地震情報テスト配信中のダミー地震も選択・表示できる)
+  const selectedQuake = effectiveQuakes.find(q => q.id === selectedQuakeId)
     || (searchQuake && searchQuake.id === selectedQuakeId ? searchQuake : null);
 
   // 観測点データが多い地震(震度データベース検索由来ではない、通常の地震一覧からの選択)は、
@@ -14571,6 +15053,8 @@ export default function App() {
           eews={effectiveEews}
           eewEpicenterPickActive={eewEpicenterPickActive}
           onPickEewEpicenter={handlePickEewEpicenter}
+          quakeEpicenterPickActive={quakeEpicenterPickActive}
+          onPickQuakeEpicenter={handlePickQuakeEpicenter}
           eewDetailOpen={eewDetailOpen}
         />
 
@@ -14771,7 +15255,7 @@ export default function App() {
                       onToggleLayer={toggleLayer}
                       onLayerOpenChange={setLayerOpen}
                       uiScale={wideUIScale}
-                      quakes={quakes}
+                      quakes={effectiveQuakes}
                   quakeStatus={quakeStatus}
                   selectedQuakeId={selectedQuakeId}
                   onSelectQuake={selectQuake}
@@ -14830,6 +15314,11 @@ export default function App() {
                   eewOpenSignal={eewOpenSignal}
                   onOpenEewDetail={() => { setEewDetailOpen(true); setEewOpenSignal(s => s + 1); }}
                   onCloseEewDetail={() => setEewDetailOpen(false)}
+                  testQuake={testQuake}
+                  onTestQuakeAction={handleTestQuakeAction}
+                  quakeTestForm={quakeTestForm}
+                  quakeEpicenterPickActive={quakeEpicenterPickActive}
+                  quakeTestAutoPlaying={quakeTestAutoPlaying}
                   tsunamiAreaPickActive={tsunamiAreaPickActive}
                   onStartTsunamiAreaPick={startTsunamiAreaPick}
                   pickedTsunamiAreas={pickedTsunamiAreas}
@@ -14860,7 +15349,7 @@ export default function App() {
               layers={layersForPanel}
               onToggleLayer={toggleLayer}
               onLayerOpenChange={setLayerOpen}
-              quakes={quakes}
+              quakes={effectiveQuakes}
               quakeStatus={quakeStatus}
               selectedQuakeId={selectedQuakeId}
               onSelectQuake={selectQuake}
@@ -14919,6 +15408,11 @@ export default function App() {
               eewOpenSignal={eewOpenSignal}
               onOpenEewDetail={() => { setEewDetailOpen(true); setEewOpenSignal(s => s + 1); }}
               onCloseEewDetail={() => setEewDetailOpen(false)}
+              testQuake={testQuake}
+              onTestQuakeAction={handleTestQuakeAction}
+              quakeTestForm={quakeTestForm}
+              quakeEpicenterPickActive={quakeEpicenterPickActive}
+              quakeTestAutoPlaying={quakeTestAutoPlaying}
               tsunamiAreaPickActive={tsunamiAreaPickActive}
               onStartTsunamiAreaPick={startTsunamiAreaPick}
               pickedTsunamiAreas={pickedTsunamiAreas}
