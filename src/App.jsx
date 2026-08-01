@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.1d";
+const APP_VERSION = "1.5.1f";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -2647,14 +2647,24 @@ const EEW_REGION_ORDER = ["北海道", "東北", "関東", "北陸", "中部", "
 const EEW_AREA_GROUPING_THRESHOLD = 7; // 対象地域の件数がこれを超えたら都道府県表示に丸める
 const EEW_PREF_GROUPING_THRESHOLD = 7; // 丸めた都道府県の件数がこれを超えたらさらに地方表示に丸める
 
+// 北海道の細分区域名(石狩地方北部、渡島地方東部、日高地方西部…)は、他の道府県と
+// 違って先頭に都道府県名「北海道」が付かない特殊な表記のため、上のPREF_ORDER前方
+// 一致だけでは拾えない。支庁地方名の一覧で個別に判定する。
+const HOKKAIDO_SUBAREA_NAME_PREFIXES = [
+  "石狩", "渡島", "檜山", "後志", "空知", "上川", "留萌", "宗谷", "網走",
+  "北見", "紋別", "胆振", "日高", "十勝", "釧路", "根室",
+];
+
 // area.pref が空/未知の場合に、area.name(細分区域名)の先頭一致から都道府県名を
-// 推定する。細分区域名は必ず「◯◯県△△」のように都道府県名で始まる表記なので、
+// 推定する。細分区域名は「◯◯県△△」のように都道府県名で始まる表記なので、
 // PREF_ORDERを順に前方一致でチェックすれば一意に決まる(prefix同士の衝突は無い)。
+// 北海道だけは表記が異なるため、支庁地方名リストで別途判定する。
 function derivePrefFromEewAreaName(name) {
   if (!name) return null;
   for (const pref of PREF_ORDER) {
     if (name.startsWith(pref)) return pref;
   }
+  if (HOKKAIDO_SUBAREA_NAME_PREFIXES.some(p => name.startsWith(p))) return "北海道";
   return null;
 }
 
