@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.1a";
+const APP_VERSION = "1.5.1c";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -2607,6 +2607,50 @@ function EewFabButton({ onClick }) {
 }
 
 /* ─────────────────────────────────────────────────────
+   緊急地震速報(警報)の対象地域が多数(11件以上)にのぼる場合、個別の地域名を
+   ずらずら並べても読みにくいため、都道府県ベースで「地方」単位にまとめて
+   表示する。EEWのareas[].prefはP2P地震情報のEEW(code:556)が返す都道府県名
+   (例:"東京都""神奈川県")なのでそれをキーに引く。
+   ───────────────────────────────────────────────────── */
+const PREF_TO_REGION = {
+  "北海道": "北海道",
+  "青森県": "東北", "岩手県": "東北", "宮城県": "東北", "秋田県": "東北", "山形県": "東北", "福島県": "東北",
+  "茨城県": "関東", "栃木県": "関東", "群馬県": "関東", "埼玉県": "関東", "千葉県": "関東", "東京都": "関東", "神奈川県": "関東",
+  "新潟県": "北陸", "富山県": "北陸", "石川県": "北陸", "福井県": "北陸",
+  "山梨県": "中部", "長野県": "中部", "岐阜県": "中部",
+  "静岡県": "東海", "愛知県": "東海", "三重県": "東海",
+  "滋賀県": "近畿", "京都府": "近畿", "大阪府": "近畿", "兵庫県": "近畿", "奈良県": "近畿", "和歌山県": "近畿",
+  "鳥取県": "中国", "島根県": "中国", "岡山県": "中国", "広島県": "中国", "山口県": "中国",
+  "徳島県": "四国", "香川県": "四国", "愛媛県": "四国", "高知県": "四国",
+  "福岡県": "九州", "佐賀県": "九州", "長崎県": "九州", "熊本県": "九州", "大分県": "九州", "宮崎県": "九州", "鹿児島県": "九州",
+  "沖縄県": "沖縄",
+};
+// 表示順(北から南へ)。Set由来の出現順ではなく、この順で並べ替える。
+const EEW_REGION_ORDER = ["北海道", "東北", "関東", "北陸", "中部", "東海", "近畿", "中国", "四国", "九州", "沖縄"];
+const EEW_AREA_REGION_GROUPING_THRESHOLD = 10; // 対象地域がこれを超えたら地方名でまとめる
+
+// EEWの対象地域一覧(areas[])を、カード表示用の1本のテキストに整形する。
+// 件数が閾値以下ならこれまで通り地域名(細分区域名)をそのまま列挙し、
+// 閾値を超えたらpref(都道府県)から地方に丸めて重複排除・北→南の順で並べる。
+// prefが無い/マッピングに無い地域が混ざる場合は、その地域名をそのまま
+// (丸めずに)並べに加えることでフォールバックする。
+function formatEewAreasSummary(areas) {
+  if (!Array.isArray(areas) || areas.length === 0) return "";
+  if (areas.length <= EEW_AREA_REGION_GROUPING_THRESHOLD) {
+    return areas.map(a => a.name).join("、");
+  }
+  const regionsSeen = new Set();
+  const fallbackNamesSeen = new Set();
+  for (const a of areas) {
+    const region = PREF_TO_REGION[a.pref];
+    if (region) regionsSeen.add(region);
+    else fallbackNamesSeen.add(a.name);
+  }
+  const orderedRegions = EEW_REGION_ORDER.filter(r => regionsSeen.has(r));
+  return [...orderedRegions, ...fallbackNamesSeen].join("、");
+}
+
+/* ─────────────────────────────────────────────────────
    緊急地震速報の詳細フローティングカード。
    地震タブの選択中カード(QuakeDetailCard)と同じ「最大震度バッジ＋震源地／M・
    深さ／発生時刻」のレイアウトを踏襲しつつ、Glassで包んで地図上に浮かべ、
@@ -2794,7 +2838,7 @@ function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
                     【対象地域】
                   </span>
                   <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.5 }}>
-                    {eew.areas.map(a => a.name).join("、")}
+                    {formatEewAreasSummary(eew.areas)}
                   </span>
                 </div>
               </div>
