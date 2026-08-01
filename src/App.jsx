@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.0c";
+const APP_VERSION = "1.5.0e";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -2465,8 +2465,8 @@ function MapCanvas({
                 const c = colorScheme.colors[key] || colorScheme.colors["0"];
                 return (
                   <div key={key} style={{ display: "flex", alignItems: "center", gap: 6, padding: "0px 0" }}>
-                    <span style={{ width: 14, height: 14, borderRadius: 4, background: c.bg, flexShrink: 0 }}/>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: tokens.text }}>{INTENSITY_LABEL[key]}</span>
+                    <span style={{ width: 12, height: 12, borderRadius: 3.5, background: c.bg, flexShrink: 0 }}/>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: tokens.text, lineHeight: 1 }}>{INTENSITY_LABEL[key]}</span>
                   </div>
                 );
               })}
