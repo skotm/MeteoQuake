@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.8f";
+const APP_VERSION = "1.4.8g";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -5062,6 +5062,9 @@ const EQDB_SORT_OPTIONS = [
   { value: "S3", label: "地震の規模の大きい順" },
 ];
 
+// 震源地名プルダウンの初期値(ep.jsonの読み込みが終わるまでの間)。
+const EQDB_EPICENTER_NAME_OPTIONS_DEFAULT = [{ value: "", label: "指定なし" }];
+
 // 最小マグニチュードの選択肢("1.0"〜"9.9")
 const EQDB_MIN_MAG_OPTIONS = [
   { value: "0.0", label: "指定なし" },
@@ -7803,7 +7806,7 @@ function BottomDock({
     const { start, end } = defaultEqdbDateRange();
     return {
       startDate: start, endDate: end,
-      minMag: "0.0", maxInt: "1", sort: "S0",
+      minMag: "0.0", maxInt: "1", sort: "S0", epicenterName: "",
       status: "", isSearching: false, hasSearched: false,
       results: [], loadingId: null,
     };
@@ -10865,9 +10868,31 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
   }, [eqdbDateRange]);
 
   const {
-    startDate, endDate, minMag, maxInt, sort,
+    startDate, endDate, minMag, maxInt, sort, epicenterName,
     status, isSearching, hasSearched, results, loadingId,
   } = search;
+
+  // 震源地名の選択肢(プルダウン)。EEW・地震情報テスト配信の「地図をタップして
+  // 震源を指定」で使っているep.json(気象庁の震央地名区域)をそのまま流用し、
+  // 収録されている震央地名を重複無く・五十音順に並べたものを選択肢にする。
+  const [epicenterNameOptions, setEpicenterNameOptions] = useState(EQDB_EPICENTER_NAME_OPTIONS_DEFAULT);
+  useEffect(() => {
+    let cancelled = false;
+    loadEpicenterNamesData()
+      .then(geojson => {
+        if (cancelled || !geojson?.features) return;
+        const names = Array.from(new Set(
+          geojson.features.map(f => f.properties?.name).filter(Boolean)
+        )).sort((a, b) => a.localeCompare(b, "ja"));
+        setEpicenterNameOptions([
+          { value: "", label: "指定なし" },
+          ...names.map(n => ({ value: n, label: n })),
+        ]);
+      })
+      .catch(err => console.error("震央地名データの読み込みに失敗しました:", err));
+    return () => { cancelled = true; };
+  }, []);
+
 
   // 震央分布(地図上の丸)用に、resultsの座標をバックグラウンドで少しずつ解決し、
   // 呼び出し元(BottomDock)へ伝える。まだ解決しきっていない間はonLoadingChangeで
@@ -10942,7 +10967,10 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
     });
     try {
       const minMagNum = parseFloat(minMag) || 0;
-      const { list, errMsg, summary } = await fetchEqdbSearch({ startDate: effectiveStart, endDate: effectiveEnd, minMag: minMagNum, maxInt, sort });
+      const { list, errMsg, summary } = await fetchEqdbSearch({
+        startDate: effectiveStart, endDate: effectiveEnd, minMag: minMagNum, maxInt, sort,
+        epi: epicenterName || undefined,
+      });
       if (errMsg) {
         patch({ status: `⚠ ${errMsg}`, results: [] });
         return;
@@ -10951,7 +10979,11 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
       const filtered = list.filter(eq => {
         const magOk = minMagNum <= 0 || parseFloat(eq.mag) >= minMagNum;
         const intOk = maxInt === "1" || eqdbIntensityThresholdScale(eq.maxI || "") >= maxIntScale;
-        return magOk && intOk;
+        // epi[]はコード化された地域選択用の項目で、震源地名の文字列そのものを
+        // 条件にする項目がAPIに無いため、念のためクライアント側でも震源地名の
+        // 完全一致で絞り込んでおく(近傍地震検索と同じ理由・同じやり方)。
+        const nameOk = !epicenterName || eq.name === epicenterName;
+        return magOk && intOk && nameOk;
       });
       if (sort === "S2") {
         filtered.sort((a, b) => eqdbIntensityStringToScale(b.maxI || "") - eqdbIntensityStringToScale(a.maxI || "") || parseFloat(b.mag) - parseFloat(a.mag));
@@ -10961,7 +10993,7 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
       patch({
         results: filtered,
         status: filtered.length !== list.length
-          ? `${filtered.length}件（取得${list.length}件からM${minMagNum.toFixed(1)}以上でフィルター）`
+          ? `${filtered.length}件（取得${list.length}件から絞り込み）`
           : (summary || `${filtered.length}件`),
       });
     } catch (e) {
@@ -11014,9 +11046,14 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
           </EqdbFormField>
         </div>
 
-        <EqdbFormField label="並び順" full>
-          <OptionPicker value={sort} options={EQDB_SORT_OPTIONS} onChange={v => patch({ sort: v })}/>
-        </EqdbFormField>
+        <div style={{ display: "flex", gap: 8 }}>
+          <EqdbFormField label="並び順">
+            <OptionPicker value={sort} options={EQDB_SORT_OPTIONS} onChange={v => patch({ sort: v })}/>
+          </EqdbFormField>
+          <EqdbFormField label="震源地名">
+            <OptionPicker value={epicenterName} options={epicenterNameOptions} onChange={v => patch({ epicenterName: v })}/>
+          </EqdbFormField>
+        </div>
 
         <PressableButton
           onClick={handleSearch}
