@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.1";
+const APP_VERSION = "1.5.1a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -2746,8 +2746,8 @@ function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
                     M・深さの行そのものを「PLUM法による仮定震源要素」というラベルに
                     差し替えて同じ位置に表示する(通常方式のときだけM・深さを表示)。 */}
                 {eew.isPlum ? (
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1, marginBottom: 14 }}>
+                    <span style={{ fontSize: 16, fontWeight: 700, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
                       PLUM法による仮定震源要素
                     </span>
                   </div>
