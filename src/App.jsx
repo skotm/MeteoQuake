@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.0";
+const APP_VERSION = "1.5.0b";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -8110,24 +8110,23 @@ function BottomDock({
 
   // 設定タブを開いた瞬間は、常にパネルの高さを「中高」にする
   // (トップメニューがスクロールなしで丸ごと見える高さのため)。
-  // 開く前の高さ(ドラッグで調整していた場合も含む)を覚えておき、
-  // 設定タブから元のタブへ戻った時はその高さにそのまま復元する。
+  // 設定タブから抜ける時も、行き先のタブに関わらず同じく「中高」にする
+  // (他のタブ切り替え全般と同じ、通常の開閉挙動に揃えている)。
   // ただし、緊急地震速報の詳細を表示中(eewDetailOpen)は、この高さ強制を
   // 行わない。EEW表示中に設定タブへ切り替えても、フローティングの高さが
   // 勝手に変わらないようにするため(タブ切り替え全般でのeewDetailOpen中の
   // 挙動を、他のタブ切り替えガードと揃えている)。
-  const preSettingsSnapIndexRef = useRef(snapIndex);
   const lastActiveForSettings = useRef(active);
   useEffect(() => {
     if (eewDetailOpen) {
       lastActiveForSettings.current = active;
       return;
     }
-    if (lastActiveForSettings.current !== "settings" && active === "settings") {
-      preSettingsSnapIndexRef.current = snapIndex; // 開く直前の高さを覚えておく
+    if (
+      (lastActiveForSettings.current !== "settings" && active === "settings") ||
+      (lastActiveForSettings.current === "settings" && active !== "settings")
+    ) {
       setSnapIndex(3);
-    } else if (lastActiveForSettings.current === "settings" && active !== "settings") {
-      setSnapIndex(preSettingsSnapIndexRef.current); // 覚えておいた元の高さに戻す
     }
     lastActiveForSettings.current = active;
   }, [active, eewDetailOpen]);
