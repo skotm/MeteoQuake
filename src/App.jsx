@@ -7585,6 +7585,13 @@ function BottomDock({
     if (active !== "weather") setWeatherViewMode("location");
   }, [active]);
 
+  // 「一覧」モードの右下(既存の戻るボタンと同じ枠)に浮かぶ、雨雲レーダー等の
+  // メニューの開閉状態。タブを離れる/モードを切り替えたら閉じておく。
+  const [weatherMenuOpen, setWeatherMenuOpen] = useState(false);
+  useEffect(() => {
+    if (!(active === "weather" && weatherViewMode === "list")) setWeatherMenuOpen(false);
+  }, [active, weatherViewMode]);
+
   // 津波タブ版の表示モード。"recent" = 直近の津波情報一覧、
   // "history" = 過去に発表された津波情報一覧(/history APIをoffsetで遡って取得)。
   // 考え方はquakeViewModeと全く同じ(タブを離れたら「一覧」に戻す/選択中は維持)。
@@ -8438,6 +8445,7 @@ function BottomDock({
       selectedTideStationCode != null ||
       (activeTsunami != null && !causingQuakeFound)
     )) ||
+    (active === "weather" && weatherViewMode === "list") ||
     (active === "settings" && settingsPath.length > 0);
 
   return (
@@ -8622,6 +8630,44 @@ function BottomDock({
             onClick={() => setSettingsPath(p => p.slice(0, -1))}
             label="前の画面に戻る"
           />
+        </div>
+        )
+      )}
+
+      {/* 気象タブの「一覧」モード用 — 地震・津波・設定タブと全く同じ「戻るボタンの枠」
+          (right:16, bottom:backButtonBottom)を使って、雨雲レーダー等のメニューを
+          開閉するボタンを浮かべる。開くとボタンのすぐ上に簡易メニューが現れ、
+          くの字アイコンが下向きに反転する。もう一度押すと閉じて元の上向きに戻る。 */}
+      {!eewDetailOpen && active === "weather" && weatherViewMode === "list" && (
+        isWide && wideAnchorRect ? createPortal(
+          <div style={{
+            position: "fixed",
+            left: wideAnchorRect.right + 12,
+            top: wideAnchorRect.top + 16,
+            zIndex: 50,
+          }}>
+            {weatherMenuOpen && (
+              <div style={{ marginBottom: 12 }}>
+                <WeatherMenuPopover onSelect={() => setWeatherMenuOpen(false)}/>
+              </div>
+            )}
+            <WeatherMenuToggleButton open={weatherMenuOpen} onClick={() => setWeatherMenuOpen(v => !v)}/>
+          </div>,
+          document.body
+        ) : (
+        <div style={{
+          position: "absolute",
+          right: 16,
+          bottom: backButtonBottom,
+          transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
+          zIndex: 10,
+        }}>
+          {weatherMenuOpen && (
+            <div style={{ marginBottom: 12 }}>
+              <WeatherMenuPopover onSelect={() => setWeatherMenuOpen(false)}/>
+            </div>
+          )}
+          <WeatherMenuToggleButton open={weatherMenuOpen} onClick={() => setWeatherMenuOpen(v => !v)}/>
         </div>
         )
       )}
@@ -9364,6 +9410,83 @@ function StationMarkerToggleButton({ visible, onClick }) {
           <circle cx="12" cy="12" r="9.5" strokeDasharray={visible ? "3 3" : undefined}/>
         </svg>
       </button>
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   WEATHER MENU TOGGLE BUTTON — 気象タブの「一覧」モードで使う、雨雲レーダー等の
+   メニューを開閉するボタン(BackToListButtonと同じ44×44の丸いGlassボタン)。
+   閉じている間は山が上を向いたくの字(⌃)、開いている間は下向き(⌄)に変わる。
+   ───────────────────────────────────────────────────── */
+function WeatherMenuToggleButton({ open, onClick }) {
+  const { tokens } = useContext(ThemeContext);
+  const [pressed, setPressed] = useState(false);
+
+  return (
+    <Glass
+      radius={999}
+      style={{
+        width: 44, height: 44,
+        transform: pressed ? "scale(1.16)" : "scale(1)",
+        transformOrigin: "center",
+        transition: "transform 0.18s cubic-bezier(.22,1,.36,1)",
+      }}
+    >
+      <button
+        onClick={onClick}
+        onPointerDown={() => setPressed(true)}
+        onPointerUp={() => setPressed(false)}
+        onPointerCancel={() => setPressed(false)}
+        onPointerLeave={() => setPressed(false)}
+        aria-label={open ? "メニューを閉じる" : "メニューを開く"}
+        style={{
+          position: "relative", zIndex: 1,
+          width: "100%", height: "100%",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          color: tokens.text,
+        }}
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+             stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"
+             style={{ transition: "transform 0.2s cubic-bezier(.22,1,.36,1)", transform: open ? "rotate(180deg)" : "none" }}>
+          <polyline points="6 15 12 9 18 15"/>
+        </svg>
+      </button>
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   WEATHER MENU POPOVER — WeatherMenuToggleButtonの上に浮かぶ簡易メニュー。
+   雨雲レーダーなど、気象タブの機能一覧をボタンで並べる。
+   中身は追って実装するため、まずは項目だけのプレースホルダー。
+   ───────────────────────────────────────────────────── */
+const WEATHER_MENU_ITEMS = [
+  { id: "rainRadar", label: "雨雲レーダー" },
+];
+
+function WeatherMenuPopover({ onSelect }) {
+  const { tokens } = useContext(ThemeContext);
+
+  return (
+    <Glass radius={16} style={{ minWidth: 168, overflow: "hidden" }}>
+      <div style={{ display: "flex", flexDirection: "column", padding: 4 }}>
+        {WEATHER_MENU_ITEMS.map((item, i) => (
+          <PressableButton
+            key={item.id}
+            onClick={() => onSelect?.(item.id)}
+            style={{
+              padding: "10px 14px",
+              textAlign: "left",
+              fontSize: 14, fontWeight: 600, color: tokens.text,
+              borderTop: i > 0 ? `0.5px solid rgba(${tokens.ink},0.12)` : "none",
+            }}
+          >
+            {item.label}
+          </PressableButton>
+        ))}
+      </div>
     </Glass>
   );
 }
