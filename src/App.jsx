@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.0b";
+const APP_VERSION = "1.5.0c";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -2459,12 +2459,12 @@ function MapCanvas({
               animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
             }}
           >
-            <div style={{ display: "flex", flexDirection: "column", gap: 1, padding: "8px 10px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "8px 10px" }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: `rgba(${tokens.ink},0.5)`, marginBottom: 3 }}>予想震度</div>
               {keys.map(key => {
                 const c = colorScheme.colors[key] || colorScheme.colors["0"];
                 return (
-                  <div key={key} style={{ display: "flex", alignItems: "center", gap: 6, padding: "1px 0" }}>
+                  <div key={key} style={{ display: "flex", alignItems: "center", gap: 6, padding: "0px 0" }}>
                     <span style={{ width: 14, height: 14, borderRadius: 4, background: c.bg, flexShrink: 0 }}/>
                     <span style={{ fontSize: 12, fontWeight: 700, color: tokens.text }}>{INTENSITY_LABEL[key]}</span>
                   </div>
