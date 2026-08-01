@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.8d";
+const APP_VERSION = "1.4.8e";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1266,11 +1266,11 @@ function MapCanvas({
               ],
               "icon-size": [
                 "interpolate", ["linear"], ["zoom"],
-                4, 5 / STATION_ICON_BASE_RADIUS,
-                7, 10 / STATION_ICON_BASE_RADIUS,
-                9, 14 / STATION_ICON_BASE_RADIUS,
-                11, 20 / STATION_ICON_BASE_RADIUS,
-                14, 30 / STATION_ICON_BASE_RADIUS,
+                4, 6.5 / STATION_ICON_BASE_RADIUS,
+                7, 13 / STATION_ICON_BASE_RADIUS,
+                9, 18 / STATION_ICON_BASE_RADIUS,
+                11, 26 / STATION_ICON_BASE_RADIUS,
+                14, 38 / STATION_ICON_BASE_RADIUS,
               ],
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
@@ -2932,9 +2932,9 @@ function buildAreaIconCanvas(bg, fg, label, withText, strokeColor = "#ffffff") {
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d");
-  const inset = 5; // 縁の線幅分、正方形を少し内側に描く(はみ出し防止)
+  const inset = 3; // 縁の線幅分、正方形を少し内側に描く(はみ出し防止)。数字を大きく見せるため、円のアイコンより少し薄めの余白にしている。
   const rectSize = size - inset * 2;
-  const cornerRadius = rectSize * 0.32; // 角の丸め具合(値が大きいほど丸くなる)
+  const cornerRadius = rectSize * 0.14; // 角の丸め具合(値が大きいほど丸くなる)。より四角く見えるよう控えめにする。
 
   ctx.beginPath();
   ctx.roundRect(inset, inset, rectSize, rectSize, cornerRadius);
@@ -2947,8 +2947,8 @@ function buildAreaIconCanvas(bg, fg, label, withText, strokeColor = "#ffffff") {
   if (withText) {
     const STATION_ICON_FONT_STACK =
       '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "Noto Sans JP", sans-serif';
-    const maxTextWidth = rectSize * 0.72;
-    let fontSize = rectSize * 0.5;
+    const maxTextWidth = rectSize * 0.86;
+    let fontSize = rectSize * 0.66;
     ctx.font = `800 ${fontSize}px ${STATION_ICON_FONT_STACK}`;
     const width = ctx.measureText(label).width;
     if (width > maxTextWidth) {
@@ -6648,25 +6648,14 @@ function StationPointsList({ points, displayMode = "list", openKey, onOpenKeyCha
                     cursor: "pointer", textAlign: "left",
                   }}
                 >
-                  {groupPoints[0]?.isArea ? (
-                    <span style={{
-                      flexShrink: 0, width: 34, height: 34, borderRadius: 11,
-                      background: style.bg, color: style.fg,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: key === "5u" ? 8.5 : 13, fontWeight: 800,
-                    }}>
-                      {key === "5u" ? "未入電" : style.label}
-                    </span>
-                  ) : (
-                    <span style={{
-                      flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
-                      background: style.bg, color: style.fg,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: key === "5u" ? 9 : 11, fontWeight: 800,
-                    }}>
-                      {key === "5u" ? "未入電" : style.label}
-                    </span>
-                  )}
+                  <span style={{
+                    flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
+                    background: style.bg, color: style.fg,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: key === "5u" ? 9 : 11, fontWeight: 800,
+                  }}>
+                    {key === "5u" ? "未入電" : style.label}
+                  </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: tokens.text }}>
                       震度{style.label}
@@ -6695,30 +6684,14 @@ function StationPointsList({ points, displayMode = "list", openKey, onOpenKeyCha
               <div key={`${p.pref}-${p.addr}-${i}`}>
                 {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.08)`, marginLeft: 12 }}/>}
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px" }}>
-                  {/* 震度速報・震源に関する情報(isArea:true、細分区域単位)専用の
-                      アイコン。個々の観測点(市町村単位)の小さい角丸バッジとは
-                      見た目を変え、正方形に近い・角がより丸い(スクイーカル風の)
-                      アイコンにすることで、区域単位のざっくりした震度だと
-                      一目で分かるようにする。 */}
-                  {p.isArea ? (
-                    <span style={{
-                      flexShrink: 0, width: 34, height: 34, borderRadius: 11,
-                      background: style.bg, color: style.fg,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: p.intensityKey === "5u" ? 8.5 : 13, fontWeight: 800,
-                    }}>
-                      {p.intensityKey === "5u" ? "未入電" : style.label}
-                    </span>
-                  ) : (
-                    <span style={{
-                      flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
-                      background: style.bg, color: style.fg,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: p.intensityKey === "5u" ? 9 : 11, fontWeight: 800,
-                    }}>
-                      {p.intensityKey === "5u" ? "未入電" : style.label}
-                    </span>
-                  )}
+                  <span style={{
+                    flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
+                    background: style.bg, color: style.fg,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: p.intensityKey === "5u" ? 9 : 11, fontWeight: 800,
+                  }}>
+                    {p.intensityKey === "5u" ? "未入電" : style.label}
+                  </span>
                   <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.4)`, flexShrink: 0 }}>
                     {p.pref}
                   </span>
