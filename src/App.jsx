@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.1f";
+const APP_VERSION = "1.5.2";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -7577,6 +7577,14 @@ function BottomDock({
     if (active !== "quake" && selectedQuakeId == null) setQuakeViewMode("recent");
   }, [active, selectedQuakeId]);
 
+  // 気象タブ版の表示モード。まずはUIの骨組みとして「地点」⇄「一覧」の
+  // 切り替えバーだけ用意する(中身は追って実装)。考え方はquakeViewMode/
+  // tsunamiViewModeと同じ(タブを離れたら最初の項目に戻す)。
+  const [weatherViewMode, setWeatherViewMode] = useState("location"); // "location" | "list"
+  useEffect(() => {
+    if (active !== "weather") setWeatherViewMode("location");
+  }, [active]);
+
   // 津波タブ版の表示モード。"recent" = 直近の津波情報一覧、
   // "history" = 過去に発表された津波情報一覧(/history APIをoffsetで遡って取得)。
   // 考え方はquakeViewModeと全く同じ(タブを離れたら「一覧」に戻す/選択中は維持)。
@@ -9014,6 +9022,18 @@ function BottomDock({
               </>
             ) : (active === "weather" || active === "alert") ? (
               <>
+                {/* 気象タブの上部ボタンバー — 地震・津波タブのQuakeListToolbarと
+                    全く同じ部品を流用し、項目だけ「地点(ピン)」「一覧(3本線)」に
+                    差し替えている。まずは骨組みのみで、中身は追って実装する。 */}
+                {active === "weather" && (
+                  <QuakeListToolbar
+                    items={WEATHER_TOOLBAR_ITEMS}
+                    mode={weatherViewMode}
+                    onModeChange={(mode) => { killScrollMomentum(); setWeatherViewMode(mode); }}
+                    onHandoffToPanelDrag={handlePointerDown}
+                  />
+                )}
+
                 <div style={{
                   display: "flex", alignItems: "center", justifyContent: "center",
                   flexDirection: "column", gap: 6,
@@ -9396,6 +9416,19 @@ function LayersIcon() {
       <polygon points="12 2 2 7 12 12 22 7 12 2"/>
       <polyline points="2 17 12 22 22 17"/>
       <polyline points="2 12 12 17 22 12"/>
+    </svg>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   PIN ICON — 地点マーク(📍)アイコン。気象タブの「地点」切り替えボタンで使う。
+   ───────────────────────────────────────────────────── */
+function PinIcon({ size = 18 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none"
+         stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 21.5c-4.3-4.4-6.5-8-6.5-11a6.5 6.5 0 0 1 13 0c0 3-2.2 6.6-6.5 11z"/>
+      <circle cx="12" cy="10.5" r="2.4"/>
     </svg>
   );
 }
@@ -11247,6 +11280,13 @@ const TSUNAMI_TOOLBAR_ITEMS = [
   { id: "recent",    label: "津波情報",   icon: ListViewIcon },
   { id: "history",   label: "過去の津波", icon: HistoryClockIcon },
   { id: "tidegauge", label: "潮位計",     icon: TideGaugeIcon },
+];
+
+// 気象タブ版の切り替え項目。まずは骨組みとして「地点(ピン)」⇄「一覧(3本線・
+// 既存のListViewIconを流用)」の2つだけ用意する(中身は追って実装)。
+const WEATHER_TOOLBAR_ITEMS = [
+  { id: "location", label: "地点",   icon: PinIcon },
+  { id: "list",     label: "一覧",   icon: ListViewIcon },
 ];
 
 function QuakeListToolbar({ mode, onModeChange, onHandoffToPanelDrag, items = QUAKE_TOOLBAR_ITEMS }) {
