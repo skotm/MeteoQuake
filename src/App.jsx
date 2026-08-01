@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.9";
+const APP_VERSION = "1.5.0";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -8918,6 +8918,21 @@ function BottomDock({
                 />
 
                 {/* フローティング部分(設定メニュー)とボタン類(ナビ行)の境界線 */}
+                <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
+              </>
+            ) : (active === "weather" || active === "alert") ? (
+              <>
+                <div style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  flexDirection: "column", gap: 6,
+                  padding: "48px 18px",
+                }}>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>
+                    現在開発中です
+                  </span>
+                </div>
+
+                {/* フローティング部分(開発中プレースホルダー)とボタン類(ナビ行)の境界線 */}
                 <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
               </>
             ) : (
