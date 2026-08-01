@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.4.8g";
+const APP_VERSION = "1.4.9";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10874,16 +10874,25 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
 
   // 震源地名の選択肢(プルダウン)。EEW・地震情報テスト配信の「地図をタップして
   // 震源を指定」で使っているep.json(気象庁の震央地名区域)をそのまま流用し、
-  // 収録されている震央地名を重複無く・五十音順に並べたものを選択肢にする。
+  // 収録されている震央地名を重複無く並べたものを選択肢にする。
+  // カタカナ表記の震源地名(海外の地名など。例:「アリューシャン列島」)は、
+  // 五十音順だと国内の地名の間に混ざってしまい探しにくいため、まとめて
+  // 末尾に回す(カタカナ同士は引き続き五十音順)。
   const [epicenterNameOptions, setEpicenterNameOptions] = useState(EQDB_EPICENTER_NAME_OPTIONS_DEFAULT);
   useEffect(() => {
     let cancelled = false;
     loadEpicenterNamesData()
       .then(geojson => {
         if (cancelled || !geojson?.features) return;
+        const startsWithKatakana = s => /^[\u30A0-\u30FF]/.test(s);
         const names = Array.from(new Set(
           geojson.features.map(f => f.properties?.name).filter(Boolean)
-        )).sort((a, b) => a.localeCompare(b, "ja"));
+        )).sort((a, b) => {
+          const aKana = startsWithKatakana(a);
+          const bKana = startsWithKatakana(b);
+          if (aKana !== bKana) return aKana ? 1 : -1;
+          return a.localeCompare(b, "ja");
+        });
         setEpicenterNameOptions([
           { value: "", label: "指定なし" },
           ...names.map(n => ({ value: n, label: n })),
