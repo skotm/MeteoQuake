@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.1c";
+const APP_VERSION = "1.5.1d";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -2607,11 +2607,29 @@ function EewFabButton({ onClick }) {
 }
 
 /* ─────────────────────────────────────────────────────
-   緊急地震速報(警報)の対象地域が多数(11件以上)にのぼる場合、個別の地域名を
-   ずらずら並べても読みにくいため、都道府県ベースで「地方」単位にまとめて
-   表示する。EEWのareas[].prefはP2P地震情報のEEW(code:556)が返す都道府県名
-   (例:"東京都""神奈川県")なのでそれをキーに引く。
+   緊急地震速報(警報)の対象地域が多数にのぼる場合、個別の地域名(細分区域名)を
+   ずらずら並べても読みにくいため、2段階で丸めて表示する。
+     ・7件を超えたら → 細分区域名ではなく「都道府県」単位(重複排除)
+     ・丸めた都道府県が7件を超えたら → さらに「地方」単位(重複排除)
+   都道府県は北→南の固定順、地方も同様の固定順で並べ替える(Setの出現順には
+   依存しない)。
+   EEWのareas[].pref はP2P地震情報のEEW(code:556)なら都道府県名
+   (例:"東京都""神奈川県")が入っているが、テスト配信生成分など pref が
+   空文字のデータもあるため、その場合は area.name の先頭一致(細分区域名は
+   必ず都道府県名で始まる)から都道府県を推定するフォールバックを持つ。
    ───────────────────────────────────────────────────── */
+// 北→南の固定順(JIS都道府県コード順=ほぼ地理的な北→南)。
+const PREF_ORDER = [
+  "北海道",
+  "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
+  "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県",
+  "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県", "静岡県", "愛知県",
+  "三重県", "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県",
+  "鳥取県", "島根県", "岡山県", "広島県", "山口県",
+  "徳島県", "香川県", "愛媛県", "高知県",
+  "福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県",
+  "沖縄県",
+];
 const PREF_TO_REGION = {
   "北海道": "北海道",
   "青森県": "東北", "岩手県": "東北", "宮城県": "東北", "秋田県": "東北", "山形県": "東北", "福島県": "東北",
@@ -2625,29 +2643,51 @@ const PREF_TO_REGION = {
   "福岡県": "九州", "佐賀県": "九州", "長崎県": "九州", "熊本県": "九州", "大分県": "九州", "宮崎県": "九州", "鹿児島県": "九州",
   "沖縄県": "沖縄",
 };
-// 表示順(北から南へ)。Set由来の出現順ではなく、この順で並べ替える。
 const EEW_REGION_ORDER = ["北海道", "東北", "関東", "北陸", "中部", "東海", "近畿", "中国", "四国", "九州", "沖縄"];
-const EEW_AREA_REGION_GROUPING_THRESHOLD = 10; // 対象地域がこれを超えたら地方名でまとめる
+const EEW_AREA_GROUPING_THRESHOLD = 7; // 対象地域の件数がこれを超えたら都道府県表示に丸める
+const EEW_PREF_GROUPING_THRESHOLD = 7; // 丸めた都道府県の件数がこれを超えたらさらに地方表示に丸める
+
+// area.pref が空/未知の場合に、area.name(細分区域名)の先頭一致から都道府県名を
+// 推定する。細分区域名は必ず「◯◯県△△」のように都道府県名で始まる表記なので、
+// PREF_ORDERを順に前方一致でチェックすれば一意に決まる(prefix同士の衝突は無い)。
+function derivePrefFromEewAreaName(name) {
+  if (!name) return null;
+  for (const pref of PREF_ORDER) {
+    if (name.startsWith(pref)) return pref;
+  }
+  return null;
+}
 
 // EEWの対象地域一覧(areas[])を、カード表示用の1本のテキストに整形する。
-// 件数が閾値以下ならこれまで通り地域名(細分区域名)をそのまま列挙し、
-// 閾値を超えたらpref(都道府県)から地方に丸めて重複排除・北→南の順で並べる。
-// prefが無い/マッピングに無い地域が混ざる場合は、その地域名をそのまま
-// (丸めずに)並べに加えることでフォールバックする。
 function formatEewAreasSummary(areas) {
   if (!Array.isArray(areas) || areas.length === 0) return "";
-  if (areas.length <= EEW_AREA_REGION_GROUPING_THRESHOLD) {
+  if (areas.length <= EEW_AREA_GROUPING_THRESHOLD) {
     return areas.map(a => a.name).join("、");
   }
-  const regionsSeen = new Set();
-  const fallbackNamesSeen = new Set();
+
+  // 第1段階: 都道府県に丸める(pref優先、無ければ地域名から推定。
+  // それでも分からなければ元の地域名のままフォールバックで残す)。
+  const prefsSeen = new Set();
+  const unresolvedNames = new Set();
   for (const a of areas) {
-    const region = PREF_TO_REGION[a.pref];
+    const pref = (a.pref && PREF_TO_REGION[a.pref]) ? a.pref : derivePrefFromEewAreaName(a.name);
+    if (pref) prefsSeen.add(pref);
+    else unresolvedNames.add(a.name);
+  }
+  const orderedPrefs = PREF_ORDER.filter(p => prefsSeen.has(p));
+
+  if (orderedPrefs.length <= EEW_PREF_GROUPING_THRESHOLD) {
+    return [...orderedPrefs, ...unresolvedNames].join("、");
+  }
+
+  // 第2段階: 都道府県数も7件を超えていたら、さらに地方に丸める。
+  const regionsSeen = new Set();
+  for (const pref of orderedPrefs) {
+    const region = PREF_TO_REGION[pref];
     if (region) regionsSeen.add(region);
-    else fallbackNamesSeen.add(a.name);
   }
   const orderedRegions = EEW_REGION_ORDER.filter(r => regionsSeen.has(r));
-  return [...orderedRegions, ...fallbackNamesSeen].join("、");
+  return [...orderedRegions, ...unresolvedNames].join("、");
 }
 
 /* ─────────────────────────────────────────────────────
