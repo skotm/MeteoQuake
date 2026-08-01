@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.0c";
+const APP_VERSION = "1.5.1";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -2742,33 +2742,32 @@ function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
               </div>
 
               <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-                {/* PLUM法(観測点の揺れの実測から震源を仮定する方式)の場合だけ、
-                    M・深さの行と同じ書式(ラベル文字のみ・同じフォントサイズと色)で
-                    その一段上に表示する。この列(テキスト側)の中に収めているので、
-                    左の最大予測震度アイコンの高さ・位置には一切影響しない。 */}
-                {eew.isPlum && (
+                {/* PLUM法(観測点の揺れの実測から震源を仮定する方式)の場合は、
+                    M・深さの行そのものを「PLUM法による仮定震源要素」というラベルに
+                    差し替えて同じ位置に表示する(通常方式のときだけM・深さを表示)。 */}
+                {eew.isPlum ? (
                   <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1 }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
                       PLUM法による仮定震源要素
                     </span>
                   </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 12, lineHeight: 1.1 }}>
+                    <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
+                      M<span className="mono" style={{ fontSize: 25, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
+                        {eew.magnitude != null ? eew.magnitude.toFixed(1) : "-"}
+                      </span>
+                    </span>
+                    <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
+                      深さ<span className="mono" style={{ fontSize: 25, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
+                        {eew.depth != null ? (eew.depth === 0 ? "ごく浅い" : eew.depth) : "-"}
+                      </span>
+                      {eew.depth != null && eew.depth !== 0 && (
+                        <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.6)`, marginLeft: 2, lineHeight: 1.1 }}>km</span>
+                      )}
+                    </span>
+                  </div>
                 )}
-
-                <div style={{ display: "flex", alignItems: "baseline", gap: 12, lineHeight: 1.1 }}>
-                  <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
-                    M<span className="mono" style={{ fontSize: 25, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
-                      {eew.magnitude != null ? eew.magnitude.toFixed(1) : "-"}
-                    </span>
-                  </span>
-                  <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
-                    深さ<span className="mono" style={{ fontSize: 25, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
-                      {eew.depth != null ? (eew.depth === 0 ? "ごく浅い" : eew.depth) : "-"}
-                    </span>
-                    {eew.depth != null && eew.depth !== 0 && (
-                      <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.6)`, marginLeft: 2, lineHeight: 1.1 }}>km</span>
-                    )}
-                  </span>
-                </div>
 
                 <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1 }}>
                   <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>発生時刻</span>
