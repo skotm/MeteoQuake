@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.2e";
+const APP_VERSION = "1.5.2f";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -8154,13 +8154,25 @@ function BottomDock({
 
   // 親から渡される layerOpen(真偽値)を 低(0)⇄高(4) として反映する。
   // ドラッグで内部的に決めたスナップを、ここで二重に上書きしないようrefで判定する。
+  // ただし、緊急地震速報の詳細を表示中(eewDetailOpen)は、他の自動高さ調整
+  // (タブ切り替え・設定タブ)と同じくこの反映を行わない。EEWは表示中に他の
+  // タブへ切り替えることもあるが、layerOpenは実際にはハンドルのドラッグでしか
+  // 更新されないため、EEW表示中の高さ変更(直接setSnapIndexしているだけで
+  // layerOpenは連動して更新されない)との間でズレが生じることがあり、その
+  // ズレがEEWを閉じるより前に別タブへの切り替えで表面化すると、そのタブが
+  // 意図せず「高」まで開いてしまう。eewDetailOpen中はrefだけ最新に保って
+  // このズレを解消しておき、実際の高さ変更は行わない。
   const lastLayerOpen = useRef(layerOpen);
   useEffect(() => {
+    if (eewDetailOpen) {
+      lastLayerOpen.current = layerOpen;
+      return;
+    }
     if (layerOpen !== lastLayerOpen.current) {
       lastLayerOpen.current = layerOpen;
       setSnapIndex(layerOpen ? (active === "quake" ? 3 : 4) : 0);
     }
-  }, [layerOpen, active]);
+  }, [layerOpen, active, eewDetailOpen]);
 
   // 震央分布(地図上の丸)をタップして地震を選択した時も、一覧内から選んだ時
   // (handleSelectQuakeForScroll)と同じく、フローティングの高さを「中」に揃える。
