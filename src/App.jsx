@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.2d";
+const APP_VERSION = "1.5.2e";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -9433,6 +9433,7 @@ const WEATHER_MENU_ITEMS = [
 
 const WEATHER_MENU_BUTTON_SIZE = 44;      // 閉じている時のトグルボタン(円)のサイズ
 const WEATHER_MENU_BUTTON_SIZE_OPEN = 34; // 開いている時は少し小さく
+const WEATHER_MENU_TOGGLE_RECT_HEIGHT = 22; // 開いている時のトグルボタンの長方形の高さ(雨雲レーダー等の項目より細長い)
 const WEATHER_MENU_ITEM_HEIGHT = 32;      // 各項目の長方形ボタンの高さ
 const WEATHER_MENU_ITEM_GAP = 6;          // 項目同士の間隔
 const WEATHER_MENU_ITEMS_PAD = 8;         // 項目ブロックの上下左右の余白
@@ -9481,11 +9482,15 @@ function WeatherMenuFloating({ open, onToggle, growUp = true }) {
             onPointerLeave={() => setPressed(false)}
             aria-label={open ? "メニューを閉じる" : "メニューを開く"}
             style={{
-              width: buttonSize, height: buttonSize,
+              width: open ? WEATHER_MENU_WIDTH - WEATHER_MENU_ITEMS_PAD * 2 : buttonSize,
+              height: open ? WEATHER_MENU_TOGGLE_RECT_HEIGHT : buttonSize,
               display: "flex", alignItems: "center", justifyContent: "center",
               color: tokens.text,
-              transform: pressed ? "scale(1.1)" : "scale(1)",
-              transition: "width 0.3s cubic-bezier(.22,1,.36,1), height 0.3s cubic-bezier(.22,1,.36,1), transform 0.18s cubic-bezier(.22,1,.36,1)",
+              borderRadius: open ? 8 : 999,
+              border: open ? `0.75px solid rgba(${tokens.ink},0.22)` : "none",
+              background: open ? `rgba(${tokens.ink},0.06)` : "transparent",
+              transform: pressed ? "scale(1.06)" : "scale(1)",
+              transition: "width 0.3s cubic-bezier(.22,1,.36,1), height 0.3s cubic-bezier(.22,1,.36,1), border-radius 0.3s cubic-bezier(.22,1,.36,1), transform 0.18s cubic-bezier(.22,1,.36,1)",
             }}
           >
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
