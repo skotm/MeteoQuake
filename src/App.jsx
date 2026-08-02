@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.3e";
+const APP_VERSION = "1.5.4";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -998,6 +998,7 @@ function MapCanvas({
   eewEpicenterPickActive = false, onPickEewEpicenter,
   quakeEpicenterPickActive = false, onPickQuakeEpicenter,
   eewDetailOpen = false,
+  currentLocationPoint = null, // { lat, lon } | null。気象タブ「地点」モード中のGPS現在地(iOS風の青丸)
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -1607,6 +1608,39 @@ function MapCanvas({
             }
           });
 
+          // 現在地マーカー(iOSの地図でおなじみの、白フチ付きの青い丸+薄いハロー)。
+          // 気象タブ「地点」モードでGPS取得に成功している間だけ、App側から
+          // currentLocationPointが渡ってきてsetDataされる(下のuseEffect参照)。
+          // それ以外のタブ・モードでは常に空のFeatureCollectionのままで何も描かれない。
+          map.addSource("user-location-point", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "user-location-halo-layer",
+            type: "circle",
+            source: "user-location-point",
+            paint: {
+              "circle-radius": 16,
+              "circle-color": "#0A84FF",
+              "circle-opacity": 0.2,
+              "circle-stroke-width": 0,
+            },
+          });
+          map.addLayer({
+            id: "user-location-dot-layer",
+            type: "circle",
+            source: "user-location-point",
+            paint: {
+              "circle-radius": 7,
+              "circle-color": "#0A84FF",
+              "circle-stroke-color": "#ffffff",
+              "circle-stroke-width": 3,
+              "circle-opacity": 1,
+              "circle-stroke-opacity": 1,
+            },
+          });
+
           // 緊急地震速報(EEW)の地域ごとの予測震度塗りつぶしは、専用レイヤーは
           // 持たず、地震情報の震度分布と同じ"areas"ソース/"areas-intensity-fill"・
           // "areas-intensity-line"レイヤー(feature-state)を共用する(下のuseEffectで
@@ -2047,6 +2081,30 @@ function MapCanvas({
       });
     }
   }, [hypocenters, stationPoints, status, isWide]);
+
+  // 現在地マーカー(青丸)の更新。currentLocationPointはApp側で気象タブ
+  // 「地点」モード中のGPS取得結果のみを保持しているため、それ以外のタブ・
+  // モードでは自動的にnullになり、ここで空のFeatureCollectionに戻る
+  // (=地図から消える)。ズーム・パン等は一切行わない(観測点選択と違い、
+  // 現在地の表示のために地図を動かすと津波タブ等での閲覧を邪魔するため)。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    const source = map.getSource("user-location-point");
+    if (!source) return;
+    if (!currentLocationPoint || currentLocationPoint.lat == null || currentLocationPoint.lon == null) {
+      source.setData({ type: "FeatureCollection", features: [] });
+      return;
+    }
+    source.setData({
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [currentLocationPoint.lon, currentLocationPoint.lat] },
+        properties: {},
+      }],
+    });
+  }, [currentLocationPoint, status]);
 
   // 推計震度分布(気象庁 estimated_intensity_map)を更新する。
   // 選択中の地震・設定トグルが変わるたびに、画像を取得・ピクセル解析してGeoJSONに変換し、
@@ -5590,6 +5648,240 @@ function findNearestTsunamiAreaWithDistance(lat, lon, tsunamiAreasGeoJSON) {
   return { ...best, distanceKm: Math.sqrt(bestDist2) }; // { code, name, distanceKm } | null
 }
 
+/* ─────────────────────────────────────────────────────
+   天気タブ「地点」モード — 現在地(GPS)または登録地点の天気予報。
+   気象庁の天気予報(forecast.json)は府県予報区(office)単位、天気・降水確率は
+   一次細分区域(class10s)単位、気温はアメダス観測所単位で提供されており、
+   緯度経度から直接これらを引く手段は無い。そこでここでは、
+     1. アメダス観測点一覧(amedastable.json、緯度経度あり)から一番近い観測点を探す
+     2. その観測点が属する一次細分区域・オフィスを、天気予報で使うアメダス地点だけを
+        まとめたforecast_area.json(office→class10→amedasの対応表)から逆引きする
+   という2段階でlat/lngから予報の取得先(office・class10・amedas)を決める。
+   ───────────────────────────────────────────────────── */
+const AMEDAS_TABLE_URL = "https://www.jma.go.jp/bosai/amedas/const/amedastable.json";
+const FORECAST_AREA_URL = "https://www.jma.go.jp/bosai/forecast/const/forecast_area.json";
+function forecastDataUrl(officeCode) {
+  return `https://www.jma.go.jp/bosai/forecast/data/forecast/${officeCode}.json`;
+}
+
+// amedastable.jsonの緯度経度は[度, 分]の配列で入っているため、10進度に変換する。
+function amedasDegMinToDecimal(pair) {
+  if (!Array.isArray(pair) || pair.length < 2) return null;
+  const [deg, min] = pair;
+  if (!Number.isFinite(deg) || !Number.isFinite(min)) return null;
+  return deg + min / 60;
+}
+
+let amedasPointsCache = null;      // [{code, lat, lon, name}] | null(未取得)
+let forecastAreaIndexCache = null; // { amedasコード: {officeCode, class10Code} } | null(未取得)
+
+async function loadAmedasPoints() {
+  if (amedasPointsCache) return amedasPointsCache;
+  const res = await fetch(AMEDAS_TABLE_URL);
+  if (!res.ok) throw new Error(`アメダス観測点一覧の取得に失敗(HTTP ${res.status})`);
+  const data = await res.json();
+  const points = [];
+  for (const code of Object.keys(data)) {
+    const entry = data[code];
+    const lat = amedasDegMinToDecimal(entry.lat);
+    const lon = amedasDegMinToDecimal(entry.lon);
+    if (lat == null || lon == null) continue;
+    points.push({ code, lat, lon, name: entry.kjName || "" });
+  }
+  amedasPointsCache = points;
+  return points;
+}
+
+async function loadForecastAreaIndex() {
+  if (forecastAreaIndexCache) return forecastAreaIndexCache;
+  const res = await fetch(FORECAST_AREA_URL);
+  if (!res.ok) throw new Error(`天気予報エリア対応表の取得に失敗(HTTP ${res.status})`);
+  const data = await res.json();
+  const index = {};
+  for (const officeCode of Object.keys(data)) {
+    for (const entry of data[officeCode]) {
+      for (const amedasCode of entry.amedas || []) {
+        index[amedasCode] = { officeCode, class10Code: entry.class10 };
+      }
+    }
+  }
+  forecastAreaIndexCache = index;
+  return index;
+}
+
+// 緯度・経度から、天気予報の取得に必要な情報(最寄りアメダス観測点・その所属
+// オフィス・一次細分区域)をまとめて求める。天気予報の対象になっていない
+// (=forecast_area.jsonに載っていない、降水量だけの簡易観測点など)アメダス点は
+// 候補から除外し、必ず予報が引ける地点だけを最寄り候補にする。
+async function resolveForecastLocation(lat, lon) {
+  const [points, areaIndex] = await Promise.all([loadAmedasPoints(), loadForecastAreaIndex()]);
+  let best = null;
+  let bestDist2 = Infinity;
+  for (const pt of points) {
+    if (!areaIndex[pt.code]) continue;
+    const d2 = fastDist2(lat, lon, pt.lat, pt.lon);
+    if (d2 < bestDist2) {
+      bestDist2 = d2;
+      best = pt;
+    }
+  }
+  if (!best) return null;
+  const { officeCode, class10Code } = areaIndex[best.code];
+  return { officeCode, class10Code, amedasCode: best.code, stationName: best.name };
+}
+
+// weatherCode → { icon(気象庁のSVGファイル名の数字部分), telop(短い天気表現) }。
+// 出典: 気象庁の天気予報JSON内で使われているコード表。
+const WEATHER_CODE_INFO = {
+  "100": { icon: "100", telop: "晴" }, "101": { icon: "101", telop: "晴時々曇" },
+  "102": { icon: "102", telop: "晴一時雨" }, "103": { icon: "102", telop: "晴時々雨" },
+  "104": { icon: "104", telop: "晴一時雪" }, "105": { icon: "104", telop: "晴時々雪" },
+  "106": { icon: "102", telop: "晴一時雨か雪" }, "107": { icon: "102", telop: "晴時々雨か雪" },
+  "108": { icon: "102", telop: "晴一時雨か雷雨" }, "110": { icon: "110", telop: "晴後時々曇" },
+  "111": { icon: "110", telop: "晴後曇" }, "112": { icon: "112", telop: "晴後一時雨" },
+  "113": { icon: "112", telop: "晴後時々雨" }, "114": { icon: "112", telop: "晴後雨" },
+  "115": { icon: "115", telop: "晴後一時雪" }, "116": { icon: "115", telop: "晴後時々雪" },
+  "117": { icon: "115", telop: "晴後雪" }, "118": { icon: "112", telop: "晴後雨か雪" },
+  "119": { icon: "112", telop: "晴後雨か雷雨" }, "120": { icon: "102", telop: "晴朝夕一時雨" },
+  "121": { icon: "102", telop: "晴朝の内一時雨" }, "122": { icon: "112", telop: "晴夕方一時雨" },
+  "123": { icon: "100", telop: "晴山沿い雷雨" }, "124": { icon: "100", telop: "晴山沿い雪" },
+  "125": { icon: "112", telop: "晴午後は雷雨" }, "126": { icon: "112", telop: "晴昼頃から雨" },
+  "127": { icon: "112", telop: "晴夕方から雨" }, "128": { icon: "112", telop: "晴夜は雨" },
+  "130": { icon: "100", telop: "朝の内霧後晴" }, "131": { icon: "100", telop: "晴明け方霧" },
+  "132": { icon: "101", telop: "晴朝夕曇" }, "140": { icon: "102", telop: "晴時々雨で雷を伴う" },
+  "160": { icon: "104", telop: "晴一時雪か雨" }, "170": { icon: "104", telop: "晴時々雪か雨" },
+  "181": { icon: "115", telop: "晴後雪か雨" },
+  "200": { icon: "200", telop: "曇" }, "201": { icon: "201", telop: "曇時々晴" },
+  "202": { icon: "202", telop: "曇一時雨" }, "203": { icon: "202", telop: "曇時々雨" },
+  "204": { icon: "204", telop: "曇一時雪" }, "205": { icon: "204", telop: "曇時々雪" },
+  "206": { icon: "202", telop: "曇一時雨か雪" }, "207": { icon: "202", telop: "曇時々雨か雪" },
+  "208": { icon: "202", telop: "曇一時雨か雷雨" }, "209": { icon: "200", telop: "霧" },
+  "210": { icon: "210", telop: "曇後時々晴" }, "211": { icon: "210", telop: "曇後晴" },
+  "212": { icon: "212", telop: "曇後一時雨" }, "213": { icon: "212", telop: "曇後時々雨" },
+  "214": { icon: "212", telop: "曇後雨" }, "215": { icon: "215", telop: "曇後一時雪" },
+  "216": { icon: "215", telop: "曇後時々雪" }, "217": { icon: "215", telop: "曇後雪" },
+  "218": { icon: "212", telop: "曇後雨か雪" }, "219": { icon: "212", telop: "曇後雨か雷雨" },
+  "220": { icon: "202", telop: "曇朝夕一時雨" }, "221": { icon: "202", telop: "曇朝の内一時雨" },
+  "222": { icon: "212", telop: "曇夕方一時雨" }, "223": { icon: "201", telop: "曇日中時々晴" },
+  "224": { icon: "212", telop: "曇昼頃から雨" }, "225": { icon: "212", telop: "曇夕方から雨" },
+  "226": { icon: "212", telop: "曇夜は雨" }, "228": { icon: "215", telop: "曇昼頃から雪" },
+  "229": { icon: "215", telop: "曇夕方から雪" }, "230": { icon: "215", telop: "曇夜は雪" },
+  "231": { icon: "200", telop: "曇海上海岸は霧か霧雨" }, "240": { icon: "202", telop: "曇時々雨で雷を伴う" },
+  "250": { icon: "204", telop: "曇時々雪で雷を伴う" }, "260": { icon: "204", telop: "曇一時雪か雨" },
+  "270": { icon: "204", telop: "曇時々雪か雨" }, "281": { icon: "215", telop: "曇後雪か雨" },
+  "300": { icon: "300", telop: "雨" }, "301": { icon: "301", telop: "雨時々晴" },
+  "302": { icon: "302", telop: "雨時々止む" }, "303": { icon: "303", telop: "雨時々雪" },
+  "304": { icon: "300", telop: "雨か雪" }, "306": { icon: "300", telop: "大雨" },
+  "308": { icon: "308", telop: "雨で暴風を伴う" }, "309": { icon: "303", telop: "雨一時雪" },
+  "311": { icon: "311", telop: "雨後晴" }, "313": { icon: "313", telop: "雨後曇" },
+  "314": { icon: "314", telop: "雨後時々雪" }, "315": { icon: "314", telop: "雨後雪" },
+  "316": { icon: "311", telop: "雨か雪後晴" }, "317": { icon: "313", telop: "雨か雪後曇" },
+  "320": { icon: "311", telop: "朝の内雨後晴" }, "321": { icon: "313", telop: "朝の内雨後曇" },
+  "322": { icon: "303", telop: "雨朝晩一時雪" }, "323": { icon: "311", telop: "雨昼頃から晴" },
+  "324": { icon: "311", telop: "雨夕方から晴" }, "325": { icon: "311", telop: "雨夜は晴" },
+  "326": { icon: "314", telop: "雨夕方から雪" }, "327": { icon: "314", telop: "雨夜は雪" },
+  "328": { icon: "300", telop: "雨一時強く降る" }, "329": { icon: "300", telop: "雨一時みぞれ" },
+  "340": { icon: "400", telop: "雪か雨" }, "350": { icon: "300", telop: "雨で雷を伴う" },
+  "361": { icon: "411", telop: "雪か雨後晴" }, "371": { icon: "413", telop: "雪か雨後曇" },
+  "400": { icon: "400", telop: "雪" }, "401": { icon: "401", telop: "雪時々晴" },
+  "402": { icon: "402", telop: "雪時々止む" }, "403": { icon: "403", telop: "雪時々雨" },
+  "405": { icon: "400", telop: "大雪" }, "406": { icon: "406", telop: "風雪強い" },
+  "407": { icon: "406", telop: "暴風雪" }, "409": { icon: "403", telop: "雪一時雨" },
+  "411": { icon: "411", telop: "雪後晴" }, "413": { icon: "413", telop: "雪後曇" },
+  "414": { icon: "414", telop: "雪後雨" }, "420": { icon: "411", telop: "朝の内雪後晴" },
+  "421": { icon: "413", telop: "朝の内雪後曇" }, "422": { icon: "414", telop: "雪昼頃から雨" },
+  "423": { icon: "414", telop: "雪夕方から雨" }, "425": { icon: "400", telop: "雪一時強く降る" },
+  "426": { icon: "400", telop: "雪後みぞれ" }, "427": { icon: "400", telop: "雪一時みぞれ" },
+  "450": { icon: "400", telop: "雪で雷を伴う" },
+};
+function weatherIconUrl(code) {
+  const info = WEATHER_CODE_INFO[String(code)];
+  return `https://www.jma.go.jp/bosai/forecast/img/${info ? info.icon : "200"}.svg`;
+}
+function weatherTelop(code) {
+  const info = WEATHER_CODE_INFO[String(code)];
+  return info ? info.telop : "不明";
+}
+
+// forecast.json(office単位)から、指定class10Code(天気・降水確率用)・
+// amedasCode(気温用)に対応する「今日の天気予報」をまとめて取り出す。
+// forecast.jsonは [0]=今日・明日の短期予報, [1]=週間予報 の2要素配列。
+function extractTodayForecast(forecastJson, class10Code, amedasCode) {
+  if (!Array.isArray(forecastJson) || forecastJson.length === 0) return null;
+  const shortTerm = forecastJson[0];
+  const weekly = forecastJson[1];
+
+  let weatherCode = null;
+  let areaName = null;
+  const weatherSeries = shortTerm?.timeSeries?.[0];
+  if (weatherSeries) {
+    const area = weatherSeries.areas?.find(a => a.area?.code === class10Code);
+    if (area?.weatherCodes?.[0]) {
+      weatherCode = area.weatherCodes[0];
+      areaName = area.area?.name || null;
+    }
+  }
+  if (weatherCode == null && weekly?.timeSeries?.[0]) {
+    const area = weekly.timeSeries[0].areas?.find(a => a.area?.code === class10Code);
+    if (area?.weatherCodes?.[0]) {
+      weatherCode = area.weatherCodes[0];
+      areaName = area.area?.name || areaName;
+    }
+  }
+
+  // 降水確率(短期予報のtimeSeries[1]、6時間ごと。今日時点でまだ発表されていない
+  // コマは空文字が入っているため、最初に値が入っているものを代表値として使う)。
+  let pop = null;
+  const popSeries = shortTerm?.timeSeries?.[1];
+  if (popSeries) {
+    const area = popSeries.areas?.find(a => a.area?.code === class10Code);
+    const p = area?.pops?.find(v => v !== "");
+    if (p != null) pop = Number(p);
+  }
+
+  // 気温(週間予報のtimeSeries[1]、アメダス単位。今日の最高・最低)。
+  let tempMin = null, tempMax = null;
+  const weeklyTempSeries = weekly?.timeSeries?.[1];
+  if (weeklyTempSeries) {
+    const area = weeklyTempSeries.areas?.find(a => a.area?.code === amedasCode);
+    if (area) {
+      if (area.tempsMin?.[0]) tempMin = Number(area.tempsMin[0]);
+      if (area.tempsMax?.[0]) tempMax = Number(area.tempsMax[0]);
+    }
+  }
+  // 週間予報にまだ無ければ、短期予報のtimeSeries[2](当日〜翌日の気温)から拾う。
+  if ((tempMin == null || tempMax == null) && shortTerm?.timeSeries?.[2]) {
+    const area = shortTerm.timeSeries[2].areas?.find(a => a.area?.code === amedasCode);
+    if (area?.temps) {
+      const nums = area.temps.filter(v => v !== "").map(Number);
+      if (nums.length) {
+        if (tempMin == null) tempMin = Math.min(...nums);
+        if (tempMax == null) tempMax = Math.max(...nums);
+      }
+    }
+  }
+
+  if (weatherCode == null && pop == null && tempMin == null && tempMax == null) return null;
+  return {
+    areaName,
+    weatherCode,
+    telop: weatherCode != null ? weatherTelop(weatherCode) : null,
+    pop, tempMin, tempMax,
+  };
+}
+
+// 緯度経度→今日の天気予報、までを一気通貫でまとめて行う。
+async function fetchCurrentLocationForecast(lat, lon) {
+  const resolved = await resolveForecastLocation(lat, lon);
+  if (!resolved) throw new Error("最寄りの予報地点を特定できませんでした");
+  const res = await fetch(forecastDataUrl(resolved.officeCode));
+  if (!res.ok) throw new Error(`天気予報の取得に失敗(HTTP ${res.status})`);
+  const json = await res.json();
+  const forecast = extractTodayForecast(json, resolved.class10Code, resolved.amedasCode);
+  if (!forecast) throw new Error("天気予報データを解析できませんでした");
+  return { ...forecast, stationName: resolved.stationName, areaName: forecast.areaName || resolved.stationName };
+}
+
 async function fetchTideStations() {
   const res = await fetch(TIDE_AREA_URL);
   if (!res.ok) throw new Error(`潮位観測点一覧の取得に失敗(HTTP ${res.status})`);
@@ -7508,6 +7800,7 @@ function BottomDock({
   onEpicenterLoadingChange,
   mapSelectSignal,
   uiScale = 1,
+  onCurrentLocationChange, // 気象タブ「地点」モードでGPS取得できた現在地をApp側(地図の青丸表示用)に伝える
 }) {
   const { tokens, mode } = useContext(ThemeContext);
   const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
@@ -7594,6 +7887,122 @@ function BottomDock({
   useEffect(() => {
     if (!(active === "weather" && weatherViewMode === "list")) setWeatherMenuOpen(false);
   }, [active, weatherViewMode]);
+
+  /* ─────────────────────────────────────────────────────
+     気象タブ「地点」モード — 現在地(GPS)または登録地点(1件のみ)の天気予報。
+     GPSは「地点」モードを実際に見ている間だけwatchPositionで追跡し、それ以外
+     (タブを離れた・一覧モードに切り替えた)は追跡を止めてバッテリー消費を避ける。
+     GPSが使える間はGPS優先、拒否/非対応/未取得の間は登録地点をフォールバックに使う。
+     ───────────────────────────────────────────────────── */
+  const weatherLocationActive = active === "weather" && weatherViewMode === "location";
+
+  // status: "idle"(見ていない) | "loading" | "ready" | "error" | "unsupported"
+  const [geoState, setGeoState] = useState({ status: "idle", coords: null, error: null });
+  useEffect(() => {
+    if (!weatherLocationActive) {
+      setGeoState(s => (s.status === "idle" ? s : { status: "idle", coords: null, error: null }));
+      return;
+    }
+    if (!("geolocation" in navigator)) {
+      setGeoState({ status: "unsupported", coords: null, error: null });
+      return;
+    }
+    setGeoState(s => ({ status: "loading", coords: s.coords, error: null }));
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        setGeoState({
+          status: "ready",
+          coords: { lat: pos.coords.latitude, lon: pos.coords.longitude },
+          error: null,
+        });
+      },
+      (err) => {
+        setGeoState(s => ({ status: "error", coords: s.coords, error: err }));
+      },
+      { enableHighAccuracy: false, maximumAge: 60000, timeout: 15000 }
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [weatherLocationActive]);
+
+  // App側(地図の現在地マーカー=青丸の表示用)に、GPSで取れている間だけ座標を伝える。
+  // このタブ・このモードを見ていない間や、GPSが使えない間はnullを伝えて地図から消す。
+  useEffect(() => {
+    onCurrentLocationChange?.(
+      weatherLocationActive && geoState.status === "ready" ? geoState.coords : null
+    );
+  }, [weatherLocationActive, geoState.status, geoState.coords, onCurrentLocationChange]);
+
+  // 登録地点(1件のみ)。{ name, lat, lon } | null。他の設定と同様localStorageに保存し、
+  // 次回起動時も覚えておく。
+  const REGISTERED_WEATHER_POINT_KEY = "meteoquake_registered_weather_point_v1";
+  const [registeredWeatherPoint, setRegisteredWeatherPointState] = useState(() => {
+    try {
+      const saved = localStorage.getItem(REGISTERED_WEATHER_POINT_KEY);
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
+  const setRegisteredWeatherPoint = useCallback((next) => {
+    setRegisteredWeatherPointState(next);
+    try {
+      if (next) localStorage.setItem(REGISTERED_WEATHER_POINT_KEY, JSON.stringify(next));
+      else localStorage.removeItem(REGISTERED_WEATHER_POINT_KEY);
+    } catch {}
+  }, []);
+
+  // 実際に予報を取りに行く対象地点。GPSが使えていればGPS優先、
+  // 使えなければ登録地点、どちらも無ければnull(予報を取りに行かない)。
+  const activeWeatherPoint = useMemo(() => {
+    if (geoState.status === "ready" && geoState.coords) {
+      return { source: "gps", lat: geoState.coords.lat, lon: geoState.coords.lon };
+    }
+    if (registeredWeatherPoint) {
+      return { source: "registered", lat: registeredWeatherPoint.lat, lon: registeredWeatherPoint.lon, name: registeredWeatherPoint.name };
+    }
+    return null;
+  }, [geoState.status, geoState.coords, registeredWeatherPoint]);
+
+  // { status: "idle"|"loading"|"ready"|"error", data, error } — activeWeatherPointが
+  // 変わるたび(GPSで動いた・登録地点を変えた等)取り直す。
+  const [weatherForecastState, setWeatherForecastState] = useState({ status: "idle", data: null });
+  useEffect(() => {
+    if (!weatherLocationActive || !activeWeatherPoint) {
+      setWeatherForecastState({ status: "idle", data: null });
+      return;
+    }
+    let cancelled = false;
+    setWeatherForecastState(s => ({ status: "loading", data: s.data }));
+    fetchCurrentLocationForecast(activeWeatherPoint.lat, activeWeatherPoint.lon)
+      .then((data) => { if (!cancelled) setWeatherForecastState({ status: "ready", data }); })
+      .catch((err) => {
+        console.error("現在地の天気予報の取得に失敗:", err);
+        if (!cancelled) setWeatherForecastState({ status: "error", data: null });
+      });
+    return () => { cancelled = true; };
+  }, [weatherLocationActive, activeWeatherPoint?.source, activeWeatherPoint?.lat, activeWeatherPoint?.lon]);
+
+  // 地点登録(1件のみ)の検索UI用。候補は天気予報の対象になっているアメダス地点名
+  // (=ほぼ全国の主要市町村をカバーする)から絞り込む。検索パネルを開いた時に
+  // 初めて候補一覧を読み込み、以降はキャッシュを使い回す。
+  const [weatherPointSearchOpen, setWeatherPointSearchOpen] = useState(false);
+  const [weatherPointSearchQuery, setWeatherPointSearchQuery] = useState("");
+  const [weatherPointCandidates, setWeatherPointCandidates] = useState(null); // null=未読込
+  useEffect(() => {
+    if (!weatherPointSearchOpen || weatherPointCandidates) return;
+    let cancelled = false;
+    Promise.all([loadAmedasPoints(), loadForecastAreaIndex()])
+      .then(([points, index]) => {
+        if (cancelled) return;
+        setWeatherPointCandidates(points.filter(p => index[p.code]));
+      })
+      .catch((err) => console.error("地点候補の取得に失敗:", err));
+    return () => { cancelled = true; };
+  }, [weatherPointSearchOpen, weatherPointCandidates]);
+
+  const weatherPointSearchResults = useMemo(() => {
+    const q = weatherPointSearchQuery.trim();
+    if (!weatherPointCandidates || !q) return [];
+    return weatherPointCandidates.filter(p => p.name.includes(q)).slice(0, 20);
+  }, [weatherPointCandidates, weatherPointSearchQuery]);
 
   // 津波タブ版の表示モード。"recent" = 直近の津波情報一覧、
   // "history" = 過去に発表された津波情報一覧(/history APIをoffsetで遡って取得)。
@@ -8695,6 +9104,62 @@ function BottomDock({
         )
       )}
 
+      {/* 気象タブの「地点」モード用 — 一覧モードのメニューと同じ枠に、現在地(GPS)
+          または登録地点の天気予報カードを浮かべる。 */}
+      {!eewDetailOpen && active === "weather" && weatherViewMode === "location" && (
+        isWide && wideAnchorRect ? createPortal(
+          <div style={{
+            position: "fixed",
+            left: wideAnchorRect.right + 12,
+            top: wideAnchorRect.top + 16,
+            zIndex: 50,
+          }}>
+            <CurrentWeatherFloating
+              geoState={geoState}
+              activeWeatherPoint={activeWeatherPoint}
+              forecastState={weatherForecastState}
+              registeredWeatherPoint={registeredWeatherPoint}
+              searchOpen={weatherPointSearchOpen}
+              onToggleSearch={() => setWeatherPointSearchOpen(v => !v)}
+              searchQuery={weatherPointSearchQuery}
+              onChangeSearchQuery={setWeatherPointSearchQuery}
+              searchResults={weatherPointSearchResults}
+              onSelectSearchResult={(r) => {
+                setRegisteredWeatherPoint({ name: r.name, lat: r.lat, lon: r.lon });
+                setWeatherPointSearchOpen(false);
+                setWeatherPointSearchQuery("");
+              }}
+            />
+          </div>,
+          document.body
+        ) : (
+        <div style={{
+          position: "absolute",
+          right: 16,
+          bottom: backButtonBottom,
+          transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
+          zIndex: 10,
+        }}>
+          <CurrentWeatherFloating
+            geoState={geoState}
+            activeWeatherPoint={activeWeatherPoint}
+            forecastState={weatherForecastState}
+            registeredWeatherPoint={registeredWeatherPoint}
+            searchOpen={weatherPointSearchOpen}
+            onToggleSearch={() => setWeatherPointSearchOpen(v => !v)}
+            searchQuery={weatherPointSearchQuery}
+            onChangeSearchQuery={setWeatherPointSearchQuery}
+            searchResults={weatherPointSearchResults}
+            onSelectSearchResult={(r) => {
+              setRegisteredWeatherPoint({ name: r.name, lat: r.lat, lon: r.lon });
+              setWeatherPointSearchOpen(false);
+              setWeatherPointSearchQuery("");
+            }}
+          />
+        </div>
+        )
+      )}
+
       {(() => {
         const GlassOrPlain = isWide ? "div" : Glass;
         const glassProps = isWide
@@ -9560,6 +10025,129 @@ function WeatherMenuFloating({ open, onToggle, growUp = true }) {
           </div>
         )}
       </div>
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   CURRENT WEATHER FLOATING — 気象タブ「地点(ピン)」モードで使う、現在地(GPS)
+   または登録地点(1件)の天気予報を表示する小さなガラスカード。
+   WeatherMenuFloatingと違い開閉トグルは持たず、常に展開状態のカードとして
+   表示する。GPSが拒否/未取得で登録地点も無い場合は、地点登録の検索窓を
+   開くための簡単な案内だけを出す。
+   ───────────────────────────────────────────────────── */
+function CurrentWeatherFloating({
+  geoState, activeWeatherPoint, forecastState, registeredWeatherPoint,
+  searchOpen, onToggleSearch, searchQuery, onChangeSearchQuery, searchResults, onSelectSearchResult,
+}) {
+  const { tokens } = useContext(ThemeContext);
+  const CARD_WIDTH = 190;
+
+  let body;
+  if (searchOpen) {
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8, width: CARD_WIDTH - 16 }}>
+        <div style={{ fontSize: 11.5, fontWeight: 600, color: tokens.text }}>地点を登録</div>
+        <input
+          value={searchQuery}
+          onChange={(e) => onChangeSearchQuery(e.target.value)}
+          placeholder="地名で検索(例: 横浜)"
+          style={{
+            fontSize: 12, padding: "6px 8px", borderRadius: 8,
+            border: `0.75px solid rgba(${tokens.ink},0.22)`,
+            background: `rgba(${tokens.ink},0.06)`, color: tokens.text, outline: "none",
+          }}
+        />
+        <div style={{ maxHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+          {searchResults.map(r => (
+            <PressableButton
+              key={r.code}
+              onClick={() => onSelectSearchResult(r)}
+              style={{
+                textAlign: "left", fontSize: 12, color: tokens.text,
+                padding: "6px 8px", borderRadius: 8,
+                background: `rgba(${tokens.ink},0.06)`,
+              }}
+            >
+              {r.name}
+            </PressableButton>
+          ))}
+          {searchQuery.trim() && searchResults.length === 0 && (
+            <div style={{ fontSize: 11, color: tokens.text, opacity: 0.6, padding: "4px 2px" }}>
+              見つかりませんでした
+            </div>
+          )}
+        </div>
+        <PressableButton
+          onClick={onToggleSearch}
+          style={{
+            fontSize: 11.5, fontWeight: 600, color: tokens.text, textAlign: "center",
+            padding: "6px 0", borderRadius: 8, background: `rgba(${tokens.ink},0.06)`,
+          }}
+        >
+          閉じる
+        </PressableButton>
+      </div>
+    );
+  } else if (!activeWeatherPoint) {
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: 10, width: CARD_WIDTH - 20 }}>
+        <div style={{ fontSize: 11.5, color: tokens.text, lineHeight: 1.4 }}>
+          {geoState.status === "loading" ? "現在地を取得中…" : "現在地が使えません"}
+        </div>
+        <PressableButton
+          onClick={onToggleSearch}
+          style={{
+            fontSize: 11.5, fontWeight: 600, color: tokens.text, textAlign: "center",
+            padding: "6px 0", borderRadius: 8, background: `rgba(${tokens.ink},0.06)`,
+          }}
+        >
+          地点を登録
+        </PressableButton>
+      </div>
+    );
+  } else if (forecastState.status === "loading" || forecastState.status === "idle") {
+    body = <div style={{ padding: 12, fontSize: 11.5, color: tokens.text }}>天気予報を取得中…</div>;
+  } else if (forecastState.status === "error") {
+    body = <div style={{ padding: 12, fontSize: 11.5, color: tokens.text }}>天気予報を取得できませんでした</div>;
+  } else {
+    const f = forecastState.data;
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: 10, width: CARD_WIDTH - 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: tokens.text, opacity: 0.75 }}>
+            {activeWeatherPoint.source === "gps" ? "現在地" : (registeredWeatherPoint?.name || f.areaName)}
+          </div>
+          <button
+            onClick={onToggleSearch}
+            aria-label="地点を変更"
+            style={{
+              width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center",
+              color: tokens.text, opacity: 0.6, background: "none", border: "none",
+            }}
+          >
+            <PinIcon size={13}/>
+          </button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {f.weatherCode != null && (
+            <img src={weatherIconUrl(f.weatherCode)} alt="" width={34} height={34}/>
+          )}
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: tokens.text }}>{f.telop || "-"}</div>
+            <div style={{ fontSize: 11, color: tokens.text, opacity: 0.75 }}>
+              {f.tempMax != null ? `${f.tempMax}°` : "--°"} / {f.tempMin != null ? `${f.tempMin}°` : "--°"}
+              {f.pop != null ? `　降水${f.pop}%` : ""}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Glass radius={18} style={{ width: CARD_WIDTH, borderRadius: 18, overflow: "hidden" }}>
+      {body}
     </Glass>
   );
 }
@@ -14636,6 +15224,10 @@ export default function App() {
      ───────────────────────────────────────────────────── */
   const [tsunamiViewModeTop, setTsunamiViewModeTop] = useState("recent");
   const showTideGaugeLayer = !eewDetailOpen && activeNav === "tsunami" && tsunamiViewModeTop === "tidegauge";
+
+  // 気象タブ「地点」モードでGPS取得できている間だけBottomDock側から伝わってくる、
+  // 現在地の緯度経度(地図の青丸表示用)。それ以外は常にnull。
+  const [currentLocationPoint, setCurrentLocationPoint] = useState(null);
   // 現在進行形で有効な(解除されていない)津波情報があるかどうか。潮位観測点
   // マスタの取得トリガー・自動表示の判定の両方で使う軽量な判定。
   const hasActiveTsunami = effectiveTsunamis.some(t => !t.cancelled);
@@ -15659,6 +16251,7 @@ export default function App() {
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
         <MapCanvas
           onReady={setMap}
+          currentLocationPoint={currentLocationPoint}
           stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
           tideStationPoints={
@@ -15913,6 +16506,7 @@ export default function App() {
                   tsunamiHistory={tsunamiHistory}
                   onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
                   onTsunamiViewModeChange={setTsunamiViewModeTop}
+                  onCurrentLocationChange={setCurrentLocationPoint}
                   tideStations={tideStationsWithGrade}
                   tideStationsStatus={tideStationsStatus}
                   selectedTideStationCode={selectedTideStationCode}
@@ -16007,6 +16601,7 @@ export default function App() {
               tsunamiHistory={tsunamiHistory}
               onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
               onTsunamiViewModeChange={setTsunamiViewModeTop}
+              onCurrentLocationChange={setCurrentLocationPoint}
               tideStations={tideStationsWithGrade}
               tideStationsStatus={tideStationsStatus}
               selectedTideStationCode={selectedTideStationCode}
