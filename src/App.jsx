@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.3";
+const APP_VERSION = "1.5.3a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -8251,10 +8251,10 @@ function BottomDock({
     lastActiveForSettings.current = active;
   }, [active, eewDetailOpen]);
 
-  // 気象タブは、タブをタッチして開いた瞬間に必ず「中高」にする。
-  // (他のタブ全般に対する上のタブ切り替え効果と同じ結果になるが、気象タブに
-  // ついては明示的な専用処理として持たせておく。ダブルタップで「高」まで
-  // 開く挙動はnavDoubleTapSignal側の共通処理のままで、他タブと変わらない)。
+  // 気象タブは、タブをタッチして開いた瞬間に必ず「中高」のひとつ下の「中中」にする。
+  // (他のタブ全般に対する上のタブ切り替え効果は「中高」だが、気象タブだけは
+  // 専用処理としてひとつ下の高さにしている)。ダブルタップで「高」まで開く挙動は
+  // navDoubleTapSignal側の共通処理のままで、他タブと変わらない。
   // 緊急地震速報の詳細を表示中(eewDetailOpen)は、他のタブ切り替えガードと
   // 同じくこの高さ強制を行わない。
   const lastActiveForWeather = useRef(active);
@@ -8264,7 +8264,7 @@ function BottomDock({
       return;
     }
     if (lastActiveForWeather.current !== "weather" && active === "weather") {
-      setSnapIndex(3);
+      setSnapIndex(2);
     }
     lastActiveForWeather.current = active;
   }, [active, eewDetailOpen]);
