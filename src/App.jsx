@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.2c";
+const APP_VERSION = "1.5.2d";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -9414,22 +9414,42 @@ function StationMarkerToggleButton({ visible, onClick }) {
    広がる」見た目にしている。
    閉じている間は山が上を向いたくの字(⌃)、開いている間は下向き(⌄)に変わる。
    ───────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────
+   WEATHER MENU FLOATING — 気象タブの「一覧」モードで使う、雨雲レーダー等の
+   メニューを開閉するボタン。BackToListButtonと同じ44×44の丸いGlassボタンから
+   始まり、開くとその同じガラスが上(growUp=true、狭い画面)または下
+   (growUp=false、広い画面)へ丸角の帯へと連続的に広がり、中に項目が並ぶ。
+   ボタンと展開後のメニューを2つの別要素として重ねるのではなく、
+   1枚のGlassの幅・高さ・角丸をアニメーションさせることで「ガラス自体が
+   広がる」見た目にしている。
+   閉じている間は山が上を向いたくの字(⌃)、開いている間は下向き(⌄)に変わる。
+   開いている間はトグルボタン自体を一回り小さくして、主役が項目側だと
+   分かるようにする。各項目は角がわずかに丸い細長い長方形で囲み、押せる
+   ボタンだと分かるようにしている(文字は中央揃え)。
+   ───────────────────────────────────────────────────── */
 const WEATHER_MENU_ITEMS = [
   { id: "rainRadar", label: "雨雲レーダー" },
 ];
 
-const WEATHER_MENU_BUTTON_SIZE = 44;
-const WEATHER_MENU_ITEM_HEIGHT = 34;
+const WEATHER_MENU_BUTTON_SIZE = 44;      // 閉じている時のトグルボタン(円)のサイズ
+const WEATHER_MENU_BUTTON_SIZE_OPEN = 34; // 開いている時は少し小さく
+const WEATHER_MENU_ITEM_HEIGHT = 32;      // 各項目の長方形ボタンの高さ
+const WEATHER_MENU_ITEM_GAP = 6;          // 項目同士の間隔
+const WEATHER_MENU_ITEMS_PAD = 8;         // 項目ブロックの上下左右の余白
 const WEATHER_MENU_WIDTH = 172;
 
 function WeatherMenuFloating({ open, onToggle, growUp = true }) {
   const { tokens } = useContext(ThemeContext);
   const [pressed, setPressed] = useState(false);
 
+  const itemsBlockHeight =
+    WEATHER_MENU_ITEMS.length * WEATHER_MENU_ITEM_HEIGHT +
+    Math.max(0, WEATHER_MENU_ITEMS.length - 1) * WEATHER_MENU_ITEM_GAP +
+    WEATHER_MENU_ITEMS_PAD * 2;
+
   const width  = open ? WEATHER_MENU_WIDTH : WEATHER_MENU_BUTTON_SIZE;
-  const height = open
-    ? WEATHER_MENU_BUTTON_SIZE + WEATHER_MENU_ITEMS.length * WEATHER_MENU_ITEM_HEIGHT
-    : WEATHER_MENU_BUTTON_SIZE;
+  const height = open ? WEATHER_MENU_BUTTON_SIZE_OPEN + itemsBlockHeight : WEATHER_MENU_BUTTON_SIZE;
+  const buttonSize = open ? WEATHER_MENU_BUTTON_SIZE_OPEN : WEATHER_MENU_BUTTON_SIZE;
 
   // growUp(下部固定の戻るボタン枠)なら、ボタンを一番下に置いて上へ広がる
   // ように column-reverse。isWide(上部固定)なら、ボタンを上に置いて
@@ -9447,43 +9467,53 @@ function WeatherMenuFloating({ open, onToggle, growUp = true }) {
       }}
     >
       <div style={{ display: "flex", flexDirection: stackDirection, width: "100%", height: "100%" }}>
-        <button
-          onClick={onToggle}
-          onPointerDown={() => setPressed(true)}
-          onPointerUp={() => setPressed(false)}
-          onPointerCancel={() => setPressed(false)}
-          onPointerLeave={() => setPressed(false)}
-          aria-label={open ? "メニューを閉じる" : "メニューを開く"}
-          style={{
-            flexShrink: 0,
-            width: "100%", height: WEATHER_MENU_BUTTON_SIZE,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            color: tokens.text,
-            transform: pressed ? "scale(1.1)" : "scale(1)",
-            transition: "transform 0.18s cubic-bezier(.22,1,.36,1)",
-          }}
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
-               stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"
-               style={{ transition: "transform 0.2s cubic-bezier(.22,1,.36,1)", transform: open ? "rotate(180deg)" : "none" }}>
-            <polyline points="6 15 12 9 18 15"/>
-          </svg>
-        </button>
+        <div style={{
+          flexShrink: 0,
+          width: "100%", height: open ? WEATHER_MENU_BUTTON_SIZE_OPEN : WEATHER_MENU_BUTTON_SIZE,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          transition: "height 0.3s cubic-bezier(.22,1,.36,1)",
+        }}>
+          <button
+            onClick={onToggle}
+            onPointerDown={() => setPressed(true)}
+            onPointerUp={() => setPressed(false)}
+            onPointerCancel={() => setPressed(false)}
+            onPointerLeave={() => setPressed(false)}
+            aria-label={open ? "メニューを閉じる" : "メニューを開く"}
+            style={{
+              width: buttonSize, height: buttonSize,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: tokens.text,
+              transform: pressed ? "scale(1.1)" : "scale(1)",
+              transition: "width 0.3s cubic-bezier(.22,1,.36,1), height 0.3s cubic-bezier(.22,1,.36,1), transform 0.18s cubic-bezier(.22,1,.36,1)",
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+                 stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"
+                 style={{ transition: "transform 0.2s cubic-bezier(.22,1,.36,1)", transform: open ? "rotate(180deg)" : "none" }}>
+              <polyline points="6 15 12 9 18 15"/>
+            </svg>
+          </button>
+        </div>
 
         {open && (
-          <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
-            {WEATHER_MENU_ITEMS.map((item, i) => (
+          <div style={{
+            display: "flex", flexDirection: "column", gap: WEATHER_MENU_ITEM_GAP,
+            width: "100%", padding: `0 ${WEATHER_MENU_ITEMS_PAD}px ${WEATHER_MENU_ITEMS_PAD}px`,
+          }}>
+            {WEATHER_MENU_ITEMS.map((item) => (
               <PressableButton
                 key={item.id}
                 onClick={onToggle} // 選択したら閉じる(実際の遷移は追って実装)
                 style={{
                   height: WEATHER_MENU_ITEM_HEIGHT,
-                  padding: "0 14px",
-                  display: "flex", alignItems: "center",
-                  textAlign: "left",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  textAlign: "center",
                   fontSize: 11.5, fontWeight: 600, color: tokens.text,
                   whiteSpace: "nowrap",
-                  borderTop: `0.5px solid rgba(${tokens.ink},0.12)`,
+                  borderRadius: 10,
+                  border: `0.75px solid rgba(${tokens.ink},0.22)`,
+                  background: `rgba(${tokens.ink},0.06)`,
                 }}
               >
                 {item.label}
