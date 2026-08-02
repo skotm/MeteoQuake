@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.5a";
+const APP_VERSION = "1.5.5b";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -7951,10 +7951,27 @@ function BottomDock({
      GPSは「地点」モードを実際に見ている間だけwatchPositionで追跡し、それ以外
      (タブを離れた・一覧モードに切り替えた)は追跡を止めてバッテリー消費を避ける。
      GPSが使える間はGPS優先、拒否/非対応/未取得の間は登録地点をフォールバックに使う。
+
+     位置情報の利用目的が伝わらないままいきなりブラウザの許可ダイアログが出ると、
+     何のために・どう使われるのかが利用者に伝わらず誤解を招きかねない。そのため、
+     初めて「地点」モードを開いた時はブラウザに許可を求める前にアプリ内で目的を
+     説明する画面(WeatherLocationPanel側の「awaiting-consent」表示)を挟み、
+     利用者が明示的に「現在地を使う」を選んでから初めてgeolocationを呼び出す。
+     一度許可した後は、次回以降この説明を省略する(localStorageに記憶)。
      ───────────────────────────────────────────────────── */
   const weatherLocationActive = active === "weather" && weatherViewMode === "location";
 
-  // status: "idle"(見ていない) | "loading" | "ready" | "error" | "unsupported"
+  const WEATHER_LOCATION_CONSENT_KEY = "meteoquake_weather_location_consented_v1";
+  const [weatherLocationConsented, setWeatherLocationConsentedState] = useState(() => {
+    try { return localStorage.getItem(WEATHER_LOCATION_CONSENT_KEY) === "1"; } catch { return false; }
+  });
+  const grantWeatherLocationConsent = useCallback(() => {
+    setWeatherLocationConsentedState(true);
+    try { localStorage.setItem(WEATHER_LOCATION_CONSENT_KEY, "1"); } catch {}
+  }, []);
+
+  // status: "idle"(見ていない) | "awaiting-consent"(説明を表示中、まだブラウザには
+  // 要求していない) | "loading" | "ready" | "error" | "unsupported"
   const [geoState, setGeoState] = useState({ status: "idle", coords: null, error: null });
   useEffect(() => {
     if (!weatherLocationActive) {
@@ -7963,6 +7980,10 @@ function BottomDock({
     }
     if (!("geolocation" in navigator)) {
       setGeoState({ status: "unsupported", coords: null, error: null });
+      return;
+    }
+    if (!weatherLocationConsented) {
+      setGeoState(s => (s.status === "awaiting-consent" ? s : { status: "awaiting-consent", coords: null, error: null }));
       return;
     }
     setGeoState(s => ({ status: "loading", coords: s.coords, error: null }));
@@ -7980,7 +8001,7 @@ function BottomDock({
       { enableHighAccuracy: false, maximumAge: 60000, timeout: 15000 }
     );
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [weatherLocationActive]);
+  }, [weatherLocationActive, weatherLocationConsented]);
 
   // App側(地図の現在地マーカー=青丸の表示用)に、GPSで取れている間だけ座標を伝える。
   // このタブ・このモードを見ていない間や、GPSが使えない間はnullを伝えて地図から消す。
@@ -9573,6 +9594,7 @@ function BottomDock({
                 {active === "weather" && weatherViewMode === "location" ? (
                   <WeatherLocationPanel
                     geoState={geoState}
+                    onConsentLocation={grantWeatherLocationConsent}
                     activeWeatherPoint={activeWeatherPoint}
                     forecastState={weatherForecastState}
                     registeredWeatherPoint={registeredWeatherPoint}
@@ -10057,7 +10079,7 @@ function WeatherMenuFloating({ open, onToggle, growUp = true }) {
    登録地点(1件)の天気予報を表示する。
    ───────────────────────────────────────────────────── */
 function WeatherLocationPanel({
-  geoState, activeWeatherPoint, forecastState, registeredWeatherPoint,
+  geoState, onConsentLocation, activeWeatherPoint, forecastState, registeredWeatherPoint,
   searchOpen, onToggleSearch, searchQuery, onChangeSearchQuery, searchResults, onSelectSearchResult,
 }) {
   const { tokens } = useContext(ThemeContext);
@@ -10107,14 +10129,61 @@ function WeatherLocationPanel({
     );
   }
 
+  // ブラウザに位置情報を要求する前に、何のために・どう使うのかをアプリ内で
+  // 説明する画面。ここで「現在地を使う」を選んで初めてgeolocationを呼び出す
+  // (=続けてブラウザ自体の許可ダイアログが出る)。誤解を避けるため、送信先や
+  // 用途を明記し、使いたくない場合の代替(地点登録)も同じ画面で案内する。
+  if (!activeWeatherPoint && geoState.status === "awaiting-consent") {
+    return (
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 14,
+        padding: "36px 22px",
+      }}>
+        <PinIcon size={26}/>
+        <span style={{ fontSize: 14.5, fontWeight: 700, color: `rgba(${tokens.ink},0.9)`, textAlign: "center" }}>
+          現在地の天気を表示しますか?
+        </span>
+        <span style={{ fontSize: 12.5, color: `rgba(${tokens.ink},0.6)`, textAlign: "center", lineHeight: 1.7 }}>
+          位置情報は天気予報を調べる目的にのみ使用します。開発者のサーバーに送信・保存されることはありません。
+          「現在地を使う」を選ぶと、続けてお使いのブラウザの位置情報の確認が表示されます。
+        </span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%", maxWidth: 240 }}>
+          <PressableButton
+            onClick={onConsentLocation}
+            style={{
+              fontSize: 13.5, fontWeight: 600, color: "#fff", textAlign: "center",
+              padding: "10px 0", borderRadius: 999, background: "#0A84FF",
+            }}
+          >
+            現在地を使う
+          </PressableButton>
+          <PressableButton
+            onClick={onToggleSearch}
+            style={{
+              fontSize: 13.5, fontWeight: 600, color: `rgba(${tokens.ink},0.7)`, textAlign: "center",
+              padding: "10px 0", borderRadius: 999, background: `rgba(${tokens.ink},0.08)`,
+            }}
+          >
+            地点を登録して使う
+          </PressableButton>
+        </div>
+      </div>
+    );
+  }
+
   if (!activeWeatherPoint) {
+    const message =
+      geoState.status === "loading" ? "現在地を取得中…"
+      : geoState.status === "error" ? "現在地の利用が許可されていないか、取得できませんでした。地点を登録してください"
+      : geoState.status === "unsupported" ? "この端末・ブラウザでは現在地を利用できません。地点を登録してください"
+      : "現在地が使えません。地点を登録してください";
     return (
       <div style={{
         display: "flex", flexDirection: "column", alignItems: "center", gap: 12,
         padding: "40px 18px",
       }}>
-        <span style={{ fontSize: 14, color: `rgba(${tokens.ink},0.6)`, textAlign: "center" }}>
-          {geoState.status === "loading" ? "現在地を取得中…" : "現在地が使えません。地点を登録してください"}
+        <span style={{ fontSize: 14, color: `rgba(${tokens.ink},0.6)`, textAlign: "center", lineHeight: 1.6 }}>
+          {message}
         </span>
         <PressableButton
           onClick={onToggleSearch}
