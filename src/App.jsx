@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.3a";
+const APP_VERSION = "1.5.3b";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -6328,7 +6328,11 @@ function PanelDragHandoffCard({ onHandoffToPanelDrag, children }) {
     startX.current = e.clientX;
     startY.current = e.clientY;
     decided.current = false;
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    // ここでsetPointerCaptureは呼ばない。指を置いた時点で無条件にキャプチャして
+    // しまうと、動かさずに離しただけの単純なタップでも(ブラウザによっては)
+    // 中のボタンへclickイベントが届かなくなることがある(PCのChromium系ブラウザで
+    // 確認、iOS Safariでは問題なし)。縦ドラッグと判定できた時(下のhandlePointerMove)
+    // だけ、その場でキャプチャしてすぐパネルドラッグへ引き渡す。
   }
   function handlePointerMove(e) {
     if (pointerId.current !== e.pointerId || decided.current) return;
@@ -6338,7 +6342,6 @@ function PanelDragHandoffCard({ onHandoffToPanelDrag, children }) {
     decided.current = true;
     if (Math.abs(dy) >= Math.abs(dx)) {
       // 縦方向優位の動き = パネルの高さ調整として引き渡す(ハンドルを掴んだ時と同じ)
-      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
       pointerId.current = null;
       onHandoffToPanelDrag?.(e);
     }
