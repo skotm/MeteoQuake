@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.3b";
+const APP_VERSION = "1.5.3e";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -15472,12 +15472,25 @@ export default function App() {
     const endDate = end || new Date(); // 稀に解除が確認できなかった場合は現在時刻まで
     const tsunamiId = selectedTsunami.id;
 
+    // 気象庁の潮位観測値(tide_obs)は直近1週間程度分しか提供されておらず、
+    // それより古い日付を指定するとエラーになる。対象期間の終端(=取得対象の
+    // うち最も新しい日)がすでに1週間以上前なら、取得を試みるだけ無駄なので
+    // APIを叩かずに「取得不可」として扱う。
+    const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+    const isTooOldToFetch = Date.now() - endDate.getTime() > ONE_WEEK_MS;
+
     async function run() {
       for (const st of selectedTsunamiTideStations) {
         if (cancelled) return;
         const key = `${tsunamiId}::${st.code}`;
         if (historicalTideObsRequestedRef.current.has(key)) continue; // 取得済み・取得中ならスキップ
         historicalTideObsRequestedRef.current.add(key);
+        if (isTooOldToFetch) {
+          // 1週間以上前のデータは気象庁側に無くエラーになるだけなので、
+          // リクエストを送らずに直接「取得失敗」扱いにする。
+          setHistoricalTideObsByStation(prev => ({ ...prev, [key]: { status: "error", data: null } }));
+          continue;
+        }
         setHistoricalTideObsByStation(prev => ({ ...prev, [key]: { status: "loading", data: null } }));
         try {
           const data = await fetchTideObsForDateRange(st.code, start, endDate);
