@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.4";
+const APP_VERSION = "1.5.5a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -5802,6 +5802,15 @@ function weatherTelop(code) {
   const info = WEATHER_CODE_INFO[String(code)];
   return info ? info.telop : "不明";
 }
+const FORECAST_WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
+// timeDefines(例: "2026-08-04T00:00:00+09:00")を"8/4(火)"のような短い表示に変換する。
+function formatForecastDayLabel(iso, index) {
+  if (index === 0) return "今日";
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getMonth() + 1}/${d.getDate()}(${FORECAST_WEEKDAY_JA[d.getDay()]})`;
+}
 
 // forecast.json(office単位)から、指定class10Code(天気・降水確率用)・
 // amedasCode(気温用)に対応する「今日の天気予報」をまとめて取り出す。
@@ -5870,6 +5879,37 @@ function extractTodayForecast(forecastJson, class10Code, amedasCode) {
   };
 }
 
+// 週間予報(forecastJson[1])から、1日ごとの{日付・天気・降水確率・最高/最低気温}の
+// 配列を作る(index 0=今日 〜 6=1週間後、最大7日分)。3日間表示・週間表示どちらも
+// この配列をスライスするだけで作れる。天気・降水確率はclass10Code、気温はamedasCode
+// で該当エリアを探す(extractTodayForecastと同じ考え方)。
+function extractDailyForecasts(forecastJson, class10Code, amedasCode) {
+  if (!Array.isArray(forecastJson) || forecastJson.length < 2) return [];
+  const weekly = forecastJson[1];
+  const weatherSeries = weekly?.timeSeries?.[0];
+  if (!weatherSeries) return [];
+  const weatherArea = weatherSeries.areas?.find(a => a.area?.code === class10Code);
+  const tempArea = weekly?.timeSeries?.[1]?.areas?.find(a => a.area?.code === amedasCode);
+  const timeDefines = weatherSeries.timeDefines || [];
+
+  return timeDefines.map((date, i) => {
+    const codeRaw = weatherArea?.weatherCodes?.[i];
+    const weatherCode = codeRaw && codeRaw !== "" ? codeRaw : null;
+    const popRaw = weatherArea?.pops?.[i];
+    const pop = popRaw && popRaw !== "" ? Number(popRaw) : null;
+    const minRaw = tempArea?.tempsMin?.[i];
+    const maxRaw = tempArea?.tempsMax?.[i];
+    return {
+      date,
+      weatherCode,
+      telop: weatherCode != null ? weatherTelop(weatherCode) : null,
+      pop,
+      tempMin: minRaw && minRaw !== "" ? Number(minRaw) : null,
+      tempMax: maxRaw && maxRaw !== "" ? Number(maxRaw) : null,
+    };
+  });
+}
+
 // 緯度経度→今日の天気予報、までを一気通貫でまとめて行う。
 async function fetchCurrentLocationForecast(lat, lon) {
   const resolved = await resolveForecastLocation(lat, lon);
@@ -5878,8 +5918,26 @@ async function fetchCurrentLocationForecast(lat, lon) {
   if (!res.ok) throw new Error(`天気予報の取得に失敗(HTTP ${res.status})`);
   const json = await res.json();
   const forecast = extractTodayForecast(json, resolved.class10Code, resolved.amedasCode);
-  if (!forecast) throw new Error("天気予報データを解析できませんでした");
-  return { ...forecast, stationName: resolved.stationName, areaName: forecast.areaName || resolved.stationName };
+  const daily = extractDailyForecasts(json, resolved.class10Code, resolved.amedasCode);
+  if (!forecast && daily.length === 0) throw new Error("天気予報データを解析できませんでした");
+  // 週間予報の1日目(今日)は6時間ごとの詳しい値を持つ短期予報側の値で上書きする
+  // (降水確率・気温の精度が高いため)。
+  if (daily.length > 0 && forecast) {
+    daily[0] = {
+      ...daily[0],
+      weatherCode: forecast.weatherCode ?? daily[0].weatherCode,
+      telop: forecast.telop ?? daily[0].telop,
+      pop: forecast.pop ?? daily[0].pop,
+      tempMin: forecast.tempMin ?? daily[0].tempMin,
+      tempMax: forecast.tempMax ?? daily[0].tempMax,
+    };
+  }
+  return {
+    ...(forecast || daily[0] || {}),
+    areaName: forecast?.areaName || resolved.stationName,
+    stationName: resolved.stationName,
+    daily,
+  };
 }
 
 async function fetchTideStations() {
@@ -9104,62 +9162,6 @@ function BottomDock({
         )
       )}
 
-      {/* 気象タブの「地点」モード用 — 一覧モードのメニューと同じ枠に、現在地(GPS)
-          または登録地点の天気予報カードを浮かべる。 */}
-      {!eewDetailOpen && active === "weather" && weatherViewMode === "location" && (
-        isWide && wideAnchorRect ? createPortal(
-          <div style={{
-            position: "fixed",
-            left: wideAnchorRect.right + 12,
-            top: wideAnchorRect.top + 16,
-            zIndex: 50,
-          }}>
-            <CurrentWeatherFloating
-              geoState={geoState}
-              activeWeatherPoint={activeWeatherPoint}
-              forecastState={weatherForecastState}
-              registeredWeatherPoint={registeredWeatherPoint}
-              searchOpen={weatherPointSearchOpen}
-              onToggleSearch={() => setWeatherPointSearchOpen(v => !v)}
-              searchQuery={weatherPointSearchQuery}
-              onChangeSearchQuery={setWeatherPointSearchQuery}
-              searchResults={weatherPointSearchResults}
-              onSelectSearchResult={(r) => {
-                setRegisteredWeatherPoint({ name: r.name, lat: r.lat, lon: r.lon });
-                setWeatherPointSearchOpen(false);
-                setWeatherPointSearchQuery("");
-              }}
-            />
-          </div>,
-          document.body
-        ) : (
-        <div style={{
-          position: "absolute",
-          right: 16,
-          bottom: backButtonBottom,
-          transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
-          zIndex: 10,
-        }}>
-          <CurrentWeatherFloating
-            geoState={geoState}
-            activeWeatherPoint={activeWeatherPoint}
-            forecastState={weatherForecastState}
-            registeredWeatherPoint={registeredWeatherPoint}
-            searchOpen={weatherPointSearchOpen}
-            onToggleSearch={() => setWeatherPointSearchOpen(v => !v)}
-            searchQuery={weatherPointSearchQuery}
-            onChangeSearchQuery={setWeatherPointSearchQuery}
-            searchResults={weatherPointSearchResults}
-            onSelectSearchResult={(r) => {
-              setRegisteredWeatherPoint({ name: r.name, lat: r.lat, lon: r.lon });
-              setWeatherPointSearchOpen(false);
-              setWeatherPointSearchQuery("");
-            }}
-          />
-        </div>
-        )
-      )}
-
       {(() => {
         const GlassOrPlain = isWide ? "div" : Glass;
         const glassProps = isWide
@@ -9568,17 +9570,36 @@ function BottomDock({
                   />
                 )}
 
-                <div style={{
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  flexDirection: "column", gap: 6,
-                  padding: "48px 18px",
-                }}>
-                  <span style={{ fontSize: 15, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>
-                    現在開発中です
-                  </span>
-                </div>
+                {active === "weather" && weatherViewMode === "location" ? (
+                  <WeatherLocationPanel
+                    geoState={geoState}
+                    activeWeatherPoint={activeWeatherPoint}
+                    forecastState={weatherForecastState}
+                    registeredWeatherPoint={registeredWeatherPoint}
+                    searchOpen={weatherPointSearchOpen}
+                    onToggleSearch={() => setWeatherPointSearchOpen(v => !v)}
+                    searchQuery={weatherPointSearchQuery}
+                    onChangeSearchQuery={setWeatherPointSearchQuery}
+                    searchResults={weatherPointSearchResults}
+                    onSelectSearchResult={(r) => {
+                      setRegisteredWeatherPoint({ name: r.name, lat: r.lat, lon: r.lon });
+                      setWeatherPointSearchOpen(false);
+                      setWeatherPointSearchQuery("");
+                    }}
+                  />
+                ) : (
+                  <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    flexDirection: "column", gap: 6,
+                    padding: "48px 18px",
+                  }}>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>
+                      現在開発中です
+                    </span>
+                  </div>
+                )}
 
-                {/* フローティング部分(開発中プレースホルダー)とボタン類(ナビ行)の境界線 */}
+                {/* フローティング部分(設定メニュー)とボタン類(ナビ行)の境界線 */}
                 <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
               </>
             ) : (
@@ -10030,128 +10051,185 @@ function WeatherMenuFloating({ open, onToggle, growUp = true }) {
 }
 
 /* ─────────────────────────────────────────────────────
-   CURRENT WEATHER FLOATING — 気象タブ「地点(ピン)」モードで使う、現在地(GPS)
-   または登録地点(1件)の天気予報を表示する小さなガラスカード。
-   WeatherMenuFloatingと違い開閉トグルは持たず、常に展開状態のカードとして
-   表示する。GPSが拒否/未取得で登録地点も無い場合は、地点登録の検索窓を
-   開くための簡単な案内だけを出す。
+   WEATHER LOCATION PANEL — 気象タブ「地点(ピン)」モードの中身。フローティング
+   の小さなカードではなく、既存の「現在開発中です」プレースホルダーが出ていた
+   パネル枠(設定メニュー・地図レイヤー一覧と同じ場所)に、現在地(GPS)または
+   登録地点(1件)の天気予報を表示する。
    ───────────────────────────────────────────────────── */
-function CurrentWeatherFloating({
+function WeatherLocationPanel({
   geoState, activeWeatherPoint, forecastState, registeredWeatherPoint,
   searchOpen, onToggleSearch, searchQuery, onChangeSearchQuery, searchResults, onSelectSearchResult,
 }) {
   const { tokens } = useContext(ThemeContext);
-  const CARD_WIDTH = 190;
+  const [rangeMode, setRangeMode] = useState("3day"); // "3day" | "week"
 
-  let body;
   if (searchOpen) {
-    body = (
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8, width: CARD_WIDTH - 16 }}>
-        <div style={{ fontSize: 11.5, fontWeight: 600, color: tokens.text }}>地点を登録</div>
+    return (
+      <div style={{ padding: "14px 18px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.9)` }}>地点を登録</span>
+          <PressableButton
+            onClick={onToggleSearch}
+            style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}
+          >
+            閉じる
+          </PressableButton>
+        </div>
         <input
           value={searchQuery}
           onChange={(e) => onChangeSearchQuery(e.target.value)}
           placeholder="地名で検索(例: 横浜)"
           style={{
-            fontSize: 12, padding: "6px 8px", borderRadius: 8,
+            fontSize: 14, padding: "9px 12px", borderRadius: 10,
             border: `0.75px solid rgba(${tokens.ink},0.22)`,
-            background: `rgba(${tokens.ink},0.06)`, color: tokens.text, outline: "none",
+            background: `rgba(${tokens.ink},0.05)`, color: `rgba(${tokens.ink},0.9)`, outline: "none",
           }}
         />
-        <div style={{ maxHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
-          {searchResults.map(r => (
-            <PressableButton
-              key={r.code}
-              onClick={() => onSelectSearchResult(r)}
-              style={{
-                textAlign: "left", fontSize: 12, color: tokens.text,
-                padding: "6px 8px", borderRadius: 8,
-                background: `rgba(${tokens.ink},0.06)`,
-              }}
-            >
-              {r.name}
-            </PressableButton>
+        <div style={{ display: "flex", flexDirection: "column", maxHeight: 240, overflowY: "auto" }}>
+          {searchResults.map((r, i) => (
+            <div key={r.code}>
+              {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.1)` }}/>}
+              <PressableButton
+                onClick={() => onSelectSearchResult(r)}
+                style={{ textAlign: "left", fontSize: 14, color: `rgba(${tokens.ink},0.85)`, padding: "10px 4px", width: "100%" }}
+              >
+                {r.name}
+              </PressableButton>
+            </div>
           ))}
           {searchQuery.trim() && searchResults.length === 0 && (
-            <div style={{ fontSize: 11, color: tokens.text, opacity: 0.6, padding: "4px 2px" }}>
+            <div style={{ fontSize: 13, color: `rgba(${tokens.ink},0.5)`, padding: "10px 4px" }}>
               見つかりませんでした
             </div>
           )}
         </div>
-        <PressableButton
-          onClick={onToggleSearch}
-          style={{
-            fontSize: 11.5, fontWeight: 600, color: tokens.text, textAlign: "center",
-            padding: "6px 0", borderRadius: 8, background: `rgba(${tokens.ink},0.06)`,
-          }}
-        >
-          閉じる
-        </PressableButton>
       </div>
     );
-  } else if (!activeWeatherPoint) {
-    body = (
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: 10, width: CARD_WIDTH - 20 }}>
-        <div style={{ fontSize: 11.5, color: tokens.text, lineHeight: 1.4 }}>
-          {geoState.status === "loading" ? "現在地を取得中…" : "現在地が使えません"}
-        </div>
+  }
+
+  if (!activeWeatherPoint) {
+    return (
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 12,
+        padding: "40px 18px",
+      }}>
+        <span style={{ fontSize: 14, color: `rgba(${tokens.ink},0.6)`, textAlign: "center" }}>
+          {geoState.status === "loading" ? "現在地を取得中…" : "現在地が使えません。地点を登録してください"}
+        </span>
         <PressableButton
           onClick={onToggleSearch}
           style={{
-            fontSize: 11.5, fontWeight: 600, color: tokens.text, textAlign: "center",
-            padding: "6px 0", borderRadius: 8, background: `rgba(${tokens.ink},0.06)`,
+            fontSize: 13.5, fontWeight: 600, color: "#fff",
+            padding: "9px 18px", borderRadius: 999, background: "#0A84FF",
           }}
         >
           地点を登録
         </PressableButton>
       </div>
     );
-  } else if (forecastState.status === "loading" || forecastState.status === "idle") {
-    body = <div style={{ padding: 12, fontSize: 11.5, color: tokens.text }}>天気予報を取得中…</div>;
-  } else if (forecastState.status === "error") {
-    body = <div style={{ padding: 12, fontSize: 11.5, color: tokens.text }}>天気予報を取得できませんでした</div>;
-  } else {
-    const f = forecastState.data;
-    body = (
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: 10, width: CARD_WIDTH - 20 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: tokens.text, opacity: 0.75 }}>
-            {activeWeatherPoint.source === "gps" ? "現在地" : (registeredWeatherPoint?.name || f.areaName)}
-          </div>
-          <button
-            onClick={onToggleSearch}
-            aria-label="地点を変更"
-            style={{
-              width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center",
-              color: tokens.text, opacity: 0.6, background: "none", border: "none",
-            }}
-          >
-            <PinIcon size={13}/>
-          </button>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {f.weatherCode != null && (
-            <img src={weatherIconUrl(f.weatherCode)} alt="" width={34} height={34}/>
-          )}
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: tokens.text }}>{f.telop || "-"}</div>
-            <div style={{ fontSize: 11, color: tokens.text, opacity: 0.75 }}>
-              {f.tempMax != null ? `${f.tempMax}°` : "--°"} / {f.tempMin != null ? `${f.tempMin}°` : "--°"}
-              {f.pop != null ? `　降水${f.pop}%` : ""}
-            </div>
-          </div>
-        </div>
+  }
+
+  if (forecastState.status === "loading" || forecastState.status === "idle") {
+    return (
+      <div style={{ padding: "40px 18px", textAlign: "center", fontSize: 14, color: `rgba(${tokens.ink},0.6)` }}>
+        天気予報を取得中…
+      </div>
+    );
+  }
+  if (forecastState.status === "error") {
+    return (
+      <div style={{ padding: "40px 18px", textAlign: "center", fontSize: 14, color: `rgba(${tokens.ink},0.6)` }}>
+        天気予報を取得できませんでした
       </div>
     );
   }
 
+  const f = forecastState.data;
+  const daily = f.daily || [];
+  const visibleDays = rangeMode === "week" ? daily.slice(0, 7) : daily.slice(0, 3);
   return (
-    <Glass radius={18} style={{ width: CARD_WIDTH, borderRadius: 18, overflow: "hidden" }}>
-      {body}
-    </Glass>
+    <div style={{ padding: "16px 18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: `rgba(${tokens.ink},0.6)` }}>
+          {activeWeatherPoint.source === "gps" ? "現在地" : (registeredWeatherPoint?.name || f.areaName)}
+        </span>
+        <PressableButton
+          onClick={onToggleSearch}
+          style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}
+        >
+          地点を変更
+        </PressableButton>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        {f.weatherCode != null && (
+          <img src={weatherIconUrl(f.weatherCode)} alt="" width={56} height={56}/>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={{ fontSize: 19, fontWeight: 700, color: `rgba(${tokens.ink},0.92)` }}>{f.telop || "-"}</span>
+          <span style={{ fontSize: 14, color: `rgba(${tokens.ink},0.7)` }}>
+            {f.tempMax != null ? `${f.tempMax}°` : "--°"} / {f.tempMin != null ? `${f.tempMin}°` : "--°"}
+            {f.pop != null ? `　降水確率 ${f.pop}%` : ""}
+          </span>
+        </div>
+      </div>
+
+      {daily.length > 0 && (
+        <>
+          <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.12)`, margin: "2px 0" }}/>
+
+          {/* 3日間/週間の切り替え。iOS設定アプリ等でよく見る、2択の丸みを帯びた
+              セグメントコントロール。 */}
+          <div style={{
+            display: "flex", padding: 2, borderRadius: 9,
+            background: `rgba(${tokens.ink},0.07)`, alignSelf: "flex-start",
+          }}>
+            {[{ id: "3day", label: "3日間" }, { id: "week", label: "週間" }].map(opt => (
+              <PressableButton
+                key={opt.id}
+                onClick={() => setRangeMode(opt.id)}
+                style={{
+                  fontSize: 12.5, fontWeight: 600, padding: "5px 14px", borderRadius: 7,
+                  color: rangeMode === opt.id ? tokens.text : `rgba(${tokens.ink},0.55)`,
+                  background: rangeMode === opt.id ? (tokens.cardBg || `rgba(${tokens.ink},0.16)`) : "transparent",
+                }}
+              >
+                {opt.label}
+              </PressableButton>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {visibleDays.map((d, i) => (
+              <div key={d.date || i}>
+                {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.1)` }}/>}
+                <div style={{ display: "flex", alignItems: "center", padding: "9px 2px", gap: 10 }}>
+                  <span style={{ fontSize: 13.5, color: `rgba(${tokens.ink},0.8)`, width: 56, flexShrink: 0 }}>
+                    {formatForecastDayLabel(d.date, i)}
+                  </span>
+                  {d.weatherCode != null ? (
+                    <img src={weatherIconUrl(d.weatherCode)} alt="" width={28} height={28}/>
+                  ) : (
+                    <div style={{ width: 28, height: 28 }}/>
+                  )}
+                  <span style={{ fontSize: 12.5, color: `rgba(${tokens.ink},0.55)`, width: 44, flexShrink: 0 }}>
+                    {d.pop != null ? `${d.pop}%` : ""}
+                  </span>
+                  <span style={{ fontSize: 13.5, color: `rgba(${tokens.ink},0.9)`, marginLeft: "auto", textAlign: "right" }}>
+                    {d.tempMax != null ? `${d.tempMax}°` : "--°"}
+                    {" / "}
+                    <span style={{ color: `rgba(${tokens.ink},0.55)` }}>
+                      {d.tempMin != null ? `${d.tempMin}°` : "--°"}
+                    </span>
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
-
 function BackToListButton({ onClick, label = "地震一覧に戻る" }) {
   const { tokens } = useContext(ThemeContext);
   // ナビ行のガラスハイライトと同じ、"押し込むとガラスが少し膨らむ"演出。
