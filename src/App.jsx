@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.5c";
+const APP_VERSION = "1.5.5d";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -7965,7 +7965,7 @@ function BottomDock({
   const [weatherLocationConsented, setWeatherLocationConsentedState] = useState(() => {
     try { return localStorage.getItem(WEATHER_LOCATION_CONSENT_KEY) === "1"; } catch { return false; }
   });
-  const grantWeatherLocationConsent = useCallback(() => {
+  const markWeatherLocationConsented = useCallback(() => {
     setWeatherLocationConsentedState(true);
     try { localStorage.setItem(WEATHER_LOCATION_CONSENT_KEY, "1"); } catch {}
   }, []);
@@ -7981,6 +7981,36 @@ function BottomDock({
   // status: "idle"(見ていない) | "awaiting-consent"(説明を表示中、まだブラウザには
   // 要求していない) | "loading" | "ready" | "error" | "unsupported"
   const [geoState, setGeoState] = useState({ status: "idle", coords: null, error: null });
+
+  // iOS Safari等のブラウザでは、位置情報のブラウザ許可ダイアログは「利用者の
+  // クリック操作の中で直接geolocationを呼び出した場合」しか出ない。useEffect側
+  // (クリックとは別の非同期タイミング)から初回のリクエストを投げると、許可待ちの
+  // "ユーザー操作あり"扱いにならず、ダイアログが出ないまま静かに失敗することがある。
+  // そのため、初回の許可要求(=ボタンのonClickから直接呼ぶ)はgetCurrentPositionで
+  // 同期的に行い、既に許可済み(weatherLocationConsented)の場合の継続的な追跡だけを
+  // 下のuseEffectのwatchPositionに任せる。
+  const requestWeatherLocationPermission = useCallback(() => {
+    if (!("geolocation" in navigator)) {
+      setGeoState({ status: "unsupported", coords: null, error: null });
+      return;
+    }
+    setGeoState(s => ({ status: "loading", coords: s.coords, error: null }));
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        markWeatherLocationConsented();
+        setGeoState({
+          status: "ready",
+          coords: { lat: pos.coords.latitude, lon: pos.coords.longitude },
+          error: null,
+        });
+      },
+      (err) => {
+        setGeoState(s => ({ status: "error", coords: s.coords, error: err }));
+      },
+      { enableHighAccuracy: false, maximumAge: 60000, timeout: 15000 }
+    );
+  }, [markWeatherLocationConsented]);
+
   useEffect(() => {
     if (!weatherLocationActive) {
       setGeoState(s => (s.status === "idle" ? s : { status: "idle", coords: null, error: null }));
@@ -7991,9 +8021,14 @@ function BottomDock({
       return;
     }
     if (!weatherLocationConsented) {
+      // まだ一度も許可されていない場合は、ここでは何もしない(呼び出すと許可
+      // ダイアログが出ないブラウザがあるため)。ボタンのonClickから直接
+      // requestWeatherLocationPermissionを呼んでもらうまで説明画面のまま待つ。
       setGeoState(s => (s.status === "awaiting-consent" ? s : { status: "awaiting-consent", coords: null, error: null }));
       return;
     }
+    // 既に許可済みなら、ここから継続的な追跡(watchPosition)を始めてよい。
+    // 許可済みの状態でのgeolocation呼び出しはユーザー操作なしでも動く。
     setGeoState(s => ({ status: "loading", coords: s.coords, error: null }));
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
@@ -9602,7 +9637,7 @@ function BottomDock({
                 {active === "weather" && weatherViewMode === "location" ? (
                   <WeatherLocationPanel
                     geoState={geoState}
-                    onConsentLocation={grantWeatherLocationConsent}
+                    onConsentLocation={requestWeatherLocationPermission}
                     onResetLocationConsent={resetWeatherLocationConsent}
                     activeWeatherPoint={activeWeatherPoint}
                     forecastState={weatherForecastState}
