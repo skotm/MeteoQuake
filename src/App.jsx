@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.6d";
+const APP_VERSION = "1.5.6e";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10610,11 +10610,11 @@ function WeatherLocationPanel({
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           {f.weatherCode != null && (
             <div style={{
-              width: 56, height: 56, borderRadius: 14, flexShrink: 0,
+              width: 68, height: 68, borderRadius: 16, flexShrink: 0,
               background: "rgba(142,142,147,0.16)",
               display: "flex", alignItems: "center", justifyContent: "center",
             }}>
-              <img src={weatherIconUrl(f.weatherCode)} alt="" width={52} height={52}/>
+              <img src={weatherIconUrl(f.weatherCode)} alt="" width={68} height={68}/>
             </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -10653,14 +10653,14 @@ function WeatherLocationPanel({
                     </span>
                     {e.weatherCode != null ? (
                       <div style={{
-                        width: 26, height: 26, borderRadius: 7, flexShrink: 0,
+                        width: 34, height: 34, borderRadius: 9, flexShrink: 0,
                         background: "rgba(142,142,147,0.16)",
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
-                        <img src={weatherIconUrl(e.weatherCode)} alt={e.weather || ""} width={24} height={24}/>
+                        <img src={weatherIconUrl(e.weatherCode)} alt={e.weather || ""} width={34} height={34}/>
                       </div>
                     ) : (
-                      <div style={{ width: 26, height: 26 }}/>
+                      <div style={{ width: 34, height: 34 }}/>
                     )}
                     <span style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.9)` }}>
                       {e.temperature != null ? `${e.temperature}°` : "--°"}
@@ -10707,14 +10707,14 @@ function WeatherLocationPanel({
                     </span>
                     {d.weatherCode != null ? (
                       <div style={{
-                        width: 28, height: 28, borderRadius: 7, flexShrink: 0,
+                        width: 36, height: 36, borderRadius: 9, flexShrink: 0,
                         background: "rgba(142,142,147,0.16)",
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
-                        <img src={weatherIconUrl(d.weatherCode)} alt="" width={26} height={26}/>
+                        <img src={weatherIconUrl(d.weatherCode)} alt="" width={36} height={36}/>
                       </div>
                     ) : (
-                      <div style={{ width: 28, height: 28 }}/>
+                      <div style={{ width: 36, height: 36 }}/>
                     )}
                     <span style={{ fontSize: 12.5, color: `rgba(${tokens.ink},0.55)`, width: 44, flexShrink: 0 }}>
                       {d.pop != null ? `${d.pop}%` : ""}
