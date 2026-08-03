@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.6a";
+const APP_VERSION = "1.5.6b";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -5959,6 +5959,21 @@ function weatherTelop(code) {
   const info = WEATHER_CODE_INFO[String(code)];
   return info ? info.telop : "不明";
 }
+// 地域時系列予報(VPFD)は天気をweatherCodesではなく「くもり」「雨」のような短い
+// テキストでしか返さない。3時間ごとの1コマにつき単一の天気語(「時々」「後」の
+// ような複合表現は含まない)なので、キーワードを含むかどうかの単純な判定で
+// weatherCode(100/200/300/400系)に割り当て、既存のweatherIconUrlでアイコン化する。
+// 気になる点の優先順位は雷>雪>雨>霧>曇>晴(荒天要素を優先して見せる)。
+function weatherTextToCode(text) {
+  if (!text) return null;
+  if (text.includes("雷")) return "300";
+  if (text.includes("雪") || text.includes("あられ") || text.includes("ひょう")) return "400";
+  if (text.includes("雨")) return "300";
+  if (text.includes("霧")) return "200";
+  if (text.includes("曇") || text.includes("くもり")) return "200";
+  if (text.includes("晴")) return "100";
+  return null;
+}
 const FORECAST_WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
 // timeDefines(例: "2026-08-04T00:00:00+09:00")を"8/4(火)"のような短い表示に変換する。
 function formatForecastDayLabel(iso, index) {
@@ -6139,12 +6154,16 @@ function parseAreaTimeSeries(json) {
       tempByTime[td.dateTime] = raw != null && raw !== "" ? Number(raw) : null;
     });
   }
-  return area.timeDefines.map((td, i) => ({
-    dateTime: td.dateTime,
-    weather: area.weather?.[i] || null,
-    wind: area.wind?.[i] || null,
-    temperature: tempByTime[td.dateTime] ?? null,
-  }));
+  return area.timeDefines.map((td, i) => {
+    const weather = area.weather?.[i] || null;
+    return {
+      dateTime: td.dateTime,
+      weather,
+      weatherCode: weatherTextToCode(weather),
+      wind: area.wind?.[i] || null,
+      temperature: tempByTime[td.dateTime] ?? null,
+    };
+  });
 }
 async function fetchAreaTimeSeries(class10Code) {
   const res = await fetch(areaTimeSeriesUrl(class10Code));
@@ -10601,6 +10620,46 @@ function WeatherLocationPanel({
           </div>
         </div>
 
+        {timeSeriesState.status === "ready" && timeSeriesState.data?.entries?.length > 0 && (
+          <>
+            <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.12)`, margin: "2px 0" }}/>
+            <span style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}>
+              地域時系列予報
+            </span>
+            <div style={{ display: "flex", overflowX: "auto", gap: 2, marginLeft: -18, marginRight: -18, paddingLeft: 18, paddingRight: 18 }}>
+              {timeSeriesState.data.entries.map((e, i) => {
+                const prevDate = i > 0 ? timeSeriesState.data.entries[i - 1].dateTime : null;
+                const dateChanged = formatTimeSeriesDateChanged(e.dateTime, prevDate);
+                return (
+                  <div
+                    key={e.dateTime || i}
+                    style={{
+                      display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                      flexShrink: 0, width: 52, padding: "6px 0",
+                      borderLeft: dateChanged && i > 0 ? `0.5px solid rgba(${tokens.ink},0.15)` : "none",
+                    }}
+                  >
+                    <span style={{ fontSize: 9.5, color: `rgba(${tokens.ink},0.45)`, height: 12 }}>
+                      {dateChanged ? formatForecastDayLabel(e.dateTime, 1).replace(/\(.\)$/, "") : ""}
+                    </span>
+                    <span style={{ fontSize: 11.5, color: `rgba(${tokens.ink},0.7)` }}>
+                      {formatTimeSeriesHour(e.dateTime)}
+                    </span>
+                    {e.weatherCode != null ? (
+                      <img src={weatherIconUrl(e.weatherCode)} alt={e.weather || ""} width={26} height={26}/>
+                    ) : (
+                      <div style={{ width: 26, height: 26 }}/>
+                    )}
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.9)` }}>
+                      {e.temperature != null ? `${e.temperature}°` : "--°"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
         {daily.length > 0 && (
           <>
             <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.12)`, margin: "2px 0" }}/>
@@ -10652,47 +10711,6 @@ function WeatherLocationPanel({
                   </div>
                 </div>
               ))}
-            </div>
-          </>
-        )}
-
-        {timeSeriesState.status === "ready" && timeSeriesState.data?.entries?.length > 0 && (
-          <>
-            <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.12)`, margin: "2px 0" }}/>
-            <span style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}>
-              地域時系列予報
-            </span>
-            <div style={{ display: "flex", overflowX: "auto", gap: 2, marginLeft: -18, marginRight: -18, paddingLeft: 18, paddingRight: 18 }}>
-              {timeSeriesState.data.entries.map((e, i) => {
-                const prevDate = i > 0 ? timeSeriesState.data.entries[i - 1].dateTime : null;
-                const dateChanged = formatTimeSeriesDateChanged(e.dateTime, prevDate);
-                return (
-                  <div
-                    key={e.dateTime || i}
-                    style={{
-                      display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-                      flexShrink: 0, width: 52, padding: "6px 0",
-                      borderLeft: dateChanged && i > 0 ? `0.5px solid rgba(${tokens.ink},0.15)` : "none",
-                    }}
-                  >
-                    <span style={{ fontSize: 9.5, color: `rgba(${tokens.ink},0.45)`, height: 12 }}>
-                      {dateChanged ? formatForecastDayLabel(e.dateTime, 1).replace(/\(.\)$/, "") : ""}
-                    </span>
-                    <span style={{ fontSize: 11.5, color: `rgba(${tokens.ink},0.7)` }}>
-                      {formatTimeSeriesHour(e.dateTime)}
-                    </span>
-                    <span style={{
-                      fontSize: 10, color: `rgba(${tokens.ink},0.75)`, textAlign: "center",
-                      lineHeight: 1.25, minHeight: 24,
-                    }}>
-                      {e.weather || ""}
-                    </span>
-                    <span style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.9)` }}>
-                      {e.temperature != null ? `${e.temperature}°` : "--°"}
-                    </span>
-                  </div>
-                );
-              })}
             </div>
           </>
         )}
