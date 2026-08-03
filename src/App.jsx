@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.5e";
+const APP_VERSION = "1.5.5f";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -8032,10 +8032,19 @@ function BottomDock({
     setGeoState(s => ({ status: "loading", coords: s.coords, error: null }));
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        setGeoState({
-          status: "ready",
-          coords: { lat: pos.coords.latitude, lon: pos.coords.longitude },
-          error: null,
+        setGeoState(s => {
+          const next = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+          if (s.status === "ready" && s.coords) {
+            // GPSは数メートル単位で常に細かく揺らぐため、座標オブジェクトを毎回
+            // 作り直すと(下流のactiveWeatherPoint→天気予報の再取得の
+            // useEffectが依存しているlat/lonが毎回変わったと誤認識し)数秒おきに
+            // 天気予報を取り直してフローティングがちらつく/読み込み直したように
+            // 見えてしまう。実質的に同じ場所とみなせる範囲(約300m未満の移動)
+            // なら、座標はあえて更新しない。
+            const movedKm2 = fastDist2(s.coords.lat, s.coords.lon, next.lat, next.lon);
+            if (movedKm2 < 0.3 * 0.3) return s;
+          }
+          return { status: "ready", coords: next, error: null };
         });
       },
       (err) => {
