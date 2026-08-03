@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.5f";
+const APP_VERSION = "1.5.6";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -5405,6 +5405,163 @@ function polygonRoughCentroid(geometry) {
   return { lat: sumLat / ring.length, lon: sumLon / ring.length };
 }
 
+/* ─────────────────────────────────────────────────────
+   市区町村境界データ(map/warning_areas.json、気象庁の警報等発表区域と同じ単位の
+   市区町村ポリゴン、1,821件)。次の2つの用途に使う。
+     1. 現在地(緯度経度)から、その地点を含む市区町村を逆引きして表示名を出す
+        (点がポリゴンの内側にあるかのレイキャスティング判定)。
+     2. 地点登録の五十音順選択(あかさたなはまやらわ→あいうえお→一覧)用の
+        市区町村名・読みの一覧を作る。
+   ───────────────────────────────────────────────────── */
+const WARNING_AREAS_URL = `${import.meta.env.BASE_URL}map/warning_areas.json`;
+
+function computeGeoJsonBBox(geometry) {
+  let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
+  const visit = (coords) => {
+    if (typeof coords[0] === "number") {
+      const [lon, lat] = coords;
+      if (lon < minLon) minLon = lon;
+      if (lon > maxLon) maxLon = lon;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    } else {
+      for (const c of coords) visit(c);
+    }
+  };
+  visit(geometry.coordinates);
+  return [minLon, minLat, maxLon, maxLat];
+}
+
+// 標準的なレイキャスティング(交差数)判定による点-in-リング判定。
+function pointInRing(lon, lat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    const intersect = ((yi > lat) !== (yj > lat)) &&
+      (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+function pointInPolygonRings(lon, lat, rings) {
+  if (!rings || rings.length === 0 || !pointInRing(lon, lat, rings[0])) return false;
+  for (let i = 1; i < rings.length; i++) {
+    if (pointInRing(lon, lat, rings[i])) return false; // 穴(内側のリング)の中は除外
+  }
+  return true;
+}
+function pointInGeoJsonGeometry(lon, lat, geometry) {
+  if (!geometry) return false;
+  if (geometry.type === "Polygon") return pointInPolygonRings(lon, lat, geometry.coordinates);
+  if (geometry.type === "MultiPolygon") {
+    return (geometry.coordinates || []).some(rings => pointInPolygonRings(lon, lat, rings));
+  }
+  return false;
+}
+
+let warningAreasPromise = null;
+function loadWarningAreas() {
+  if (!warningAreasPromise) {
+    warningAreasPromise = cachedFetchJSON(WARNING_AREAS_URL).then(data =>
+      (data.features || []).map(f => ({
+        properties: f.properties,
+        geometry: f.geometry,
+        bbox: computeGeoJsonBBox(f.geometry),
+      }))
+    );
+  }
+  return warningAreasPromise;
+}
+
+// 地点登録の五十音ピッカー用に、市区町村名・読み・代表座標(ポリゴン頂点の
+// 単純平均)だけの軽量な一覧を作る(ジオメトリ自体は逆引き判定にしか使わないため
+// 持ち回らない)。
+async function loadWarningAreaMunicipalities() {
+  const features = await loadWarningAreas();
+  return features.map(f => {
+    const centroid = polygonRoughCentroid(f.geometry);
+    return {
+      regioncode: f.properties.regioncode,
+      name: f.properties.name,
+      regionname: f.properties.regionname,
+      namekana: f.properties.namekana || "",
+      lat: centroid?.lat ?? null,
+      lon: centroid?.lon ?? null,
+    };
+  }).filter(m => m.lat != null && m.lon != null);
+}
+
+// 緯度経度からその地点を含む市区町村を逆引きする。まずbboxで簡易に絞り込んでから
+// レイキャスティング判定を行う(1,821件全部に対してリング判定するのは無駄なため)。
+async function findMunicipalityAtPoint(lat, lon) {
+  const features = await loadWarningAreas();
+  for (const f of features) {
+    const [minLon, minLat, maxLon, maxLat] = f.bbox;
+    if (lon < minLon || lon > maxLon || lat < minLat || lat > maxLat) continue;
+    if (pointInGeoJsonGeometry(lon, lat, f.geometry)) return f.properties;
+  }
+  return null;
+}
+
+// 五十音(あかさたなはまやらわ)の行・段の定義。「あかさたなはまやらわ」の
+// ボタン(1段目)→選んだ行の中の段(例: あいうえお)(2段目)→一覧、の
+// 2段階の絞り込みに使う。
+const KANA_ROWS = [
+  { key: "あ", columns: ["あ", "い", "う", "え", "お"] },
+  { key: "か", columns: ["か", "き", "く", "け", "こ"] },
+  { key: "さ", columns: ["さ", "し", "す", "せ", "そ"] },
+  { key: "た", columns: ["た", "ち", "つ", "て", "と"] },
+  { key: "な", columns: ["な", "に", "ぬ", "ね", "の"] },
+  { key: "は", columns: ["は", "ひ", "ふ", "へ", "ほ"] },
+  { key: "ま", columns: ["ま", "み", "む", "め", "も"] },
+  { key: "や", columns: ["や", "ゆ", "よ"] },
+  { key: "ら", columns: ["ら", "り", "る", "れ", "ろ"] },
+  { key: "わ", columns: ["わ", "を", "ん"] },
+];
+// 濁音・半濁音・拗音・促音・小書き文字を、五十音表での分類上の基本の文字に正規化する
+// (例: 「が」は「か」行「か」段として分類する、辞書の見出し語順と同じ考え方)。
+const KANA_BASE_MAP = {
+  "が": "か", "ぎ": "き", "ぐ": "く", "げ": "け", "ご": "こ",
+  "ざ": "さ", "じ": "し", "ず": "す", "ぜ": "せ", "ぞ": "そ",
+  "だ": "た", "ぢ": "ち", "づ": "つ", "で": "て", "ど": "と",
+  "ば": "は", "び": "ひ", "ぶ": "ふ", "べ": "へ", "ぼ": "ほ",
+  "ぱ": "は", "ぴ": "ひ", "ぷ": "ふ", "ぺ": "へ", "ぽ": "ほ",
+  "ゃ": "や", "ゅ": "ゆ", "ょ": "よ", "っ": "つ",
+  "ぁ": "あ", "ぃ": "い", "ぅ": "う", "ぇ": "え", "ぉ": "お",
+};
+// 「段の文字」→{行key, 段文字}のフラットな逆引きマップを1回だけ作る。
+const KANA_CHAR_TO_ROWCOL = (() => {
+  const map = {};
+  for (const row of KANA_ROWS) {
+    for (const col of row.columns) map[col] = { rowKey: row.key, colChar: col };
+  }
+  return map;
+})();
+function classifyKanaChar(ch) {
+  if (!ch) return null;
+  const base = KANA_BASE_MAP[ch] || ch;
+  return KANA_CHAR_TO_ROWCOL[base] || null;
+}
+// 市区町村一覧(loadWarningAreaMunicipalities()の結果)を、行→段→(その段に属する
+// 市区町村の配列、namekana昇順)の入れ子オブジェクトに分類する。
+function groupMunicipalitiesByKana(municipalities) {
+  const grouped = {};
+  for (const m of municipalities) {
+    const cls = classifyKanaChar((m.namekana || "")[0]);
+    if (!cls) continue;
+    grouped[cls.rowKey] = grouped[cls.rowKey] || {};
+    grouped[cls.rowKey][cls.colChar] = grouped[cls.rowKey][cls.colChar] || [];
+    grouped[cls.rowKey][cls.colChar].push(m);
+  }
+  for (const rowKey in grouped) {
+    for (const colChar in grouped[rowKey]) {
+      grouped[rowKey][colChar].sort((a, b) => a.namekana.localeCompare(b.namekana, "ja"));
+    }
+  }
+  return grouped;
+}
+
 // 計測震度(連続値)を気象庁の震度階級に変換する(「震度を知る」の計測震度→震度階級の対応表)。
 function instrumentalIntensityToScaleKey(i) {
   if (i < 0.5) return "0";
@@ -7950,7 +8107,8 @@ function BottomDock({
      気象タブ「地点」モード — 現在地(GPS)または登録地点(1件のみ)の天気予報。
      GPSは「地点」モードを実際に見ている間だけwatchPositionで追跡し、それ以外
      (タブを離れた・一覧モードに切り替えた)は追跡を止めてバッテリー消費を避ける。
-     GPSが使える間はGPS優先、拒否/非対応/未取得の間は登録地点をフォールバックに使う。
+     どちらの予報を表示するかは自動フォールバックではなく、パネル上部の
+     「現在地/登録地点」ボタン(weatherSourceMode)で利用者が明示的に選ぶ。
 
      位置情報の利用目的が伝わらないままいきなりブラウザの許可ダイアログが出ると、
      何のために・どう使われるのかが利用者に伝わらず誤解を招きかねない。そのため、
@@ -8063,8 +8221,24 @@ function BottomDock({
     );
   }, [weatherLocationActive, geoState.status, geoState.coords, onCurrentLocationChange]);
 
-  // 登録地点(1件のみ)。{ name, lat, lon } | null。他の設定と同様localStorageに保存し、
-  // 次回起動時も覚えておく。
+  // GPS座標から、市区町村境界データ(warning_areas.json)を使って現在地の
+  // 市区町村名を逆引きする。あくまで表示用(「現在地」の代わりに「港区」のように
+  // 出すため)で、天気予報の取得自体は従来通り最寄りアメダス地点ベースで行う。
+  const [currentMunicipalityName, setCurrentMunicipalityName] = useState(null);
+  useEffect(() => {
+    if (!(weatherLocationActive && geoState.status === "ready" && geoState.coords)) {
+      setCurrentMunicipalityName(null);
+      return;
+    }
+    let cancelled = false;
+    findMunicipalityAtPoint(geoState.coords.lat, geoState.coords.lon)
+      .then((props) => { if (!cancelled) setCurrentMunicipalityName(props ? props.regionname : null); })
+      .catch((err) => { console.error("現在地の市区町村名の逆引きに失敗:", err); if (!cancelled) setCurrentMunicipalityName(null); });
+    return () => { cancelled = true; };
+  }, [weatherLocationActive, geoState.status, geoState.coords]);
+
+  // 登録地点(1件のみ)。{ name(=都道府県+市区町村), lat, lon, regioncode } | null。
+  // 他の設定と同様localStorageに保存し、次回起動時も覚えておく。
   const REGISTERED_WEATHER_POINT_KEY = "meteoquake_registered_weather_point_v1";
   const [registeredWeatherPoint, setRegisteredWeatherPointState] = useState(() => {
     try {
@@ -8080,20 +8254,26 @@ function BottomDock({
     } catch {}
   }, []);
 
-  // 実際に予報を取りに行く対象地点。GPSが使えていればGPS優先、
-  // 使えなければ登録地点、どちらも無ければnull(予報を取りに行かない)。
+  // 「現在地」と「登録地点」のどちらの予報を表示するか。パネル上部のボタンで
+  // 明示的に切り替える(以前のような「GPSが使えなければ自動で登録地点に
+  // フォールバック」はせず、利用者が選んだ方をそのまま表示する)。
+  const [weatherSourceMode, setWeatherSourceMode] = useState("gps"); // "gps" | "registered"
+
+  // 実際に予報を取りに行く対象地点。選択中のモードに対応する地点が無ければnull
+  // (=予報を取りに行かない、パネル側で案内を出す)。
   const activeWeatherPoint = useMemo(() => {
+    if (weatherSourceMode === "registered") {
+      if (!registeredWeatherPoint) return null;
+      return { source: "registered", lat: registeredWeatherPoint.lat, lon: registeredWeatherPoint.lon, name: registeredWeatherPoint.name };
+    }
     if (geoState.status === "ready" && geoState.coords) {
       return { source: "gps", lat: geoState.coords.lat, lon: geoState.coords.lon };
     }
-    if (registeredWeatherPoint) {
-      return { source: "registered", lat: registeredWeatherPoint.lat, lon: registeredWeatherPoint.lon, name: registeredWeatherPoint.name };
-    }
     return null;
-  }, [geoState.status, geoState.coords, registeredWeatherPoint]);
+  }, [weatherSourceMode, geoState.status, geoState.coords, registeredWeatherPoint]);
 
   // { status: "idle"|"loading"|"ready"|"error", data, error } — activeWeatherPointが
-  // 変わるたび(GPSで動いた・登録地点を変えた等)取り直す。
+  // 変わるたび(GPSで動いた・登録地点を変えた・モードを切り替えた等)取り直す。
   const [weatherForecastState, setWeatherForecastState] = useState({ status: "idle", data: null });
   useEffect(() => {
     if (!weatherLocationActive || !activeWeatherPoint) {
@@ -8111,29 +8291,42 @@ function BottomDock({
     return () => { cancelled = true; };
   }, [weatherLocationActive, activeWeatherPoint?.source, activeWeatherPoint?.lat, activeWeatherPoint?.lon]);
 
-  // 地点登録(1件のみ)の検索UI用。候補は天気予報の対象になっているアメダス地点名
-  // (=ほぼ全国の主要市町村をカバーする)から絞り込む。検索パネルを開いた時に
-  // 初めて候補一覧を読み込み、以降はキャッシュを使い回す。
-  const [weatherPointSearchOpen, setWeatherPointSearchOpen] = useState(false);
-  const [weatherPointSearchQuery, setWeatherPointSearchQuery] = useState("");
-  const [weatherPointCandidates, setWeatherPointCandidates] = useState(null); // null=未読込
+  /* ─────────────────────────────────────────────────────
+     地点登録 — 五十音順の絞り込み選択(あかさたなはまやらわ→あいうえお→
+     一覧)。市区町村の一覧・境界はwarning_areas.json(1,821市区町村)から
+     読み込み、選んだ市区町村の代表点(ポリゴン頂点の単純平均)を登録地点の
+     緯度経度として使う。
+     ───────────────────────────────────────────────────── */
+  const [kanaPickerOpen, setKanaPickerOpen] = useState(false);
+  const [kanaPickerStep, setKanaPickerStep] = useState("rows"); // "rows" | "columns" | "list"
+  const [kanaPickerRow, setKanaPickerRow] = useState(null);
+  const [kanaPickerCol, setKanaPickerCol] = useState(null);
+  const [municipalityList, setMunicipalityList] = useState(null); // null=未読込
+  const [municipalityListError, setMunicipalityListError] = useState(false);
   useEffect(() => {
-    if (!weatherPointSearchOpen || weatherPointCandidates) return;
+    if (!kanaPickerOpen || municipalityList || municipalityListError) return;
     let cancelled = false;
-    Promise.all([loadAmedasPoints(), loadForecastAreaIndex()])
-      .then(([points, index]) => {
-        if (cancelled) return;
-        setWeatherPointCandidates(points.filter(p => index[p.code]));
-      })
-      .catch((err) => console.error("地点候補の取得に失敗:", err));
+    loadWarningAreaMunicipalities()
+      .then((list) => { if (!cancelled) setMunicipalityList(list); })
+      .catch((err) => {
+        console.error("市区町村一覧の取得に失敗:", err);
+        if (!cancelled) setMunicipalityListError(true);
+      });
     return () => { cancelled = true; };
-  }, [weatherPointSearchOpen, weatherPointCandidates]);
+  }, [kanaPickerOpen, municipalityList, municipalityListError]);
 
-  const weatherPointSearchResults = useMemo(() => {
-    const q = weatherPointSearchQuery.trim();
-    if (!weatherPointCandidates || !q) return [];
-    return weatherPointCandidates.filter(p => p.name.includes(q)).slice(0, 20);
-  }, [weatherPointCandidates, weatherPointSearchQuery]);
+  const kanaGroupedMunicipalities = useMemo(() => {
+    if (!municipalityList) return null;
+    return groupMunicipalitiesByKana(municipalityList);
+  }, [municipalityList]);
+
+  const openKanaPicker = useCallback(() => {
+    setKanaPickerStep("rows");
+    setKanaPickerRow(null);
+    setKanaPickerCol(null);
+    setKanaPickerOpen(true);
+  }, []);
+  const closeKanaPicker = useCallback(() => setKanaPickerOpen(false), []);
 
   // 津波タブ版の表示モード。"recent" = 直近の津波情報一覧、
   // "history" = 過去に発表された津波情報一覧(/history APIをoffsetで遡って取得)。
@@ -9651,15 +9844,24 @@ function BottomDock({
                     activeWeatherPoint={activeWeatherPoint}
                     forecastState={weatherForecastState}
                     registeredWeatherPoint={registeredWeatherPoint}
-                    searchOpen={weatherPointSearchOpen}
-                    onToggleSearch={() => setWeatherPointSearchOpen(v => !v)}
-                    searchQuery={weatherPointSearchQuery}
-                    onChangeSearchQuery={setWeatherPointSearchQuery}
-                    searchResults={weatherPointSearchResults}
-                    onSelectSearchResult={(r) => {
-                      setRegisteredWeatherPoint({ name: r.name, lat: r.lat, lon: r.lon });
-                      setWeatherPointSearchOpen(false);
-                      setWeatherPointSearchQuery("");
+                    currentMunicipalityName={currentMunicipalityName}
+                    weatherSourceMode={weatherSourceMode}
+                    onChangeWeatherSourceMode={setWeatherSourceMode}
+                    kanaPickerOpen={kanaPickerOpen}
+                    onOpenKanaPicker={openKanaPicker}
+                    onCloseKanaPicker={closeKanaPicker}
+                    kanaPickerStep={kanaPickerStep}
+                    onChangeKanaPickerStep={setKanaPickerStep}
+                    kanaPickerRow={kanaPickerRow}
+                    onChangeKanaPickerRow={setKanaPickerRow}
+                    kanaPickerCol={kanaPickerCol}
+                    onChangeKanaPickerCol={setKanaPickerCol}
+                    kanaGroupedMunicipalities={kanaGroupedMunicipalities}
+                    municipalityListError={municipalityListError}
+                    onSelectMunicipality={(m) => {
+                      setRegisteredWeatherPoint({ name: m.regionname, lat: m.lat, lon: m.lon, regioncode: m.regioncode });
+                      setWeatherSourceMode("registered");
+                      closeKanaPicker();
                     }}
                   />
                 ) : (
@@ -10132,293 +10334,371 @@ function WeatherMenuFloating({ open, onToggle, growUp = true }) {
    登録地点(1件)の天気予報を表示する。
    ───────────────────────────────────────────────────── */
 function WeatherLocationPanel({
-  geoState, onConsentLocation, onResetLocationConsent, activeWeatherPoint, forecastState, registeredWeatherPoint,
-  searchOpen, onToggleSearch, searchQuery, onChangeSearchQuery, searchResults, onSelectSearchResult,
+  geoState, onConsentLocation, onResetLocationConsent,
+  activeWeatherPoint, forecastState, registeredWeatherPoint, currentMunicipalityName,
+  weatherSourceMode, onChangeWeatherSourceMode,
+  kanaPickerOpen, onOpenKanaPicker, onCloseKanaPicker,
+  kanaPickerStep, onChangeKanaPickerStep, kanaPickerRow, onChangeKanaPickerRow, kanaPickerCol, onChangeKanaPickerCol,
+  kanaGroupedMunicipalities, municipalityListError, onSelectMunicipality,
 }) {
   const { tokens } = useContext(ThemeContext);
   const [rangeMode, setRangeMode] = useState("3day"); // "3day" | "week"
-  // すでに登録地点があって普段は困っていない場合でも、後から「やっぱり現在地を
-  // 使いたい」と思った時に説明画面へ自分から戻れるようにするための手動フラグ。
-  // (登録地点がある間は下のawaiting-consent判定だけでは画面が出ないため)
-  const [manualLocationPromptOpen, setManualLocationPromptOpen] = useState(false);
-  // manualLocationPromptOpen中に実際に「現在地を使う」を押したかどうか。押した後は
-  // geoStateの結果(成功/失敗)をこの画面の中で見せる。押さずに閉じた場合は
-  // 単に登録地点のままに戻るだけで、エラー扱いにはしない。
-  const [locationRequestPending, setLocationRequestPending] = useState(false);
-  // GPS取得に成功したら(=activeWeatherPointがgpsに切り替わったら)、この画面を
-  // 自動で閉じる。失敗した場合はここでは閉じず、失敗理由をこの画面内で見せ続ける
-  // (でないと「押しても何も起きなかった」ように見えてしまう)。
-  useEffect(() => {
-    if (geoState.status === "ready") {
-      setManualLocationPromptOpen(false);
-      setLocationRequestPending(false);
-    }
-  }, [geoState.status]);
 
-  if (searchOpen) {
+  // 地点登録(五十音ピッカー)を開いている間は、それ専用の画面をフルで表示する。
+  if (kanaPickerOpen) {
     return (
-      <div style={{ padding: "14px 18px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.9)` }}>地点を登録</span>
-          <PressableButton
-            onClick={onToggleSearch}
-            style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}
-          >
-            閉じる
-          </PressableButton>
-        </div>
-        <input
-          value={searchQuery}
-          onChange={(e) => onChangeSearchQuery(e.target.value)}
-          placeholder="地名で検索(例: 横浜)"
-          style={{
-            fontSize: 14, padding: "9px 12px", borderRadius: 10,
-            border: `0.75px solid rgba(${tokens.ink},0.22)`,
-            background: `rgba(${tokens.ink},0.05)`, color: `rgba(${tokens.ink},0.9)`, outline: "none",
-          }}
-        />
-        <div style={{ display: "flex", flexDirection: "column", maxHeight: 240, overflowY: "auto" }}>
-          {searchResults.map((r, i) => (
-            <div key={r.code}>
-              {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.1)` }}/>}
-              <PressableButton
-                onClick={() => onSelectSearchResult(r)}
-                style={{ textAlign: "left", fontSize: 14, color: `rgba(${tokens.ink},0.85)`, padding: "10px 4px", width: "100%" }}
-              >
-                {r.name}
-              </PressableButton>
-            </div>
-          ))}
-          {searchQuery.trim() && searchResults.length === 0 && (
-            <div style={{ fontSize: 13, color: `rgba(${tokens.ink},0.5)`, padding: "10px 4px" }}>
-              見つかりませんでした
-            </div>
-          )}
-        </div>
-      </div>
+      <KanaMunicipalityPicker
+        step={kanaPickerStep} onChangeStep={onChangeKanaPickerStep}
+        row={kanaPickerRow} onChangeRow={onChangeKanaPickerRow}
+        col={kanaPickerCol} onChangeCol={onChangeKanaPickerCol}
+        grouped={kanaGroupedMunicipalities}
+        loadError={municipalityListError}
+        onSelect={onSelectMunicipality}
+        onClose={onCloseKanaPicker}
+      />
     );
   }
 
-  // ブラウザに位置情報を要求する前に、何のために・どう使うのかをアプリ内で
-  // 説明する画面。ここで「現在地を使う」を選んで初めてgeolocationを呼び出す
-  // (=続けてブラウザ自体の許可ダイアログが出る)。誤解を避けるため、送信先や
-  // 用途を明記し、使いたくない場合の代替(地点登録)も同じ画面で案内する。
-  // 「登録地点がすでにあってawaiting-consentにならない場合」でも、
-  // manualLocationPromptOpenを立てれば同じ画面に戻れる。
-  if (manualLocationPromptOpen || (!activeWeatherPoint && geoState.status === "awaiting-consent")) {
-    const canCancel = manualLocationPromptOpen && !!activeWeatherPoint;
-    const showError = locationRequestPending && geoState.status === "error";
-    const showLoading = locationRequestPending && geoState.status === "loading";
-    return (
-      <div style={{
-        display: "flex", flexDirection: "column", alignItems: "center", gap: 14,
-        padding: "36px 22px",
-      }}>
+  // 上部の「現在地/登録地点」切り替え。以前は「GPSが使えなければ自動で登録地点に
+  // フォールバック」していたが、利用者が選んだ方をそのまま出すようにする。
+  const modeToggle = (
+    <div style={{
+      display: "flex", padding: 2, borderRadius: 9,
+      background: `rgba(${tokens.ink},0.07)`, margin: "14px 18px 2px",
+    }}>
+      {[{ id: "gps", label: "現在地" }, { id: "registered", label: "登録地点" }].map(opt => (
+        <PressableButton
+          key={opt.id}
+          onClick={() => onChangeWeatherSourceMode(opt.id)}
+          style={{
+            flex: 1, fontSize: 12.5, fontWeight: 600, padding: "6px 0", borderRadius: 7, textAlign: "center",
+            color: weatherSourceMode === opt.id ? tokens.text : `rgba(${tokens.ink},0.55)`,
+            background: weatherSourceMode === opt.id ? (tokens.cardBg || `rgba(${tokens.ink},0.16)`) : "transparent",
+          }}
+        >
+          {opt.label}
+        </PressableButton>
+      ))}
+    </div>
+  );
+
+  // モードごとの案内・エラー画面(activeWeatherPointがまだ無い場合)。
+  let body = null;
+
+  if (weatherSourceMode === "registered" && !registeredWeatherPoint) {
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "36px 18px" }}>
+        <span style={{ fontSize: 14, color: `rgba(${tokens.ink},0.6)`, textAlign: "center" }}>
+          地点が登録されていません
+        </span>
+        <PressableButton
+          onClick={onOpenKanaPicker}
+          style={{
+            fontSize: 13.5, fontWeight: 600, color: "#fff",
+            padding: "9px 18px", borderRadius: 999, background: "#0A84FF",
+          }}
+        >
+          地点を登録
+        </PressableButton>
+      </div>
+    );
+  } else if (weatherSourceMode === "gps" && geoState.status === "awaiting-consent") {
+    // ブラウザに位置情報を要求する前に、何のために・どう使うのかをアプリ内で
+    // 説明する画面。ここで「現在地を使う」を選んで初めてgeolocationを呼び出す
+    // (=続けてブラウザ自体の許可ダイアログが出る)。誤解を避けるため、送信先や
+    // 用途を明記する。
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, padding: "30px 22px" }}>
         <PinIcon size={26}/>
         <span style={{ fontSize: 14.5, fontWeight: 700, color: `rgba(${tokens.ink},0.9)`, textAlign: "center" }}>
-          {showError ? "現在地を取得できませんでした" : "現在地の天気を表示しますか?"}
+          現在地の天気を表示しますか?
         </span>
         <span style={{ fontSize: 12.5, color: `rgba(${tokens.ink},0.6)`, textAlign: "center", lineHeight: 1.7 }}>
-          {showError ? (
-            "ブラウザで位置情報の利用がブロックされているか、取得できませんでした。ブラウザのサイト設定から改めて許可するか、地点を登録してください。"
-          ) : (
-            <>
-              位置情報は天気予報を調べる目的にのみ使用します。開発者のサーバーに送信・保存されることはありません。
-              「現在地を使う」を選ぶと、続けてお使いのブラウザの位置情報の確認が表示されます。
-              以前ブラウザ側で拒否した場合は、ブラウザのサイト設定から改めて許可してください。
-            </>
-          )}
+          位置情報は天気予報を調べる目的にのみ使用します。開発者のサーバーに送信・保存されることはありません。
+          「現在地を使う」を選ぶと、続けてお使いのブラウザの位置情報の確認が表示されます。
+          以前ブラウザ側で拒否した場合は、ブラウザのサイト設定から改めて許可してください。
         </span>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%", maxWidth: 240 }}>
-          {showLoading ? (
-            <div style={{ fontSize: 13.5, color: `rgba(${tokens.ink},0.6)`, textAlign: "center", padding: "10px 0" }}>
-              取得中…
-            </div>
-          ) : (
-            <PressableButton
-              onClick={() => { setLocationRequestPending(true); onConsentLocation(); }}
-              style={{
-                fontSize: 13.5, fontWeight: 600, color: "#fff", textAlign: "center",
-                padding: "10px 0", borderRadius: 999, background: "#0A84FF",
-              }}
-            >
-              {showError ? "もう一度試す" : "現在地を使う"}
-            </PressableButton>
-          )}
-          {canCancel ? (
-            <PressableButton
-              onClick={() => { setManualLocationPromptOpen(false); setLocationRequestPending(false); }}
-              style={{
-                fontSize: 13.5, fontWeight: 600, color: `rgba(${tokens.ink},0.7)`, textAlign: "center",
-                padding: "10px 0", borderRadius: 999, background: `rgba(${tokens.ink},0.08)`,
-              }}
-            >
-              やめて登録地点のままにする
-            </PressableButton>
-          ) : (
-            <PressableButton
-              onClick={onToggleSearch}
-              style={{
-                fontSize: 13.5, fontWeight: 600, color: `rgba(${tokens.ink},0.7)`, textAlign: "center",
-                padding: "10px 0", borderRadius: 999, background: `rgba(${tokens.ink},0.08)`,
-              }}
-            >
-              地点を登録して使う
-            </PressableButton>
-          )}
-        </div>
+        <PressableButton
+          onClick={onConsentLocation}
+          style={{
+            fontSize: 13.5, fontWeight: 600, color: "#fff", textAlign: "center",
+            padding: "10px 0", borderRadius: 999, background: "#0A84FF", width: "100%", maxWidth: 240,
+          }}
+        >
+          現在地を使う
+        </PressableButton>
       </div>
     );
-  }
-
-  if (!activeWeatherPoint) {
-    const message =
-      geoState.status === "loading" ? "現在地を取得中…"
-      : geoState.status === "error" ? "現在地の利用が許可されていないか、取得できませんでした"
-      : geoState.status === "unsupported" ? "この端末・ブラウザでは現在地を利用できません。地点を登録してください"
-      : "現在地が使えません。地点を登録してください";
-    return (
-      <div style={{
-        display: "flex", flexDirection: "column", alignItems: "center", gap: 12,
-        padding: "40px 18px",
-      }}>
+  } else if (weatherSourceMode === "gps" && geoState.status === "loading") {
+    body = (
+      <div style={{ padding: "36px 18px", textAlign: "center", fontSize: 14, color: `rgba(${tokens.ink},0.6)` }}>
+        現在地を取得中…
+      </div>
+    );
+  } else if (weatherSourceMode === "gps" && geoState.status === "error") {
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "30px 18px" }}>
         <span style={{ fontSize: 14, color: `rgba(${tokens.ink},0.6)`, textAlign: "center", lineHeight: 1.6 }}>
-          {message}
+          現在地を取得できませんでした。ブラウザで位置情報の利用がブロックされているか、取得に失敗しました。
         </span>
-        <div style={{ display: "flex", gap: 8 }}>
-          {geoState.status === "error" && (
-            <PressableButton
-              onClick={() => { onResetLocationConsent(); setLocationRequestPending(false); setManualLocationPromptOpen(true); }}
-              style={{
-                fontSize: 13.5, fontWeight: 600, color: `rgba(${tokens.ink},0.7)`,
-                padding: "9px 16px", borderRadius: 999, background: `rgba(${tokens.ink},0.08)`,
-              }}
-            >
-              現在地を再試行
-            </PressableButton>
-          )}
-          <PressableButton
-            onClick={onToggleSearch}
-            style={{
-              fontSize: 13.5, fontWeight: 600, color: "#fff",
-              padding: "9px 18px", borderRadius: 999, background: "#0A84FF",
-            }}
-          >
-            地点を登録
-          </PressableButton>
-        </div>
+        <PressableButton
+          onClick={onResetLocationConsent}
+          style={{
+            fontSize: 13.5, fontWeight: 600, color: `rgba(${tokens.ink},0.7)`,
+            padding: "9px 18px", borderRadius: 999, background: `rgba(${tokens.ink},0.08)`,
+          }}
+        >
+          もう一度試す
+        </PressableButton>
       </div>
     );
-  }
-
-  if (forecastState.status === "loading" || forecastState.status === "idle") {
-    return (
-      <div style={{ padding: "40px 18px", textAlign: "center", fontSize: 14, color: `rgba(${tokens.ink},0.6)` }}>
+  } else if (weatherSourceMode === "gps" && geoState.status === "unsupported") {
+    body = (
+      <div style={{ padding: "36px 18px", textAlign: "center", fontSize: 14, color: `rgba(${tokens.ink},0.6)`, lineHeight: 1.6 }}>
+        この端末・ブラウザでは現在地を利用できません。上の「登録地点」から地点を登録してください。
+      </div>
+    );
+  } else if (!activeWeatherPoint) {
+    body = (
+      <div style={{ padding: "36px 18px", textAlign: "center", fontSize: 14, color: `rgba(${tokens.ink},0.6)` }}>
+        現在地を取得中…
+      </div>
+    );
+  } else if (forecastState.status === "loading" || forecastState.status === "idle") {
+    body = (
+      <div style={{ padding: "36px 18px", textAlign: "center", fontSize: 14, color: `rgba(${tokens.ink},0.6)` }}>
         天気予報を取得中…
       </div>
     );
-  }
-  if (forecastState.status === "error") {
-    return (
-      <div style={{ padding: "40px 18px", textAlign: "center", fontSize: 14, color: `rgba(${tokens.ink},0.6)` }}>
+  } else if (forecastState.status === "error") {
+    body = (
+      <div style={{ padding: "36px 18px", textAlign: "center", fontSize: 14, color: `rgba(${tokens.ink},0.6)` }}>
         天気予報を取得できませんでした
+      </div>
+    );
+  } else {
+    const f = forecastState.data;
+    const daily = f.daily || [];
+    const visibleDays = rangeMode === "week" ? daily.slice(0, 7) : daily.slice(0, 3);
+    const label = activeWeatherPoint.source === "gps"
+      ? (currentMunicipalityName || "現在地")
+      : (registeredWeatherPoint?.name || f.areaName);
+    body = (
+      <div style={{ padding: "14px 18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: `rgba(${tokens.ink},0.6)` }}>
+            {label}
+          </span>
+          {weatherSourceMode === "registered" && (
+            <PressableButton
+              onClick={onOpenKanaPicker}
+              style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}
+            >
+              地点を変更
+            </PressableButton>
+          )}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          {f.weatherCode != null && (
+            <img src={weatherIconUrl(f.weatherCode)} alt="" width={56} height={56}/>
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontSize: 19, fontWeight: 700, color: `rgba(${tokens.ink},0.92)` }}>{f.telop || "-"}</span>
+            <span style={{ fontSize: 14, color: `rgba(${tokens.ink},0.7)` }}>
+              {f.tempMax != null ? `${f.tempMax}°` : "--°"} / {f.tempMin != null ? `${f.tempMin}°` : "--°"}
+              {f.pop != null ? `　降水確率 ${f.pop}%` : ""}
+            </span>
+          </div>
+        </div>
+
+        {daily.length > 0 && (
+          <>
+            <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.12)`, margin: "2px 0" }}/>
+
+            {/* 3日間/週間の切り替え。iOS設定アプリ等でよく見る、2択の丸みを帯びた
+                セグメントコントロール。 */}
+            <div style={{
+              display: "flex", padding: 2, borderRadius: 9,
+              background: `rgba(${tokens.ink},0.07)`, alignSelf: "flex-start",
+            }}>
+              {[{ id: "3day", label: "3日間" }, { id: "week", label: "週間" }].map(opt => (
+                <PressableButton
+                  key={opt.id}
+                  onClick={() => setRangeMode(opt.id)}
+                  style={{
+                    fontSize: 12.5, fontWeight: 600, padding: "5px 14px", borderRadius: 7,
+                    color: rangeMode === opt.id ? tokens.text : `rgba(${tokens.ink},0.55)`,
+                    background: rangeMode === opt.id ? (tokens.cardBg || `rgba(${tokens.ink},0.16)`) : "transparent",
+                  }}
+                >
+                  {opt.label}
+                </PressableButton>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {visibleDays.map((d, i) => (
+                <div key={d.date || i}>
+                  {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.1)` }}/>}
+                  <div style={{ display: "flex", alignItems: "center", padding: "9px 2px", gap: 10 }}>
+                    <span style={{ fontSize: 13.5, color: `rgba(${tokens.ink},0.8)`, width: 56, flexShrink: 0 }}>
+                      {formatForecastDayLabel(d.date, i)}
+                    </span>
+                    {d.weatherCode != null ? (
+                      <img src={weatherIconUrl(d.weatherCode)} alt="" width={28} height={28}/>
+                    ) : (
+                      <div style={{ width: 28, height: 28 }}/>
+                    )}
+                    <span style={{ fontSize: 12.5, color: `rgba(${tokens.ink},0.55)`, width: 44, flexShrink: 0 }}>
+                      {d.pop != null ? `${d.pop}%` : ""}
+                    </span>
+                    <span style={{ fontSize: 13.5, color: `rgba(${tokens.ink},0.9)`, marginLeft: "auto", textAlign: "right" }}>
+                      {d.tempMax != null ? `${d.tempMax}°` : "--°"}
+                      {" / "}
+                      <span style={{ color: `rgba(${tokens.ink},0.55)` }}>
+                        {d.tempMin != null ? `${d.tempMin}°` : "--°"}
+                      </span>
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     );
   }
 
-  const f = forecastState.data;
-  const daily = f.daily || [];
-  const visibleDays = rangeMode === "week" ? daily.slice(0, 7) : daily.slice(0, 3);
   return (
-    <div style={{ padding: "16px 18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: `rgba(${tokens.ink},0.6)` }}>
-          {activeWeatherPoint.source === "gps" ? "現在地" : (registeredWeatherPoint?.name || f.areaName)}
-        </span>
-        <div style={{ display: "flex", gap: 12 }}>
-          {activeWeatherPoint.source === "registered" && (
-            <PressableButton
-              onClick={() => { setLocationRequestPending(false); setManualLocationPromptOpen(true); }}
-              style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}
-            >
-              現在地を使う
-            </PressableButton>
-          )}
+    <div>
+      {modeToggle}
+      {body}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   KANA MUNICIPALITY PICKER — 地点登録の五十音順選択。
+   「あかさたなはまやらわ」(行)→選んだ行の段(例:あいうえお)→
+   該当する市区町村の一覧、の3ステップで絞り込む。テキスト入力は行わない。
+   ───────────────────────────────────────────────────── */
+function KanaMunicipalityPicker({
+  step, onChangeStep, row, onChangeRow, col, onChangeCol,
+  grouped, loadError, onSelect, onClose,
+}) {
+  const { tokens } = useContext(ThemeContext);
+
+  const header = (title, onBack) => (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px 10px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {onBack && (
           <PressableButton
-            onClick={onToggleSearch}
-            style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}
+            onClick={onBack}
+            style={{ fontSize: 15, fontWeight: 600, color: `rgba(${tokens.ink},0.55)`, padding: "2px 4px" }}
           >
-            地点を変更
+            ←
           </PressableButton>
-        </div>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        {f.weatherCode != null && (
-          <img src={weatherIconUrl(f.weatherCode)} alt="" width={56} height={56}/>
         )}
-        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ fontSize: 19, fontWeight: 700, color: `rgba(${tokens.ink},0.92)` }}>{f.telop || "-"}</span>
-          <span style={{ fontSize: 14, color: `rgba(${tokens.ink},0.7)` }}>
-            {f.tempMax != null ? `${f.tempMax}°` : "--°"} / {f.tempMin != null ? `${f.tempMin}°` : "--°"}
-            {f.pop != null ? `　降水確率 ${f.pop}%` : ""}
-          </span>
+        <span style={{ fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.9)` }}>{title}</span>
+      </div>
+      <PressableButton onClick={onClose} style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}>
+        閉じる
+      </PressableButton>
+    </div>
+  );
+
+  if (!grouped) {
+    return (
+      <div>
+        {header("地点を登録", null)}
+        <div style={{ padding: "36px 18px", textAlign: "center", fontSize: 14, color: `rgba(${tokens.ink},0.6)` }}>
+          {loadError ? "市区町村一覧の取得に失敗しました" : "読み込み中…"}
         </div>
       </div>
+    );
+  }
 
-      {daily.length > 0 && (
-        <>
-          <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.12)`, margin: "2px 0" }}/>
+  if (step === "rows") {
+    return (
+      <div style={{ paddingBottom: 14 }}>
+        {header("地点を登録", null)}
+        <div style={{
+          display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8,
+          padding: "4px 18px 8px",
+        }}>
+          {KANA_ROWS.map(r => (
+            <PressableButton
+              key={r.key}
+              onClick={() => { onChangeRow(r.key); onChangeStep("columns"); }}
+              style={{
+                fontSize: 16, fontWeight: 600, color: tokens.text,
+                padding: "14px 0", borderRadius: 12, textAlign: "center",
+                background: `rgba(${tokens.ink},0.06)`,
+              }}
+            >
+              {r.key}
+            </PressableButton>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
-          {/* 3日間/週間の切り替え。iOS設定アプリ等でよく見る、2択の丸みを帯びた
-              セグメントコントロール。 */}
-          <div style={{
-            display: "flex", padding: 2, borderRadius: 9,
-            background: `rgba(${tokens.ink},0.07)`, alignSelf: "flex-start",
-          }}>
-            {[{ id: "3day", label: "3日間" }, { id: "week", label: "週間" }].map(opt => (
+  const rowDef = KANA_ROWS.find(r => r.key === row) || KANA_ROWS[0];
+
+  if (step === "columns") {
+    return (
+      <div style={{ paddingBottom: 14 }}>
+        {header(`「${row}」から選ぶ`, () => onChangeStep("rows"))}
+        <div style={{
+          display: "grid", gridTemplateColumns: `repeat(${rowDef.columns.length}, 1fr)`, gap: 8,
+          padding: "4px 18px 8px",
+        }}>
+          {rowDef.columns.map(c => {
+            const count = grouped[row]?.[c]?.length || 0;
+            return (
               <PressableButton
-                key={opt.id}
-                onClick={() => setRangeMode(opt.id)}
+                key={c}
+                disabled={count === 0}
+                onClick={() => { onChangeCol(c); onChangeStep("list"); }}
                 style={{
-                  fontSize: 12.5, fontWeight: 600, padding: "5px 14px", borderRadius: 7,
-                  color: rangeMode === opt.id ? tokens.text : `rgba(${tokens.ink},0.55)`,
-                  background: rangeMode === opt.id ? (tokens.cardBg || `rgba(${tokens.ink},0.16)`) : "transparent",
+                  fontSize: 16, fontWeight: 600, color: count === 0 ? `rgba(${tokens.ink},0.28)` : tokens.text,
+                  padding: "14px 0", borderRadius: 12, textAlign: "center",
+                  background: `rgba(${tokens.ink},0.06)`,
                 }}
               >
-                {opt.label}
+                {c}
               </PressableButton>
-            ))}
-          </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            {visibleDays.map((d, i) => (
-              <div key={d.date || i}>
-                {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.1)` }}/>}
-                <div style={{ display: "flex", alignItems: "center", padding: "9px 2px", gap: 10 }}>
-                  <span style={{ fontSize: 13.5, color: `rgba(${tokens.ink},0.8)`, width: 56, flexShrink: 0 }}>
-                    {formatForecastDayLabel(d.date, i)}
-                  </span>
-                  {d.weatherCode != null ? (
-                    <img src={weatherIconUrl(d.weatherCode)} alt="" width={28} height={28}/>
-                  ) : (
-                    <div style={{ width: 28, height: 28 }}/>
-                  )}
-                  <span style={{ fontSize: 12.5, color: `rgba(${tokens.ink},0.55)`, width: 44, flexShrink: 0 }}>
-                    {d.pop != null ? `${d.pop}%` : ""}
-                  </span>
-                  <span style={{ fontSize: 13.5, color: `rgba(${tokens.ink},0.9)`, marginLeft: "auto", textAlign: "right" }}>
-                    {d.tempMax != null ? `${d.tempMax}°` : "--°"}
-                    {" / "}
-                    <span style={{ color: `rgba(${tokens.ink},0.55)` }}>
-                      {d.tempMin != null ? `${d.tempMin}°` : "--°"}
-                    </span>
-                  </span>
-                </div>
-              </div>
-            ))}
+  // step === "list"
+  const list = grouped[row]?.[col] || [];
+  return (
+    <div style={{ paddingBottom: 8 }}>
+      {header(`「${col}」から選ぶ`, () => onChangeStep("columns"))}
+      <div style={{ display: "flex", flexDirection: "column", maxHeight: 320, overflowY: "auto", padding: "0 18px" }}>
+        {list.map((m, i) => (
+          <div key={m.regioncode}>
+            {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.1)` }}/>}
+            <PressableButton
+              onClick={() => onSelect(m)}
+              style={{ textAlign: "left", fontSize: 14, color: `rgba(${tokens.ink},0.85)`, padding: "10px 2px", width: "100%" }}
+            >
+              {m.regionname}
+            </PressableButton>
           </div>
-        </>
-      )}
+        ))}
+        {list.length === 0 && (
+          <div style={{ fontSize: 13, color: `rgba(${tokens.ink},0.5)`, padding: "16px 2px" }}>
+            該当する市区町村がありません
+          </div>
+        )}
+      </div>
     </div>
   );
 }
