@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.7";
+const APP_VERSION = "1.5.7a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10656,7 +10656,7 @@ function WeatherLocationPanel({
                     key={e.dateTime || i}
                     style={{
                       display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-                      flexShrink: 0, width: 58, padding: "6px 0",
+                      flexShrink: 0, width: 62, padding: "6px 0",
                       borderLeft: dateChanged && i > 0 ? `0.5px solid rgba(${tokens.ink},0.15)` : "none",
                     }}
                   >
@@ -10685,14 +10685,14 @@ function WeatherLocationPanel({
                         <span
                           aria-hidden="true"
                           style={{
-                            fontSize: 12, color: `rgba(${tokens.ink},0.5)`, lineHeight: 1,
-                            display: "inline-block",
+                            fontSize: 17, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1,
+                            display: "inline-block", fontWeight: 700,
                             transform: `rotate(${windDirectionToDegrees(e.wind.direction) + 180}deg)`,
                           }}
                         >
                           ↑
                         </span>
-                        <span style={{ fontSize: 9, color: `rgba(${tokens.ink},0.5)`, whiteSpace: "nowrap" }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.8)`, whiteSpace: "nowrap" }}>
                           {e.wind.direction}{e.wind.speed != null ? ` ${e.wind.speed}m` : ""}
                         </span>
                       </div>
