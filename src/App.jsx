@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.6b";
+const APP_VERSION = "1.5.6c";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10609,7 +10609,13 @@ function WeatherLocationPanel({
         )}
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           {f.weatherCode != null && (
-            <img src={weatherIconUrl(f.weatherCode)} alt="" width={56} height={56}/>
+            <div style={{
+              width: 56, height: 56, borderRadius: 14, flexShrink: 0,
+              background: "rgba(142,142,147,0.16)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <img src={weatherIconUrl(f.weatherCode)} alt="" width={44} height={44}/>
+            </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <span style={{ fontSize: 19, fontWeight: 700, color: `rgba(${tokens.ink},0.92)` }}>{f.telop || "-"}</span>
@@ -10646,7 +10652,13 @@ function WeatherLocationPanel({
                       {formatTimeSeriesHour(e.dateTime)}
                     </span>
                     {e.weatherCode != null ? (
-                      <img src={weatherIconUrl(e.weatherCode)} alt={e.weather || ""} width={26} height={26}/>
+                      <div style={{
+                        width: 26, height: 26, borderRadius: 7, flexShrink: 0,
+                        background: "rgba(142,142,147,0.16)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>
+                        <img src={weatherIconUrl(e.weatherCode)} alt={e.weather || ""} width={20} height={20}/>
+                      </div>
                     ) : (
                       <div style={{ width: 26, height: 26 }}/>
                     )}
@@ -10694,7 +10706,13 @@ function WeatherLocationPanel({
                       {formatForecastDayLabel(d.date, i)}
                     </span>
                     {d.weatherCode != null ? (
-                      <img src={weatherIconUrl(d.weatherCode)} alt="" width={28} height={28}/>
+                      <div style={{
+                        width: 28, height: 28, borderRadius: 7, flexShrink: 0,
+                        background: "rgba(142,142,147,0.16)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>
+                        <img src={weatherIconUrl(d.weatherCode)} alt="" width={22} height={22}/>
+                      </div>
                     ) : (
                       <div style={{ width: 28, height: 28 }}/>
                     )}
