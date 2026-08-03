@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.7a";
+const APP_VERSION = "1.5.7b";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -5830,7 +5830,7 @@ function amedasDegMinToDecimal(pair) {
 }
 
 let amedasPointsCache = null;      // [{code, lat, lon, name}] | null(未取得)
-let forecastAreaIndexCache = null; // { amedasコード: {officeCode, class10Code} } | null(未取得)
+let forecastAreaDataCache = null;  // { index: {amedasコード:{officeCode,class10Code}}, byOffice: {officeCode:[amedasコード]} } | null(未取得)
 
 async function loadAmedasPoints() {
   if (amedasPointsCache) return amedasPointsCache;
@@ -5849,33 +5849,91 @@ async function loadAmedasPoints() {
   return points;
 }
 
-async function loadForecastAreaIndex() {
-  if (forecastAreaIndexCache) return forecastAreaIndexCache;
+async function loadForecastAreaData() {
+  if (forecastAreaDataCache) return forecastAreaDataCache;
   const res = await fetch(FORECAST_AREA_URL);
   if (!res.ok) throw new Error(`天気予報エリア対応表の取得に失敗(HTTP ${res.status})`);
   const data = await res.json();
-  const index = {};
+  const index = {};    // amedasコード → {officeCode, class10Code}
+  const byOffice = {};  // officeCode → そのofficeに属するamedasコードの配列
   for (const officeCode of Object.keys(data)) {
+    byOffice[officeCode] = [];
     for (const entry of data[officeCode]) {
       for (const amedasCode of entry.amedas || []) {
         index[amedasCode] = { officeCode, class10Code: entry.class10 };
+        byOffice[officeCode].push(amedasCode);
       }
     }
   }
-  forecastAreaIndexCache = index;
-  return index;
+  forecastAreaDataCache = { index, byOffice };
+  return forecastAreaDataCache;
 }
 
-// 緯度・経度から、天気予報の取得に必要な情報(最寄りアメダス観測点・その所属
-// オフィス・一次細分区域)をまとめて求める。天気予報の対象になっていない
-// (=forecast_area.jsonに載っていない、降水量だけの簡易観測点など)アメダス点は
-// 候補から除外し、必ず予報が引ける地点だけを最寄り候補にする。
+// 気象庁の公式な行政区分階層(common/const/area.json、centers→offices→
+// class10s→class15s→class20s)。class20sのコードは、市区町村境界データ
+// (warning_areas.json)のregioncodeと同じJIS X 0402ベースの7桁コードなので、
+// これをキーに辿ればofficeCode・class10Codeを距離ではなく行政区分そのものから
+// 正確に求められる。
+const AREA_HIERARCHY_URL = "https://www.jma.go.jp/bosai/common/const/area.json";
+let areaHierarchyPromise = null;
+function loadAreaHierarchy() {
+  if (!areaHierarchyPromise) areaHierarchyPromise = cachedFetchJSON(AREA_HIERARCHY_URL);
+  return areaHierarchyPromise;
+}
+async function resolveForecastAreaFromMunicipalityCode(regioncode) {
+  const area = await loadAreaHierarchy();
+  const class20 = area.class20s?.[regioncode];
+  const class15 = class20 && area.class15s?.[class20.parent];
+  const class10Code = class15?.parent;
+  const class10 = class10Code && area.class10s?.[class10Code];
+  const officeCode = class10?.parent;
+  if (!officeCode || !area.offices?.[officeCode]) return null;
+  return { officeCode, class10Code };
+}
+
+// 緯度・経度から、天気予報の取得に必要な情報(所属オフィス・一次細分区域・
+// 気温用の最寄りアメダス観測点)をまとめて求める。
+//
+// まず市区町村境界データ(warning_areas.json)でその地点を含む市区町村を特定し、
+// 気象庁の公式な行政区分階層からofficeCode・class10Codeを求める(都県境付近だと、
+// 直線距離では隣の都県のアメダス観測点の方が近いことがあり、距離だけで推定すると
+// 隣県の予報が出てしまうことがあるため)。市区町村が特定できなかった場合(海上など)
+// のみ、全国のアメダス観測点から単純に最寄りを探すやり方にフォールバックする。
+// 気温を取る観測点(amedasCode)は、officeCodeが判明していればその予報区に属する
+// 観測点の中だけから最寄りを探す(そうしないと気温だけ隣県の観測点になりうるため)。
 async function resolveForecastLocation(lat, lon) {
-  const [points, areaIndex] = await Promise.all([loadAmedasPoints(), loadForecastAreaIndex()]);
+  let officeCode = null;
+  let class10Code = null;
+  try {
+    const muni = await findMunicipalityAtPoint(lat, lon);
+    if (muni?.regioncode) {
+      const resolved = await resolveForecastAreaFromMunicipalityCode(muni.regioncode);
+      if (resolved) {
+        officeCode = resolved.officeCode;
+        class10Code = resolved.class10Code;
+      }
+    }
+  } catch (err) {
+    console.error("市区町村境界からの予報エリア解決に失敗。距離ベースの推定にフォールバックします:", err);
+  }
+
+  const [points, areaData] = await Promise.all([loadAmedasPoints(), loadForecastAreaData()]);
+  const { index: areaIndex, byOffice } = areaData;
+  let candidateSet = officeCode ? new Set(byOffice[officeCode] || []) : null;
+  // area.jsonとforecast_area.jsonでofficeコードの対応が取れず、絞り込んだ結果
+  // 候補が1件も無い場合は、行政区分による解決自体を諦めて全国検索にフォールバック
+  // する(「予報が全く出ない」よりは、多少不正確でも予報が出る方が良いため)。
+  if (candidateSet && candidateSet.size === 0) {
+    officeCode = null;
+    class10Code = null;
+    candidateSet = null;
+  }
+
   let best = null;
   let bestDist2 = Infinity;
   for (const pt of points) {
-    if (!areaIndex[pt.code]) continue;
+    const isCandidate = candidateSet ? candidateSet.has(pt.code) : !!areaIndex[pt.code];
+    if (!isCandidate) continue;
     const d2 = fastDist2(lat, lon, pt.lat, pt.lon);
     if (d2 < bestDist2) {
       bestDist2 = d2;
@@ -5883,7 +5941,12 @@ async function resolveForecastLocation(lat, lon) {
     }
   }
   if (!best) return null;
-  const { officeCode, class10Code } = areaIndex[best.code];
+
+  if (!officeCode) {
+    const fallback = areaIndex[best.code];
+    officeCode = fallback.officeCode;
+    class10Code = fallback.class10Code;
+  }
   return { officeCode, class10Code, amedasCode: best.code, stationName: best.name };
 }
 
