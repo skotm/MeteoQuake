@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.6f";
+const APP_VERSION = "1.5.7";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -5998,6 +5998,17 @@ function formatTimeSeriesDateChanged(iso, prevIso) {
   return d.getDate() !== prev.getDate();
 }
 
+// 16方位の日本語表記(地域時系列予報のwind.direction)→北を0度とした角度。
+const WIND_DIRECTION_DEGREES = {
+  "北": 0, "北北東": 22.5, "北東": 45, "東北東": 67.5,
+  "東": 90, "東南東": 112.5, "南東": 135, "南南東": 157.5,
+  "南": 180, "南南西": 202.5, "南西": 225, "西南西": 247.5,
+  "西": 270, "西北西": 292.5, "北西": 315, "北北西": 337.5,
+};
+function windDirectionToDegrees(direction) {
+  return WIND_DIRECTION_DEGREES[direction] ?? 0;
+}
+
 // forecast.json(office単位)から、指定class10Code(天気・降水確率用)・
 // amedasCode(気温用)に対応する「今日の天気予報」をまとめて取り出す。
 // forecast.jsonは [0]=今日・明日の短期予報, [1]=週間予報 の2要素配列。
@@ -10645,7 +10656,7 @@ function WeatherLocationPanel({
                     key={e.dateTime || i}
                     style={{
                       display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-                      flexShrink: 0, width: 52, padding: "6px 0",
+                      flexShrink: 0, width: 58, padding: "6px 0",
                       borderLeft: dateChanged && i > 0 ? `0.5px solid rgba(${tokens.ink},0.15)` : "none",
                     }}
                   >
@@ -10669,6 +10680,23 @@ function WeatherLocationPanel({
                     <span style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.9)` }}>
                       {e.temperature != null ? `${e.temperature}°` : "--°"}
                     </span>
+                    {e.wind && (
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1, marginTop: 1 }}>
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            fontSize: 12, color: `rgba(${tokens.ink},0.5)`, lineHeight: 1,
+                            display: "inline-block",
+                            transform: `rotate(${windDirectionToDegrees(e.wind.direction) + 180}deg)`,
+                          }}
+                        >
+                          ↑
+                        </span>
+                        <span style={{ fontSize: 9, color: `rgba(${tokens.ink},0.5)`, whiteSpace: "nowrap" }}>
+                          {e.wind.direction}{e.wind.speed != null ? ` ${e.wind.speed}m` : ""}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 );
               })}
