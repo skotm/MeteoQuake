@@ -10438,10 +10438,14 @@ function WeatherLocationPanel({
   kanaPickerStep, onChangeKanaPickerStep, kanaPickerRow, onChangeKanaPickerRow, kanaPickerCol, onChangeKanaPickerCol,
   kanaGroupedMunicipalities, municipalityListError, onSelectMunicipality,
 }) {
-  const { tokens } = useContext(ThemeContext);
+  const { tokens, mode } = useContext(ThemeContext);
   const isStandalonePwa = useIsStandalonePwa();
   const [rangeMode, setRangeMode] = useState("3day"); // "3day" | "week"
-
+  // 天気アイコンの背景チップ。ダークモードはアクセントカラーの薄い青のままで
+  // 十分見えるが、ライトモードは「くもり」等の灰色系アイコンが白っぽい背景に
+  // 溶け込んで見づらくなるため、不透明な黒寄りのグレーにして確実にコントラストを
+  // 出す。
+  const weatherIconChipBg = mode === "light" ? "#48484A" : "rgba(10,132,255,0.14)";
   // 地点登録(五十音ピッカー)を開いている間は、それ専用の画面をフルで表示する。
   if (kanaPickerOpen) {
     return (
@@ -10611,7 +10615,7 @@ function WeatherLocationPanel({
           {f.weatherCode != null && (
             <div style={{
               width: 68, height: 68, borderRadius: 16, flexShrink: 0,
-              background: "rgba(10,132,255,0.14)",
+              background: weatherIconChipBg,
               display: "flex", alignItems: "center", justifyContent: "center",
             }}>
               <img src={weatherIconUrl(f.weatherCode)} alt="" width={68} height={68}/>
@@ -10654,7 +10658,7 @@ function WeatherLocationPanel({
                     {e.weatherCode != null ? (
                       <div style={{
                         width: 34, height: 34, borderRadius: 9, flexShrink: 0,
-                        background: "rgba(10,132,255,0.14)",
+                        background: weatherIconChipBg,
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
                         <img src={weatherIconUrl(e.weatherCode)} alt={e.weather || ""} width={34} height={34}/>
@@ -10708,7 +10712,7 @@ function WeatherLocationPanel({
                     {d.weatherCode != null ? (
                       <div style={{
                         width: 36, height: 36, borderRadius: 9, flexShrink: 0,
-                        background: "rgba(10,132,255,0.14)",
+                        background: weatherIconChipBg,
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
                         <img src={weatherIconUrl(d.weatherCode)} alt="" width={36} height={36}/>
