@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.6c";
+const APP_VERSION = "1.5.6d";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10614,7 +10614,7 @@ function WeatherLocationPanel({
               background: "rgba(142,142,147,0.16)",
               display: "flex", alignItems: "center", justifyContent: "center",
             }}>
-              <img src={weatherIconUrl(f.weatherCode)} alt="" width={44} height={44}/>
+              <img src={weatherIconUrl(f.weatherCode)} alt="" width={52} height={52}/>
             </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -10657,7 +10657,7 @@ function WeatherLocationPanel({
                         background: "rgba(142,142,147,0.16)",
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
-                        <img src={weatherIconUrl(e.weatherCode)} alt={e.weather || ""} width={20} height={20}/>
+                        <img src={weatherIconUrl(e.weatherCode)} alt={e.weather || ""} width={24} height={24}/>
                       </div>
                     ) : (
                       <div style={{ width: 26, height: 26 }}/>
@@ -10711,7 +10711,7 @@ function WeatherLocationPanel({
                         background: "rgba(142,142,147,0.16)",
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
-                        <img src={weatherIconUrl(d.weatherCode)} alt="" width={22} height={22}/>
+                        <img src={weatherIconUrl(d.weatherCode)} alt="" width={26} height={26}/>
                       </div>
                     ) : (
                       <div style={{ width: 28, height: 28 }}/>
