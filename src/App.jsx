@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.6";
+const APP_VERSION = "1.5.6a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -5968,6 +5968,20 @@ function formatForecastDayLabel(iso, index) {
   if (Number.isNaN(d.getTime())) return "";
   return `${d.getMonth() + 1}/${d.getDate()}(${FORECAST_WEEKDAY_JA[d.getDay()]})`;
 }
+// 地域時系列予報(3時間ごと)の時刻ラベル。日付が変わる最初のコマだけ「M/D」を
+// 添える(それ以外は「時」だけで十分読める)。
+function formatTimeSeriesHour(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getHours()}時`;
+}
+function formatTimeSeriesDateChanged(iso, prevIso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return false;
+  if (!prevIso) return true;
+  const prev = new Date(prevIso);
+  return d.getDate() !== prev.getDate();
+}
 
 // forecast.json(office単位)から、指定class10Code(天気・降水確率用)・
 // amedasCode(気温用)に対応する「今日の天気予報」をまとめて取り出す。
@@ -6100,8 +6114,44 @@ async function fetchCurrentLocationForecast(lat, lon) {
     areaName: forecast?.areaName || resolved.stationName,
     stationName: resolved.stationName,
     officeCode: resolved.officeCode,
+    class10Code: resolved.class10Code,
     daily,
   };
+}
+
+// 地域時系列予報(3時間ごとの天気・風、気温)。天気予報ページ下部の「地域時系列
+// 予報を見る」に対応するjmatile版データで、一次細分区域(class10s)コード単位。
+// 参考: https://qiita.com/tenpoul/items/f9e026597fcf8405680f
+function areaTimeSeriesUrl(class10Code) {
+  return `https://www.jma.go.jp/bosai/jmatile/data/wdist/VPFD/${class10Code}.json`;
+}
+// areaTimeSeries(天気・風、3時間ごと)とpointTimeSeries(気温、代表地点の1時間毎+
+// 別立ての最高/最低)は、時刻の刻み方も配列の長さも違う。dateTime文字列をキーに
+// 突き合わせて、時刻ごとに{天気・風・気温}をまとめた1本の配列にする。
+function parseAreaTimeSeries(json) {
+  const area = json?.areaTimeSeries;
+  if (!area?.timeDefines) return [];
+  const tempByTime = {};
+  const point = json?.pointTimeSeries;
+  if (point?.timeDefines) {
+    point.timeDefines.forEach((td, i) => {
+      const raw = point.temperature?.[i];
+      tempByTime[td.dateTime] = raw != null && raw !== "" ? Number(raw) : null;
+    });
+  }
+  return area.timeDefines.map((td, i) => ({
+    dateTime: td.dateTime,
+    weather: area.weather?.[i] || null,
+    wind: area.wind?.[i] || null,
+    temperature: tempByTime[td.dateTime] ?? null,
+  }));
+}
+async function fetchAreaTimeSeries(class10Code) {
+  const res = await fetch(areaTimeSeriesUrl(class10Code));
+  if (!res.ok) throw new Error(`地域時系列予報の取得に失敗(HTTP ${res.status})`);
+  const json = await res.json();
+  const entries = parseAreaTimeSeries(json);
+  return { entries, pointName: json?.pointTimeSeries?.pointNameJP || null };
 }
 
 async function fetchTideStations() {
@@ -8298,6 +8348,26 @@ function BottomDock({
     return () => { cancelled = true; };
   }, [weatherLocationActive, activeWeatherPoint?.source, activeWeatherPoint?.lat, activeWeatherPoint?.lon]);
 
+  // 地域時系列予報(3時間ごとの天気・風・気温)。通常の天気予報の取得が終わって
+  // class10Codeが分かってから、追加でもう1件取りに行く。
+  const [timeSeriesState, setTimeSeriesState] = useState({ status: "idle", data: null });
+  useEffect(() => {
+    const class10Code = weatherForecastState.status === "ready" ? weatherForecastState.data?.class10Code : null;
+    if (!weatherLocationActive || !class10Code) {
+      setTimeSeriesState({ status: "idle", data: null });
+      return;
+    }
+    let cancelled = false;
+    setTimeSeriesState(s => ({ status: "loading", data: s.data }));
+    fetchAreaTimeSeries(class10Code)
+      .then((data) => { if (!cancelled) setTimeSeriesState({ status: "ready", data }); })
+      .catch((err) => {
+        console.error("地域時系列予報の取得に失敗:", err);
+        if (!cancelled) setTimeSeriesState({ status: "error", data: null });
+      });
+    return () => { cancelled = true; };
+  }, [weatherLocationActive, weatherForecastState.status, weatherForecastState.data?.class10Code]);
+
   /* ─────────────────────────────────────────────────────
      地点登録 — 五十音順の絞り込み選択(あかさたなはまやらわ→あいうえお→
      一覧)。市区町村の一覧・境界はwarning_areas.json(1,821市区町村)から
@@ -9850,6 +9920,7 @@ function BottomDock({
                     onResetLocationConsent={resetWeatherLocationConsent}
                     activeWeatherPoint={activeWeatherPoint}
                     forecastState={weatherForecastState}
+                    timeSeriesState={timeSeriesState}
                     registeredWeatherPoint={registeredWeatherPoint}
                     currentMunicipalityName={currentMunicipalityName}
                     weatherSourceMode={weatherSourceMode}
@@ -10342,7 +10413,7 @@ function WeatherMenuFloating({ open, onToggle, growUp = true }) {
    ───────────────────────────────────────────────────── */
 function WeatherLocationPanel({
   geoState, onConsentLocation, onResetLocationConsent,
-  activeWeatherPoint, forecastState, registeredWeatherPoint, currentMunicipalityName,
+  activeWeatherPoint, forecastState, timeSeriesState, registeredWeatherPoint, currentMunicipalityName,
   weatherSourceMode, onChangeWeatherSourceMode,
   kanaPickerOpen, onOpenKanaPicker, onCloseKanaPicker,
   kanaPickerStep, onChangeKanaPickerStep, kanaPickerRow, onChangeKanaPickerRow, kanaPickerCol, onChangeKanaPickerCol,
@@ -10585,6 +10656,47 @@ function WeatherLocationPanel({
           </>
         )}
 
+        {timeSeriesState.status === "ready" && timeSeriesState.data?.entries?.length > 0 && (
+          <>
+            <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.12)`, margin: "2px 0" }}/>
+            <span style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}>
+              地域時系列予報
+            </span>
+            <div style={{ display: "flex", overflowX: "auto", gap: 2, marginLeft: -18, marginRight: -18, paddingLeft: 18, paddingRight: 18 }}>
+              {timeSeriesState.data.entries.map((e, i) => {
+                const prevDate = i > 0 ? timeSeriesState.data.entries[i - 1].dateTime : null;
+                const dateChanged = formatTimeSeriesDateChanged(e.dateTime, prevDate);
+                return (
+                  <div
+                    key={e.dateTime || i}
+                    style={{
+                      display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                      flexShrink: 0, width: 52, padding: "6px 0",
+                      borderLeft: dateChanged && i > 0 ? `0.5px solid rgba(${tokens.ink},0.15)` : "none",
+                    }}
+                  >
+                    <span style={{ fontSize: 9.5, color: `rgba(${tokens.ink},0.45)`, height: 12 }}>
+                      {dateChanged ? formatForecastDayLabel(e.dateTime, 1).replace(/\(.\)$/, "") : ""}
+                    </span>
+                    <span style={{ fontSize: 11.5, color: `rgba(${tokens.ink},0.7)` }}>
+                      {formatTimeSeriesHour(e.dateTime)}
+                    </span>
+                    <span style={{
+                      fontSize: 10, color: `rgba(${tokens.ink},0.75)`, textAlign: "center",
+                      lineHeight: 1.25, minHeight: 24,
+                    }}>
+                      {e.weather || ""}
+                    </span>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.9)` }}>
+                      {e.temperature != null ? `${e.temperature}°` : "--°"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
         {f.officeCode && (
           <a
             href={`https://www.jma.go.jp/bosai/forecast/#area_type=offices&area_code=${f.officeCode}`}
@@ -10596,6 +10708,19 @@ function WeatherLocationPanel({
             }}
           >
             気象庁の該当ページを開く ↗
+          </a>
+        )}
+        {f.officeCode && (
+          <a
+            href={`https://www.jma.go.jp/bosai/wdist/timeseries.html#area_type=offices&area_code=${f.officeCode}`}
+            {...(isStandalonePwa ? {} : { target: "_blank", rel: "noopener noreferrer" })}
+            style={{
+              display: "block", textAlign: "center", padding: "2px 0 0",
+              fontSize: 12, fontWeight: 600, color: tokens.accentText || "#0A84FF",
+              textDecoration: "none",
+            }}
+          >
+            地域時系列予報を見る ↗
           </a>
         )}
       </div>
