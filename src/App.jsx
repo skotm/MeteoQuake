@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.5a";
+const APP_VERSION = "1.5.6";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -6044,9 +6044,15 @@ function extractDailyForecasts(forecastJson, class10Code, amedasCode) {
   if (!Array.isArray(forecastJson) || forecastJson.length < 2) return [];
   const weekly = forecastJson[1];
   const weatherSeries = weekly?.timeSeries?.[0];
-  if (!weatherSeries) return [];
-  const weatherArea = weatherSeries.areas?.find(a => a.area?.code === class10Code);
-  const tempArea = weekly?.timeSeries?.[1]?.areas?.find(a => a.area?.code === amedasCode);
+  if (!weatherSeries || !weatherSeries.areas || weatherSeries.areas.length === 0) return [];
+  // 週間予報は、短期予報と同じ一次細分区域(class10s)コードでは無く、それより
+  // 粗い単位(離島などで複数のclass10sをまとめた区域)で発表されることがある。
+  // その場合はcodeが完全一致せず該当なし(=天気・気温が全部空欄)になってしまう
+  // ため、一致しなければその予報区の代表区域(areas[0])にフォールバックする。
+  // 気温側(amedasコード)も同様。
+  const weatherArea = weatherSeries.areas.find(a => a.area?.code === class10Code) || weatherSeries.areas[0];
+  const tempSeries = weekly?.timeSeries?.[1];
+  const tempArea = tempSeries?.areas?.find(a => a.area?.code === amedasCode) || tempSeries?.areas?.[0] || null;
   const timeDefines = weatherSeries.timeDefines || [];
 
   return timeDefines.map((date, i) => {
@@ -6093,6 +6099,7 @@ async function fetchCurrentLocationForecast(lat, lon) {
     ...(forecast || daily[0] || {}),
     areaName: forecast?.areaName || resolved.stationName,
     stationName: resolved.stationName,
+    officeCode: resolved.officeCode,
     daily,
   };
 }
@@ -10342,6 +10349,7 @@ function WeatherLocationPanel({
   kanaGroupedMunicipalities, municipalityListError, onSelectMunicipality,
 }) {
   const { tokens } = useContext(ThemeContext);
+  const isStandalonePwa = useIsStandalonePwa();
   const [rangeMode, setRangeMode] = useState("3day"); // "3day" | "week"
 
   // 地点登録(五十音ピッカー)を開いている間は、それ専用の画面をフルで表示する。
@@ -10575,6 +10583,20 @@ function WeatherLocationPanel({
               ))}
             </div>
           </>
+        )}
+
+        {f.officeCode && (
+          <a
+            href={`https://www.jma.go.jp/bosai/forecast/#area_type=offices&area_code=${f.officeCode}`}
+            {...(isStandalonePwa ? {} : { target: "_blank", rel: "noopener noreferrer" })}
+            style={{
+              display: "block", textAlign: "center", padding: "10px 0 0",
+              fontSize: 12, fontWeight: 600, color: tokens.accentText || "#0A84FF",
+              textDecoration: "none",
+            }}
+          >
+            気象庁の該当ページを開く ↗
+          </a>
         )}
       </div>
     );
