@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.6";
+const APP_VERSION = "1.5.5a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10359,19 +10359,24 @@ function WeatherLocationPanel({
     );
   }
 
-  // 上部の「現在地/登録地点」切り替え。以前は「GPSが使えなければ自動で登録地点に
-  // フォールバック」していたが、利用者が選んだ方をそのまま出すようにする。
+  // 上部のヘッダー行 — 現在地/登録地点の表示名と、切り替えボタンを同じ行に置く。
+  // 切り替えボタンは以前は横幅いっぱいの2分割セグメントだったが、幅を短く
+  // (中身の文字幅に合わせた自動幅)している。
+  const headerLabel = weatherSourceMode === "registered"
+    ? (registeredWeatherPoint?.name || "登録地点")
+    : (currentMunicipalityName || "現在地");
   const modeToggle = (
     <div style={{
-      display: "flex", padding: 2, borderRadius: 9,
-      background: `rgba(${tokens.ink},0.07)`, margin: "14px 18px 2px",
+      display: "flex", padding: 2, borderRadius: 8,
+      background: `rgba(${tokens.ink},0.07)`, flexShrink: 0,
     }}>
       {[{ id: "gps", label: "現在地" }, { id: "registered", label: "登録地点" }].map(opt => (
         <PressableButton
           key={opt.id}
           onClick={() => onChangeWeatherSourceMode(opt.id)}
           style={{
-            flex: 1, fontSize: 12.5, fontWeight: 600, padding: "6px 0", borderRadius: 7, textAlign: "center",
+            fontSize: 11.5, fontWeight: 600, padding: "4px 9px", borderRadius: 6, textAlign: "center",
+            whiteSpace: "nowrap",
             color: weatherSourceMode === opt.id ? tokens.text : `rgba(${tokens.ink},0.55)`,
             background: weatherSourceMode === opt.id ? (tokens.cardBg || `rgba(${tokens.ink},0.16)`) : "transparent",
           }}
@@ -10379,6 +10384,20 @@ function WeatherLocationPanel({
           {opt.label}
         </PressableButton>
       ))}
+    </div>
+  );
+  const headerRow = (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+      padding: "14px 18px 4px",
+    }}>
+      <span style={{
+        fontSize: 13, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`,
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+      }}>
+        {headerLabel}
+      </span>
+      {modeToggle}
     </div>
   );
 
@@ -10480,24 +10499,16 @@ function WeatherLocationPanel({
     const f = forecastState.data;
     const daily = f.daily || [];
     const visibleDays = rangeMode === "week" ? daily.slice(0, 7) : daily.slice(0, 3);
-    const label = activeWeatherPoint.source === "gps"
-      ? (currentMunicipalityName || "現在地")
-      : (registeredWeatherPoint?.name || f.areaName);
     body = (
-      <div style={{ padding: "14px 18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: `rgba(${tokens.ink},0.6)` }}>
-            {label}
-          </span>
-          {weatherSourceMode === "registered" && (
-            <PressableButton
-              onClick={onOpenKanaPicker}
-              style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}
-            >
-              地点を変更
-            </PressableButton>
-          )}
-        </div>
+      <div style={{ padding: "6px 18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+        {weatherSourceMode === "registered" && (
+          <PressableButton
+            onClick={onOpenKanaPicker}
+            style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.55)`, alignSelf: "flex-end" }}
+          >
+            地点を変更
+          </PressableButton>
+        )}
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           {f.weatherCode != null && (
             <img src={weatherIconUrl(f.weatherCode)} alt="" width={56} height={56}/>
@@ -10571,7 +10582,7 @@ function WeatherLocationPanel({
 
   return (
     <div>
-      {modeToggle}
+      {headerRow}
       {body}
     </div>
   );
