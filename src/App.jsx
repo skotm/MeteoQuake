@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.5d";
+const APP_VERSION = "1.5.5e";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10132,6 +10132,19 @@ function WeatherLocationPanel({
   // 使いたい」と思った時に説明画面へ自分から戻れるようにするための手動フラグ。
   // (登録地点がある間は下のawaiting-consent判定だけでは画面が出ないため)
   const [manualLocationPromptOpen, setManualLocationPromptOpen] = useState(false);
+  // manualLocationPromptOpen中に実際に「現在地を使う」を押したかどうか。押した後は
+  // geoStateの結果(成功/失敗)をこの画面の中で見せる。押さずに閉じた場合は
+  // 単に登録地点のままに戻るだけで、エラー扱いにはしない。
+  const [locationRequestPending, setLocationRequestPending] = useState(false);
+  // GPS取得に成功したら(=activeWeatherPointがgpsに切り替わったら)、この画面を
+  // 自動で閉じる。失敗した場合はここでは閉じず、失敗理由をこの画面内で見せ続ける
+  // (でないと「押しても何も起きなかった」ように見えてしまう)。
+  useEffect(() => {
+    if (geoState.status === "ready") {
+      setManualLocationPromptOpen(false);
+      setLocationRequestPending(false);
+    }
+  }, [geoState.status]);
 
   if (searchOpen) {
     return (
@@ -10185,6 +10198,8 @@ function WeatherLocationPanel({
   // manualLocationPromptOpenを立てれば同じ画面に戻れる。
   if (manualLocationPromptOpen || (!activeWeatherPoint && geoState.status === "awaiting-consent")) {
     const canCancel = manualLocationPromptOpen && !!activeWeatherPoint;
+    const showError = locationRequestPending && geoState.status === "error";
+    const showLoading = locationRequestPending && geoState.status === "loading";
     return (
       <div style={{
         display: "flex", flexDirection: "column", alignItems: "center", gap: 14,
@@ -10192,26 +10207,38 @@ function WeatherLocationPanel({
       }}>
         <PinIcon size={26}/>
         <span style={{ fontSize: 14.5, fontWeight: 700, color: `rgba(${tokens.ink},0.9)`, textAlign: "center" }}>
-          現在地の天気を表示しますか?
+          {showError ? "現在地を取得できませんでした" : "現在地の天気を表示しますか?"}
         </span>
         <span style={{ fontSize: 12.5, color: `rgba(${tokens.ink},0.6)`, textAlign: "center", lineHeight: 1.7 }}>
-          位置情報は天気予報を調べる目的にのみ使用します。開発者のサーバーに送信・保存されることはありません。
-          「現在地を使う」を選ぶと、続けてお使いのブラウザの位置情報の確認が表示されます。
-          以前ブラウザ側で拒否した場合は、ブラウザのサイト設定から改めて許可してください。
+          {showError ? (
+            "ブラウザで位置情報の利用がブロックされているか、取得できませんでした。ブラウザのサイト設定から改めて許可するか、地点を登録してください。"
+          ) : (
+            <>
+              位置情報は天気予報を調べる目的にのみ使用します。開発者のサーバーに送信・保存されることはありません。
+              「現在地を使う」を選ぶと、続けてお使いのブラウザの位置情報の確認が表示されます。
+              以前ブラウザ側で拒否した場合は、ブラウザのサイト設定から改めて許可してください。
+            </>
+          )}
         </span>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%", maxWidth: 240 }}>
-          <PressableButton
-            onClick={() => { setManualLocationPromptOpen(false); onConsentLocation(); }}
-            style={{
-              fontSize: 13.5, fontWeight: 600, color: "#fff", textAlign: "center",
-              padding: "10px 0", borderRadius: 999, background: "#0A84FF",
-            }}
-          >
-            現在地を使う
-          </PressableButton>
+          {showLoading ? (
+            <div style={{ fontSize: 13.5, color: `rgba(${tokens.ink},0.6)`, textAlign: "center", padding: "10px 0" }}>
+              取得中…
+            </div>
+          ) : (
+            <PressableButton
+              onClick={() => { setLocationRequestPending(true); onConsentLocation(); }}
+              style={{
+                fontSize: 13.5, fontWeight: 600, color: "#fff", textAlign: "center",
+                padding: "10px 0", borderRadius: 999, background: "#0A84FF",
+              }}
+            >
+              {showError ? "もう一度試す" : "現在地を使う"}
+            </PressableButton>
+          )}
           {canCancel ? (
             <PressableButton
-              onClick={() => setManualLocationPromptOpen(false)}
+              onClick={() => { setManualLocationPromptOpen(false); setLocationRequestPending(false); }}
               style={{
                 fontSize: 13.5, fontWeight: 600, color: `rgba(${tokens.ink},0.7)`, textAlign: "center",
                 padding: "10px 0", borderRadius: 999, background: `rgba(${tokens.ink},0.08)`,
@@ -10252,7 +10279,7 @@ function WeatherLocationPanel({
         <div style={{ display: "flex", gap: 8 }}>
           {geoState.status === "error" && (
             <PressableButton
-              onClick={() => { onResetLocationConsent(); setManualLocationPromptOpen(true); }}
+              onClick={() => { onResetLocationConsent(); setLocationRequestPending(false); setManualLocationPromptOpen(true); }}
               style={{
                 fontSize: 13.5, fontWeight: 600, color: `rgba(${tokens.ink},0.7)`,
                 padding: "9px 16px", borderRadius: 999, background: `rgba(${tokens.ink},0.08)`,
@@ -10302,7 +10329,7 @@ function WeatherLocationPanel({
         <div style={{ display: "flex", gap: 12 }}>
           {activeWeatherPoint.source === "registered" && (
             <PressableButton
-              onClick={() => setManualLocationPromptOpen(true)}
+              onClick={() => { setLocationRequestPending(false); setManualLocationPromptOpen(true); }}
               style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}
             >
               現在地を使う
