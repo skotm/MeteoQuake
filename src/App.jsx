@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.6e";
+const APP_VERSION = "1.5.6f";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10611,7 +10611,7 @@ function WeatherLocationPanel({
           {f.weatherCode != null && (
             <div style={{
               width: 68, height: 68, borderRadius: 16, flexShrink: 0,
-              background: "rgba(142,142,147,0.16)",
+              background: "rgba(10,132,255,0.14)",
               display: "flex", alignItems: "center", justifyContent: "center",
             }}>
               <img src={weatherIconUrl(f.weatherCode)} alt="" width={68} height={68}/>
@@ -10654,7 +10654,7 @@ function WeatherLocationPanel({
                     {e.weatherCode != null ? (
                       <div style={{
                         width: 34, height: 34, borderRadius: 9, flexShrink: 0,
-                        background: "rgba(142,142,147,0.16)",
+                        background: "rgba(10,132,255,0.14)",
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
                         <img src={weatherIconUrl(e.weatherCode)} alt={e.weather || ""} width={34} height={34}/>
@@ -10708,7 +10708,7 @@ function WeatherLocationPanel({
                     {d.weatherCode != null ? (
                       <div style={{
                         width: 36, height: 36, borderRadius: 9, flexShrink: 0,
-                        background: "rgba(142,142,147,0.16)",
+                        background: "rgba(10,132,255,0.14)",
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
                         <img src={weatherIconUrl(d.weatherCode)} alt="" width={36} height={36}/>
