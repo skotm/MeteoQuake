@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.5b";
+const APP_VERSION = "1.5.5c";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -7969,6 +7969,14 @@ function BottomDock({
     setWeatherLocationConsentedState(true);
     try { localStorage.setItem(WEATHER_LOCATION_CONSENT_KEY, "1"); } catch {}
   }, []);
+  // 一度ブラウザ側の許可を拒否/無視した後でも、後からもう一度説明画面に
+  // 戻れるようにするための取り消し。ブラウザの許可設定自体はここでは変えられない
+  // (それは各ブラウザのサイト設定からしか変更できない)が、少なくともアプリ側で
+  // 「詰んで二度と設定できない」状態にはしない。
+  const resetWeatherLocationConsent = useCallback(() => {
+    setWeatherLocationConsentedState(false);
+    try { localStorage.removeItem(WEATHER_LOCATION_CONSENT_KEY); } catch {}
+  }, []);
 
   // status: "idle"(見ていない) | "awaiting-consent"(説明を表示中、まだブラウザには
   // 要求していない) | "loading" | "ready" | "error" | "unsupported"
@@ -9595,6 +9603,7 @@ function BottomDock({
                   <WeatherLocationPanel
                     geoState={geoState}
                     onConsentLocation={grantWeatherLocationConsent}
+                    onResetLocationConsent={resetWeatherLocationConsent}
                     activeWeatherPoint={activeWeatherPoint}
                     forecastState={weatherForecastState}
                     registeredWeatherPoint={registeredWeatherPoint}
@@ -10079,11 +10088,15 @@ function WeatherMenuFloating({ open, onToggle, growUp = true }) {
    登録地点(1件)の天気予報を表示する。
    ───────────────────────────────────────────────────── */
 function WeatherLocationPanel({
-  geoState, onConsentLocation, activeWeatherPoint, forecastState, registeredWeatherPoint,
+  geoState, onConsentLocation, onResetLocationConsent, activeWeatherPoint, forecastState, registeredWeatherPoint,
   searchOpen, onToggleSearch, searchQuery, onChangeSearchQuery, searchResults, onSelectSearchResult,
 }) {
   const { tokens } = useContext(ThemeContext);
   const [rangeMode, setRangeMode] = useState("3day"); // "3day" | "week"
+  // すでに登録地点があって普段は困っていない場合でも、後から「やっぱり現在地を
+  // 使いたい」と思った時に説明画面へ自分から戻れるようにするための手動フラグ。
+  // (登録地点がある間は下のawaiting-consent判定だけでは画面が出ないため)
+  const [manualLocationPromptOpen, setManualLocationPromptOpen] = useState(false);
 
   if (searchOpen) {
     return (
@@ -10133,7 +10146,10 @@ function WeatherLocationPanel({
   // 説明する画面。ここで「現在地を使う」を選んで初めてgeolocationを呼び出す
   // (=続けてブラウザ自体の許可ダイアログが出る)。誤解を避けるため、送信先や
   // 用途を明記し、使いたくない場合の代替(地点登録)も同じ画面で案内する。
-  if (!activeWeatherPoint && geoState.status === "awaiting-consent") {
+  // 「登録地点がすでにあってawaiting-consentにならない場合」でも、
+  // manualLocationPromptOpenを立てれば同じ画面に戻れる。
+  if (manualLocationPromptOpen || (!activeWeatherPoint && geoState.status === "awaiting-consent")) {
+    const canCancel = manualLocationPromptOpen && !!activeWeatherPoint;
     return (
       <div style={{
         display: "flex", flexDirection: "column", alignItems: "center", gap: 14,
@@ -10146,10 +10162,11 @@ function WeatherLocationPanel({
         <span style={{ fontSize: 12.5, color: `rgba(${tokens.ink},0.6)`, textAlign: "center", lineHeight: 1.7 }}>
           位置情報は天気予報を調べる目的にのみ使用します。開発者のサーバーに送信・保存されることはありません。
           「現在地を使う」を選ぶと、続けてお使いのブラウザの位置情報の確認が表示されます。
+          以前ブラウザ側で拒否した場合は、ブラウザのサイト設定から改めて許可してください。
         </span>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%", maxWidth: 240 }}>
           <PressableButton
-            onClick={onConsentLocation}
+            onClick={() => { setManualLocationPromptOpen(false); onConsentLocation(); }}
             style={{
               fontSize: 13.5, fontWeight: 600, color: "#fff", textAlign: "center",
               padding: "10px 0", borderRadius: 999, background: "#0A84FF",
@@ -10157,15 +10174,27 @@ function WeatherLocationPanel({
           >
             現在地を使う
           </PressableButton>
-          <PressableButton
-            onClick={onToggleSearch}
-            style={{
-              fontSize: 13.5, fontWeight: 600, color: `rgba(${tokens.ink},0.7)`, textAlign: "center",
-              padding: "10px 0", borderRadius: 999, background: `rgba(${tokens.ink},0.08)`,
-            }}
-          >
-            地点を登録して使う
-          </PressableButton>
+          {canCancel ? (
+            <PressableButton
+              onClick={() => setManualLocationPromptOpen(false)}
+              style={{
+                fontSize: 13.5, fontWeight: 600, color: `rgba(${tokens.ink},0.7)`, textAlign: "center",
+                padding: "10px 0", borderRadius: 999, background: `rgba(${tokens.ink},0.08)`,
+              }}
+            >
+              やめて登録地点のままにする
+            </PressableButton>
+          ) : (
+            <PressableButton
+              onClick={onToggleSearch}
+              style={{
+                fontSize: 13.5, fontWeight: 600, color: `rgba(${tokens.ink},0.7)`, textAlign: "center",
+                padding: "10px 0", borderRadius: 999, background: `rgba(${tokens.ink},0.08)`,
+              }}
+            >
+              地点を登録して使う
+            </PressableButton>
+          )}
         </div>
       </div>
     );
@@ -10174,7 +10203,7 @@ function WeatherLocationPanel({
   if (!activeWeatherPoint) {
     const message =
       geoState.status === "loading" ? "現在地を取得中…"
-      : geoState.status === "error" ? "現在地の利用が許可されていないか、取得できませんでした。地点を登録してください"
+      : geoState.status === "error" ? "現在地の利用が許可されていないか、取得できませんでした"
       : geoState.status === "unsupported" ? "この端末・ブラウザでは現在地を利用できません。地点を登録してください"
       : "現在地が使えません。地点を登録してください";
     return (
@@ -10185,15 +10214,28 @@ function WeatherLocationPanel({
         <span style={{ fontSize: 14, color: `rgba(${tokens.ink},0.6)`, textAlign: "center", lineHeight: 1.6 }}>
           {message}
         </span>
-        <PressableButton
-          onClick={onToggleSearch}
-          style={{
-            fontSize: 13.5, fontWeight: 600, color: "#fff",
-            padding: "9px 18px", borderRadius: 999, background: "#0A84FF",
-          }}
-        >
-          地点を登録
-        </PressableButton>
+        <div style={{ display: "flex", gap: 8 }}>
+          {geoState.status === "error" && (
+            <PressableButton
+              onClick={() => { onResetLocationConsent(); setManualLocationPromptOpen(true); }}
+              style={{
+                fontSize: 13.5, fontWeight: 600, color: `rgba(${tokens.ink},0.7)`,
+                padding: "9px 16px", borderRadius: 999, background: `rgba(${tokens.ink},0.08)`,
+              }}
+            >
+              現在地を再試行
+            </PressableButton>
+          )}
+          <PressableButton
+            onClick={onToggleSearch}
+            style={{
+              fontSize: 13.5, fontWeight: 600, color: "#fff",
+              padding: "9px 18px", borderRadius: 999, background: "#0A84FF",
+            }}
+          >
+            地点を登録
+          </PressableButton>
+        </div>
       </div>
     );
   }
@@ -10222,12 +10264,22 @@ function WeatherLocationPanel({
         <span style={{ fontSize: 13, fontWeight: 600, color: `rgba(${tokens.ink},0.6)` }}>
           {activeWeatherPoint.source === "gps" ? "現在地" : (registeredWeatherPoint?.name || f.areaName)}
         </span>
-        <PressableButton
-          onClick={onToggleSearch}
-          style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}
-        >
-          地点を変更
-        </PressableButton>
+        <div style={{ display: "flex", gap: 12 }}>
+          {activeWeatherPoint.source === "registered" && (
+            <PressableButton
+              onClick={() => setManualLocationPromptOpen(true)}
+              style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}
+            >
+              現在地を使う
+            </PressableButton>
+          )}
+          <PressableButton
+            onClick={onToggleSearch}
+            style={{ fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}
+          >
+            地点を変更
+          </PressableButton>
+        </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
         {f.weatherCode != null && (
