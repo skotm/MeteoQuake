@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.8e";
+const APP_VERSION = "1.5.8f";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -9876,6 +9876,7 @@ function BottomDock({
           押すと閉じて元の上向きに戻る。 */}
       {!eewDetailOpen && active === "weather" && (
         isWide && wideAnchorRect ? createPortal(
+          <>
           <div style={{
             position: "fixed",
             left: wideAnchorRect.right + 12,
@@ -9883,7 +9884,26 @@ function BottomDock({
             zIndex: 50,
           }}>
             <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={false} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)}/>
-          </div>,
+          </div>
+          {/* 雨雲レーダーの時刻スライダー(横画面) — 縦画面の時と同じく、展開メニューが
+              閉じている間だけ表示する。縦画面ではボタンのすぐ上に置いているが、
+              横画面ではパネルの右側・画面下端に沿って横いっぱいに浮かべる。 */}
+          {nowcastEnabled && !weatherMenuOpen && (
+            <div style={{
+              position: "fixed",
+              left: wideAnchorRect.right + 12,
+              right: 16,
+              bottom: "calc(16px + env(safe-area-inset-bottom))",
+              zIndex: 50,
+            }}>
+              <NowcastTimeSlider
+                frames={nowcastFrames}
+                frameIndex={nowcastFrameIndex ?? 0}
+                onChangeFrameIndex={setNowcastFrameIndex}
+              />
+            </div>
+          )}
+          </>,
           document.body
         ) : (
         <div style={{
@@ -10649,21 +10669,22 @@ function NowcastLegend() {
       radius={12}
       style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 1, padding: "8px 9px" }}>
-        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 2 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 1, padding: "8px 8px 7px" }}>
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
           {colors.map((rgb, i) => (
-            // 震度凡例・津波凡例と同じ、隙間の詰まった横一列のバー
+            // 隙間なく連結した一続きのバーにし、両端だけ丸める
             <div
               key={i}
               style={{
-                width: SWATCH_WIDTH, height: 16, borderRadius: 2,
+                width: SWATCH_WIDTH, height: 16,
+                borderRadius: i === 0 ? "2px 0 0 2px" : i === colors.length - 1 ? "0 2px 2px 0" : 0,
                 background: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`,
                 flexShrink: 0,
               }}
             />
           ))}
         </div>
-        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 2 }}>
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
           {NOWCAST_LEGEND_LOWER_BOUNDS.map((label, i) => (
             <div
               key={i}
