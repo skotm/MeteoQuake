@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.8h";
+const APP_VERSION = "1.5.8i";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -901,12 +901,24 @@ async function loadNowcastFrames() {
   return [...obsFrames, ...fcFrames];
 }
 
-// targetTimes_N1/N2.jsonのvalidtimeは"YYYYMMDDHHMMSS"形式の14桁文字列(JST)。
+// targetTimes_N1/N2.jsonのvalidtimeは"YYYYMMDDHHMMSS"形式の14桁文字列で、実際には
+// UTCで返ってくる(コメントでJSTと誤解していたのが「実際は7:20なのに22:20と表示
+// される」不具合の原因だった)。日付をまたぐ差し引きも正しく扱えるよう、一度UTCの
+// タイムスタンプとして組み立ててから+9時間してJSTへ変換し、時・分だけを取り出す。
 // スライダー上に出す「16:40」のような短い時刻表示に変換する。
 function parseNowcastValidTime(validtime) {
   if (!validtime || validtime.length < 12) return null;
-  const hh = validtime.slice(8, 10);
-  const mm = validtime.slice(10, 12);
+  const y = Number(validtime.slice(0, 4));
+  const mo = Number(validtime.slice(4, 6)) - 1;
+  const d = Number(validtime.slice(6, 8));
+  const h = Number(validtime.slice(8, 10));
+  const mi = Number(validtime.slice(10, 12));
+  const s = validtime.length >= 14 ? Number(validtime.slice(12, 14)) : 0;
+  const utcMs = Date.UTC(y, mo, d, h, mi, s);
+  if (Number.isNaN(utcMs)) return null;
+  const jst = new Date(utcMs + 9 * 60 * 60 * 1000);
+  const hh = String(jst.getUTCHours()).padStart(2, "0");
+  const mm = String(jst.getUTCMinutes()).padStart(2, "0");
   return `${hh}:${mm}`;
 }
 function formatNowcastFrameLabel(frame) {
@@ -8517,33 +8529,73 @@ function BottomDock({
   }, [active]);
 
   /* ─────────────────────────────────────────────────────
-     雨雲レーダー(高解像度降水ナウキャスト)。ONにした最初の1回だけ時刻一覧
-     (実況+予測)を取得し、デフォルトは最新の実況コマを表示する。ONの間だけ
-     App側(地図の雨雲レイヤー表示用)に現在のコマを伝える。
+     雨雲レーダー(高解像度降水ナウキャスト)。ONにするたびに実況+予測の時刻
+     一覧を取り直し、デフォルトは最新の実況コマを表示する。JMAのナウキャストは
+     5分おきに更新されるため、表示中も5分おきに一覧を取り直して追従させる
+     (これが無いと、開きっぱなしで放置した時にスライダーの時刻表示が実際の
+     時刻からどんどんずれていってしまう)。ONの間だけApp側(地図の雨雲レイヤー
+     表示用)に現在のコマを伝える。
      ───────────────────────────────────────────────────── */
   const [nowcastEnabled, setNowcastEnabled] = useState(false);
   const [nowcastFrames, setNowcastFrames] = useState(null); // null=未読込
   const [nowcastFrameIndex, setNowcastFrameIndex] = useState(null);
   const [nowcastLoadError, setNowcastLoadError] = useState(false);
+  // 一覧の再取得時、直前に選んでいたコマを引き継ぐために使う(effectの
+  // 依存配列にnowcastFrames/nowcastFrameIndexを入れると再取得タイマーが
+  // 毎回リセットされてしまうため、refで最新値を追いかける)。
+  const nowcastFramesRef = useRef(null);
+  const nowcastFrameIndexRef = useRef(null);
+  useEffect(() => { nowcastFramesRef.current = nowcastFrames; }, [nowcastFrames]);
+  useEffect(() => { nowcastFrameIndexRef.current = nowcastFrameIndex; }, [nowcastFrameIndex]);
 
   useEffect(() => {
-    if (!nowcastEnabled || nowcastFrames || nowcastLoadError) return;
+    if (!nowcastEnabled) {
+      // OFFにした一覧を使い回さない。次にONにした時に必ず最新を取り直す。
+      setNowcastFrames(null);
+      setNowcastFrameIndex(null);
+      setNowcastLoadError(false);
+      return;
+    }
     let cancelled = false;
-    loadNowcastFrames()
-      .then((frames) => {
-        if (cancelled) return;
-        setNowcastFrames(frames);
-        // デフォルトは「最新の実況」コマ(=obsの最後の要素)。
-        let latestObsIndex = -1;
-        frames.forEach((f, i) => { if (f.kind === "obs") latestObsIndex = i; });
-        setNowcastFrameIndex(latestObsIndex >= 0 ? latestObsIndex : 0);
-      })
-      .catch((err) => {
-        console.error("雨雲レーダーの時刻一覧の取得に失敗:", err);
-        if (!cancelled) setNowcastLoadError(true);
-      });
-    return () => { cancelled = true; };
-  }, [nowcastEnabled, nowcastFrames, nowcastLoadError]);
+    const fetchAndApply = () => {
+      loadNowcastFrames()
+        .then((frames) => {
+          if (cancelled) return;
+          setNowcastLoadError(false);
+          let latestObsIndex = -1;
+          frames.forEach((f, i) => { if (f.kind === "obs") latestObsIndex = i; });
+          let nextIndex = latestObsIndex >= 0 ? latestObsIndex : 0;
+
+          const prevFrames = nowcastFramesRef.current;
+          const prevIndex = nowcastFrameIndexRef.current;
+          if (prevFrames && prevIndex != null) {
+            let prevLatestObsIndex = -1;
+            prevFrames.forEach((f, i) => { if (f.kind === "obs") prevLatestObsIndex = i; });
+            const wasFollowingLatest = prevIndex === prevLatestObsIndex;
+            // 過去のコマを手動で選んで見ていた場合(=最新追従中でなかった場合)は、
+            // 更新後の一覧に同じvalidtimeのコマがあればそこへ選択を維持する。
+            // 無くなっていれば(実況の一覧から溢れて消えた等)最新の実況へ戻す。
+            if (!wasFollowingLatest) {
+              const prevFrame = prevFrames[prevIndex];
+              const sameIdx = prevFrame
+                ? frames.findIndex(f => f.kind === prevFrame.kind && f.validtime === prevFrame.validtime)
+                : -1;
+              if (sameIdx >= 0) nextIndex = sameIdx;
+            }
+          }
+
+          setNowcastFrames(frames);
+          setNowcastFrameIndex(nextIndex);
+        })
+        .catch((err) => {
+          console.error("雨雲レーダーの時刻一覧の取得に失敗:", err);
+          if (!cancelled) setNowcastLoadError(true);
+        });
+    };
+    fetchAndApply();
+    const intervalId = setInterval(fetchAndApply, 5 * 60 * 1000); // 5分おきに追従
+    return () => { cancelled = true; clearInterval(intervalId); };
+  }, [nowcastEnabled]);
 
   const currentNowcastFrame =
     nowcastFrames && nowcastFrameIndex != null ? nowcastFrames[nowcastFrameIndex] : null;
@@ -10669,7 +10721,7 @@ function NowcastLegend() {
       radius={12}
       style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
     >
-      <div style={{ display: "flex", flexDirection: "column", padding: "8px 8px 6px" }}>
+      <div style={{ display: "flex", flexDirection: "column", padding: "8px 8px 0" }}>
         <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
           {colors.map((rgb, i) => (
             // 隙間なく連結した一続きのバーにし、両端だけ丸める
@@ -10693,7 +10745,7 @@ function NowcastLegend() {
               key={i}
               style={{
                 width: SWATCH_WIDTH, flexShrink: 0, textAlign: "left", paddingLeft: 1,
-                fontSize: 9, lineHeight: "10px", fontWeight: 600, color: `rgba(${tokens.ink},0.55)`,
+                fontSize: 9, lineHeight: "9px", fontWeight: 600, color: `rgba(${tokens.ink},0.55)`,
               }}
             >
               {label}
