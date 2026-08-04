@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.8d";
+const APP_VERSION = "1.5.8e";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10649,7 +10649,7 @@ function NowcastLegend() {
       radius={12}
       style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 3, padding: "8px 9px" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 1, padding: "8px 9px" }}>
         <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 2 }}>
           {colors.map((rgb, i) => (
             // 震度凡例・津波凡例と同じ、隙間の詰まった横一列のバー
@@ -10675,9 +10675,6 @@ function NowcastLegend() {
               {label}
             </div>
           ))}
-        </div>
-        <div style={{ fontSize: 8.5, fontWeight: 600, color: `rgba(${tokens.ink},0.4)`, textAlign: "right" }}>
-          mm/h
         </div>
       </div>
     </Glass>
