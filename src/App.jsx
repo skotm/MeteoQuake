@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.7d";
+const APP_VERSION = "1.5.8";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10614,6 +10614,49 @@ function TsunamiGradeLegend({ areas, tsunamiHeightByStation = {} }) {
 }
 
 /* ─────────────────────────────────────────────────────
+   NOWCAST LEGEND — 震度凡例・津波凡例と同じ見た目(Glassカード+隙間の
+   詰まった横一列の色バー)にした、雨雲レーダーの降水強度凡例。
+   選択中の配色スキーム(気象庁配色/Yahoo!天気配色)をそのまま反映する。
+   ───────────────────────────────────────────────────── */
+function NowcastLegend() {
+  const { tokens } = useContext(ThemeContext);
+  const schemeId = useContext(NowcastColorSchemeContext);
+  const scheme = NOWCAST_COLOR_SCHEMES[schemeId] || NOWCAST_COLOR_SCHEMES.jma;
+  const colors = scheme.palette || JMA_NOWCAST_SOURCE_PALETTE;
+
+  return (
+    <Glass
+      radius={12}
+      style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "8px 9px" }}>
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 2 }}>
+          {colors.map((rgb, i) => (
+            // 震度凡例・津波凡例と同じ、隙間の詰まった横一列のバー
+            <div
+              key={i}
+              style={{
+                width: 7, height: 16, borderRadius: 2,
+                background: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`,
+                flexShrink: 0,
+              }}
+            />
+          ))}
+        </div>
+        <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", gap: 6 }}>
+          <span style={{ fontSize: 8.5, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, whiteSpace: "nowrap" }}>
+            弱い
+          </span>
+          <span style={{ fontSize: 8.5, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, whiteSpace: "nowrap" }}>
+            強い(mm/h)
+          </span>
+        </div>
+      </div>
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    BACK TO LIST BUTTON
    地震を選択中に地図上へ浮かぶ丸い「戻る」ボタン。
    押すと選択を解除し、パネルを「中高」にして一覧表示へ戻る。
@@ -17653,6 +17696,19 @@ export default function App() {
             zIndex: 30,
           }}>
             <TsunamiGradeLegend areas={tsunamiAreasForMap} tsunamiHeightByStation={tsunamiHeightByStation}/>
+          </div>
+        )}
+
+        {/* 雨雲レーダー凡例 — レーダーレイヤーを表示している間だけ、画面右上に浮かぶ
+            (震度凡例・津波凡例と対の構成)。 */}
+        {nowcastFrame && (
+          <div style={{
+            position: "absolute",
+            top: "calc(16px + env(safe-area-inset-top))",
+            right: 16,
+            zIndex: 30,
+          }}>
+            <NowcastLegend/>
           </div>
         )}
 
