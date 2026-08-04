@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.8i";
+const APP_VERSION = "1.5.8j";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10766,6 +10766,8 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
   const { tokens } = useContext(ThemeContext);
   if (!frames || frames.length === 0) return null;
   const frame = frames[frameIndex] ?? frames[frames.length - 1];
+  // 実況→予測の切り替わり(=「現在」)の位置。目盛りをここだけ目立たせる。
+  const nowIndex = frames.findIndex(f => f.kind === "forecast");
 
   return (
     <Glass
@@ -10778,15 +10780,45 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
         }}>
           {formatNowcastFrameLabel(frame)}
         </span>
-        <input
-          type="range"
-          min={0}
-          max={frames.length - 1}
-          step={1}
-          value={frameIndex}
-          onChange={(e) => onChangeFrameIndex(Number(e.target.value))}
-          style={{ flex: 1, minWidth: 0, accentColor: "#0A84FF" }}
-        />
+        <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+          {/* 目盛り — トラックに重ねて表示する。ネイティブのつまみ半径ぶん
+              (左右7px)内側に収め、つまみの中心と目盛りの位置がずれないように
+              している。1コマごとに薄い目盛りを、正時(分が00)は少し濃く長い
+              目盛りにし、実況→予測の切り替わり(現在)だけ青く目立たせる。 */}
+          <div style={{
+            position: "absolute", left: 7, right: 7, top: "50%",
+            transform: "translateY(-50%)",
+            height: 10, pointerEvents: "none",
+          }}>
+            {frames.map((f, i) => {
+              const pct = frames.length > 1 ? (i / (frames.length - 1)) * 100 : 0;
+              const isHour = parseNowcastValidTime(f.validtime)?.endsWith(":00");
+              const isNow = i === nowIndex;
+              return (
+                <div
+                  key={i}
+                  style={{
+                    position: "absolute", left: `${pct}%`, top: 0,
+                    transform: "translateX(-50%)",
+                    width: isNow ? 2 : 1,
+                    height: isNow ? 10 : isHour ? 8 : 5,
+                    borderRadius: 1,
+                    background: isNow ? "#0A84FF" : `rgba(${tokens.ink},${isHour ? 0.35 : 0.16})`,
+                  }}
+                />
+              );
+            })}
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={frames.length - 1}
+            step={1}
+            value={frameIndex}
+            onChange={(e) => onChangeFrameIndex(Number(e.target.value))}
+            style={{ position: "relative", display: "block", width: "100%", accentColor: "#0A84FF" }}
+          />
+        </div>
       </div>
     </Glass>
   );
