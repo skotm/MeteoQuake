@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.8f";
+const APP_VERSION = "1.5.8g";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10686,10 +10686,12 @@ function NowcastLegend() {
         </div>
         <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
           {NOWCAST_LEGEND_LOWER_BOUNDS.map((label, i) => (
+            // 各数値はその区分の下限値なので、ボックス中央でなく対応する
+            // スウォッチの左端(色の境界線)に揃えて詰まって見えるようにする
             <div
               key={i}
               style={{
-                width: SWATCH_WIDTH, flexShrink: 0, textAlign: "center",
+                width: SWATCH_WIDTH, flexShrink: 0, textAlign: "left", paddingLeft: 1,
                 fontSize: 9, fontWeight: 600, color: `rgba(${tokens.ink},0.55)`,
               }}
             >
