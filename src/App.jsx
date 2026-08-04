@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.8b";
+const APP_VERSION = "1.5.8d";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -899,6 +899,21 @@ async function loadNowcastFrames() {
   const obsFrames = [...obsList].reverse().map(t => ({ basetime: t.basetime, validtime: t.validtime, kind: "obs" }));
   const fcFrames = [...fcList].reverse().map(t => ({ basetime: t.basetime, validtime: t.validtime, kind: "forecast" }));
   return [...obsFrames, ...fcFrames];
+}
+
+// targetTimes_N1/N2.jsonのvalidtimeは"YYYYMMDDHHMMSS"形式の14桁文字列(JST)。
+// スライダー上に出す「16:40」のような短い時刻表示に変換する。
+function parseNowcastValidTime(validtime) {
+  if (!validtime || validtime.length < 12) return null;
+  const hh = validtime.slice(8, 10);
+  const mm = validtime.slice(10, 12);
+  return `${hh}:${mm}`;
+}
+function formatNowcastFrameLabel(frame) {
+  if (!frame) return "";
+  const time = parseNowcastValidTime(frame.validtime);
+  if (!time) return frame.kind === "obs" ? "実況" : "予測";
+  return frame.kind === "obs" ? `${time} 実況` : `${time} 予測`;
 }
 
 // 404だったタイルURLの記録(モジュールスコープでアプリ全体を通じて使い回す)。
@@ -9873,11 +9888,26 @@ function BottomDock({
         ) : (
         <div style={{
           position: "absolute",
+          left: 16,
           right: 16,
           bottom: backButtonBottom,
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "flex-end",
+          gap: 8,
           transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
+          {/* 雨雲レーダーの時刻スライダー — 展開メニューが閉じている間だけ、
+              ボタンの左側いっぱいに表示する。開いている間は簡易メニューと
+              重なってしまうため隠す。 */}
+          {nowcastEnabled && !weatherMenuOpen && (
+            <NowcastTimeSlider
+              frames={nowcastFrames}
+              frameIndex={nowcastFrameIndex ?? 0}
+              onChangeFrameIndex={setNowcastFrameIndex}
+            />
+          )}
           <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={true} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)}/>
         </div>
         )
@@ -10649,6 +10679,41 @@ function NowcastLegend() {
         <div style={{ fontSize: 8.5, fontWeight: 600, color: `rgba(${tokens.ink},0.4)`, textAlign: "right" }}>
           mm/h
         </div>
+      </div>
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   NOWCAST TIME SLIDER — 雨雲レーダーがONで、展開メニュー(WeatherMenuFloating)が
+   閉じている間だけ、ボタンバー(下部ナビ行)のすぐ上に浮かべる時刻スライダー。
+   実況(過去)+予測(未来60分)を1本のタイムラインとしてドラッグで選べる。
+   ───────────────────────────────────────────────────── */
+function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
+  const { tokens } = useContext(ThemeContext);
+  if (!frames || frames.length === 0) return null;
+  const frame = frames[frameIndex] ?? frames[frames.length - 1];
+
+  return (
+    <Glass
+      radius={14}
+      style={{ flex: 1, minWidth: 0, animation: "appear 0.3s cubic-bezier(.25,1,.5,1)" }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px" }}>
+        <span style={{
+          fontSize: 12.5, fontWeight: 700, color: tokens.text, flexShrink: 0, whiteSpace: "nowrap",
+        }}>
+          {formatNowcastFrameLabel(frame)}
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={frames.length - 1}
+          step={1}
+          value={frameIndex}
+          onChange={(e) => onChangeFrameIndex(Number(e.target.value))}
+          style={{ flex: 1, minWidth: 0, accentColor: "#0A84FF" }}
+        />
       </div>
     </Glass>
   );
