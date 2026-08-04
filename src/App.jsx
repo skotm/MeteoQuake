@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.8g";
+const APP_VERSION = "1.5.8h";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10669,7 +10669,7 @@ function NowcastLegend() {
       radius={12}
       style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 1, padding: "8px 8px 7px" }}>
+      <div style={{ display: "flex", flexDirection: "column", padding: "8px 8px 6px" }}>
         <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
           {colors.map((rgb, i) => (
             // 隙間なく連結した一続きのバーにし、両端だけ丸める
@@ -10687,12 +10687,13 @@ function NowcastLegend() {
         <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
           {NOWCAST_LEGEND_LOWER_BOUNDS.map((label, i) => (
             // 各数値はその区分の下限値なので、ボックス中央でなく対応する
-            // スウォッチの左端(色の境界線)に揃えて詰まって見えるようにする
+            // スウォッチの左端(色の境界線)に揃えて詰まって見えるようにする。
+            // lineHeightを詰めて、フォントの行送り分の余白も削る。
             <div
               key={i}
               style={{
                 width: SWATCH_WIDTH, flexShrink: 0, textAlign: "left", paddingLeft: 1,
-                fontSize: 9, fontWeight: 600, color: `rgba(${tokens.ink},0.55)`,
+                fontSize: 9, lineHeight: "10px", fontWeight: 600, color: `rgba(${tokens.ink},0.55)`,
               }}
             >
               {label}
