@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.8a";
+const APP_VERSION = "1.5.8b";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -8489,20 +8489,17 @@ function BottomDock({
     if (active !== "quake" && selectedQuakeId == null) setQuakeViewMode("recent");
   }, [active, selectedQuakeId]);
 
-  // 気象タブ版の表示モード。まずはUIの骨組みとして「地点」⇄「一覧」の
-  // 切り替えバーだけ用意する(中身は追って実装)。考え方はquakeViewMode/
-  // tsunamiViewModeと同じ(タブを離れたら最初の項目に戻す)。
-  const [weatherViewMode, setWeatherViewMode] = useState("location"); // "location" | "list"
-  useEffect(() => {
-    if (active !== "weather") setWeatherViewMode("location");
-  }, [active]);
+  // 気象タブの表示内容は常に「地点」の中身(WeatherLocationPanel)のみ。
+  // 以前あった「地点」⇄「一覧」の上部切り替えバーは廃止した(雨雲レーダーは
+  // 下のweatherMenuOpenのフローティングボタンから、気象タブにいる間いつでも
+  // 開けるようにしたため、モードを分ける必要が無くなった)。
 
-  // 「一覧」モードの右下(既存の戻るボタンと同じ枠)に浮かぶ、雨雲レーダー等の
-  // メニューの開閉状態。タブを離れる/モードを切り替えたら閉じておく。
+  // 雨雲レーダー等のメニュー(右下に浮かぶ、展開式のフローティングボタン)の
+  // 開閉状態。気象タブにいる間はいつでも出しておき、タブを離れたら閉じておく。
   const [weatherMenuOpen, setWeatherMenuOpen] = useState(false);
   useEffect(() => {
-    if (!(active === "weather" && weatherViewMode === "list")) setWeatherMenuOpen(false);
-  }, [active, weatherViewMode]);
+    if (active !== "weather") setWeatherMenuOpen(false);
+  }, [active]);
 
   /* ─────────────────────────────────────────────────────
      雨雲レーダー(高解像度降水ナウキャスト)。ONにした最初の1回だけ時刻一覧
@@ -8554,7 +8551,7 @@ function BottomDock({
      利用者が明示的に「現在地を使う」を選んでから初めてgeolocationを呼び出す。
      一度許可した後は、次回以降この説明を省略する(localStorageに記憶)。
      ───────────────────────────────────────────────────── */
-  const weatherLocationActive = active === "weather" && weatherViewMode === "location";
+  const weatherLocationActive = active === "weather";
 
   const WEATHER_LOCATION_CONSENT_KEY = "meteoquake_weather_location_consented_v1";
   const [weatherLocationConsented, setWeatherLocationConsentedState] = useState(() => {
@@ -9668,7 +9665,7 @@ function BottomDock({
       selectedTideStationCode != null ||
       (activeTsunami != null && !causingQuakeFound)
     )) ||
-    (active === "weather" && weatherViewMode === "list") ||
+    (active === "weather") ||
     (active === "settings" && settingsPath.length > 0);
 
   return (
@@ -9857,11 +9854,12 @@ function BottomDock({
         )
       )}
 
-      {/* 気象タブの「一覧」モード用 — 地震・津波・設定タブと全く同じ「戻るボタンの枠」
+      {/* 気象タブ用 — 地震・津波・設定タブと全く同じ「戻るボタンの枠」
           (right:16, bottom:backButtonBottom)を使って、雨雲レーダー等のメニューを
-          開閉するボタンを浮かべる。開くとボタンのすぐ上に簡易メニューが現れ、
-          くの字アイコンが下向きに反転する。もう一度押すと閉じて元の上向きに戻る。 */}
-      {!eewDetailOpen && active === "weather" && weatherViewMode === "list" && (
+          開閉するボタンを浮かべる。気象タブにいる間はいつでも出す。開くとボタンの
+          すぐ上に簡易メニューが現れ、くの字アイコンが下向きに反転する。もう一度
+          押すと閉じて元の上向きに戻る。 */}
+      {!eewDetailOpen && active === "weather" && (
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",
@@ -10283,19 +10281,7 @@ function BottomDock({
               </>
             ) : (active === "weather" || active === "alert") ? (
               <>
-                {/* 気象タブの上部ボタンバー — 地震・津波タブのQuakeListToolbarと
-                    全く同じ部品を流用し、項目だけ「地点(ピン)」「一覧(3本線)」に
-                    差し替えている。まずは骨組みのみで、中身は追って実装する。 */}
-                {active === "weather" && (
-                  <QuakeListToolbar
-                    items={WEATHER_TOOLBAR_ITEMS}
-                    mode={weatherViewMode}
-                    onModeChange={(mode) => { killScrollMomentum(); setWeatherViewMode(mode); }}
-                    onHandoffToPanelDrag={handlePointerDown}
-                  />
-                )}
-
-                {active === "weather" && weatherViewMode === "location" ? (
+                {active === "weather" ? (
                   <WeatherLocationPanel
                     geoState={geoState}
                     onConsentLocation={requestWeatherLocationPermission}
@@ -13255,13 +13241,6 @@ const TSUNAMI_TOOLBAR_ITEMS = [
   { id: "recent",    label: "津波情報",   icon: ListViewIcon },
   { id: "history",   label: "過去の津波", icon: HistoryClockIcon },
   { id: "tidegauge", label: "潮位計",     icon: TideGaugeIcon },
-];
-
-// 気象タブ版の切り替え項目。まずは骨組みとして「地点(ピン)」⇄「一覧(3本線・
-// 既存のListViewIconを流用)」の2つだけ用意する(中身は追って実装)。
-const WEATHER_TOOLBAR_ITEMS = [
-  { id: "location", label: "地点",   icon: PinIcon },
-  { id: "list",     label: "一覧",   icon: ListViewIcon },
 ];
 
 function QuakeListToolbar({ mode, onModeChange, onHandoffToPanelDrag, items = QUAKE_TOOLBAR_ITEMS }) {
