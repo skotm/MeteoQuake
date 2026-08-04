@@ -787,9 +787,102 @@ function nowcastTileUrl(basetime, validtime, z, x, y) {
   return `https://www.jma.go.jp/bosai/jmatile/data/nowc/${basetime}/none/${validtime}/surf/hrpns/${z}/${x}/${y}.png`;
 }
 // MapLibreのraster sourceに渡す独自プロトコルURL(実タイルURLの組み立てや
-// 偶数ズームへの丸めは下のregisterNowcastProtocol内で行う)。
-function nowcastProtocolUrl(basetime, validtime) {
-  return `jmanowc://${basetime}/${validtime}/{z}/{x}/{y}`;
+// 偶数ズームへの丸め・配色変換は下のregisterNowcastProtocol内で行う)。
+// schemeIdをURLに含めることで、配色設定を切り替えた時にMapLibreが
+// 「別のタイル」として再取得してくれる(実際のJMAタイル自体はブラウザの
+// HTTPキャッシュに乗っているので、追加の通信は発生しない)。
+function nowcastProtocolUrl(schemeId, basetime, validtime) {
+  return `jmanowc://${schemeId}/${basetime}/${validtime}/{z}/{x}/{y}`;
+}
+
+/* ─────────────────────────────────────────────────────
+   雨雲レーダーの配色スキーム。「震度配色」の設定と全く同じ考え方で、
+   {id, label, palette} の一覧をここに増やしていけば選択肢を追加できる。
+   ・palette: null の場合は気象庁配色そのまま(変換なし・最速)。
+   ・palette がある場合は、JMA_NOWCAST_SOURCE_PALETTE の各色を、
+     配列の対応するインデックスの色に1対1で置き換える(近似一致)。
+   ───────────────────────────────────────────────────── */
+// 気象庁「ホームページにおける気象情報の配色に関する設定指針」表２－１に定められた、
+// レーダー・ナウキャストの降水強度(mm/h)ごとの正式なRGB値(弱い順)。
+const JMA_NOWCAST_SOURCE_PALETTE = [
+  [242, 242, 255], // 0~1   ほぼ白
+  [160, 210, 255], // 1~5   薄い水色
+  [33, 140, 255],  // 5~10  やや薄い青
+  [0, 65, 255],    // 10~20 青
+  [250, 245, 0],   // 20~30 黄
+  [255, 153, 0],   // 30~50 橙
+  [255, 40, 0],    // 50~80 赤
+  [180, 0, 104],   // 80~   赤紫
+];
+// Yahoo!天気の降水強度カラーバー(スクリーンショットより近似抽出)。
+// 上と同じ並び(弱い順)で対応させる。
+const YAHOO_WEATHER_NOWCAST_PALETTE = [
+  [216, 246, 246], // 0~1   ごく薄い水色
+  [130, 210, 235], // 1~5   薄い水色
+  [70, 150, 225],  // 5~10  青
+  [90, 200, 90],   // 10~20 緑
+  [225, 225, 60],  // 20~30 黄
+  [235, 165, 60],  // 30~50 橙
+  [220, 85, 65],   // 50~80 赤
+  [139, 20, 20],   // 80~   暗い赤(マルーン)
+];
+const NOWCAST_COLOR_SCHEMES = {
+  jma: {
+    id: "jma",
+    label: "気象庁配色(オリジナル)",
+    palette: null,
+  },
+  yahoo: {
+    id: "yahoo",
+    label: "Yahoo!天気配色",
+    palette: YAHOO_WEATHER_NOWCAST_PALETTE,
+  },
+};
+
+// 現在選択中の雨雲レーダー配色スキームID("jma" | "yahoo")をアプリ全体に配る
+// コンテキスト(震度配色と同じ仕組み)。
+const NowcastColorSchemeContext = createContext("jma");
+const NOWCAST_COLOR_SCHEME_STORAGE_KEY = "nowcastColorScheme";
+function loadStoredNowcastColorScheme() {
+  try {
+    const saved = localStorage.getItem(NOWCAST_COLOR_SCHEME_STORAGE_KEY);
+    if (saved && NOWCAST_COLOR_SCHEMES[saved]) return saved;
+  } catch (err) {
+    console.warn("雨雲レーダー配色の設定を読み込めませんでした:", err);
+  }
+  return "jma";
+}
+function saveNowcastColorScheme(schemeId) {
+  try {
+    localStorage.setItem(NOWCAST_COLOR_SCHEME_STORAGE_KEY, schemeId);
+  } catch (err) {
+    console.warn("雨雲レーダー配色の設定を保存できませんでした:", err);
+  }
+}
+
+// ピクセルの色を、最も近いJMA元パレットの色に対応する変換先の色へ置き換える
+// (透明度はそのまま維持する)。JMAのタイルは基本的に固定色のパレット画像なので、
+// 単純なユークリッド距離での最近傍マッチングで十分な精度になる。
+function remapImageDataColors(imageData, palette) {
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const a = data[i + 3];
+    if (a === 0) continue; // 完全透明はそのまま(無駄な距離計算を省く)
+    const r = data[i], g = data[i + 1], b = data[i + 2];
+    let bestIdx = -1, bestDist = Infinity;
+    for (let p = 0; p < JMA_NOWCAST_SOURCE_PALETTE.length; p++) {
+      const [pr, pg, pb] = JMA_NOWCAST_SOURCE_PALETTE[p];
+      const dr = r - pr, dg = g - pg, db = b - pb;
+      const dist = dr * dr + dg * dg + db * db;
+      if (dist < bestDist) { bestDist = dist; bestIdx = p; }
+    }
+    // 元パレットからかけ離れた色(誤差大きすぎ)は、地図の下地等が透けている
+    // 縁のアンチエイリアシングとみなし、変換せずそのまま残す。
+    if (bestDist > 60 * 60 * 3) continue;
+    const [nr, ng, nb] = palette[bestIdx];
+    data[i] = nr; data[i + 1] = ng; data[i + 2] = nb;
+  }
+  return imageData;
 }
 
 // 実況(N1)+予測(N2)を時刻昇順の1本のタイムラインにまとめて返す。
@@ -816,10 +909,11 @@ function registerNowcastProtocol(maplibregl) {
   if (nowcastProtocolRegistered) return;
   nowcastProtocolRegistered = true;
   maplibregl.addProtocol("jmanowc", async (params, abortController) => {
-    const m = params.url.match(/^jmanowc:\/\/(\d+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)$/);
+    const m = params.url.match(/^jmanowc:\/\/([a-z]+)\/(\d+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)$/);
     if (!m) return { data: null };
-    const [, basetime, validtime, zStr, xStr, yStr] = m;
+    const [, schemeId, basetime, validtime, zStr, xStr, yStr] = m;
     let z = Number(zStr), x = Number(xStr), y = Number(yStr);
+    const palette = NOWCAST_COLOR_SCHEMES[schemeId]?.palette || null;
 
     // 奇数ズームは1段階粗い偶数ズームのタイルを取得し、該当する象限だけを
     // 切り出して代用する。
@@ -845,13 +939,27 @@ function registerNowcastProtocol(maplibregl) {
       return { data: null };
     }
     const blob = await res.blob();
-    if (!cropQuadrant) return { data: await blob.arrayBuffer() };
+
+    // 奇数ズームの切り出しも、配色変換も不要な場合だけ、そのまま素通しする
+    // (canvas処理をまるごと省いた方が速いため)。
+    if (!cropQuadrant && !palette) {
+      return { data: await blob.arrayBuffer() };
+    }
 
     const bitmap = await createImageBitmap(blob);
     const canvas = new OffscreenCanvas(256, 256);
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(bitmap, cropQuadrant.qx * 128, cropQuadrant.qy * 128, 128, 128, 0, 0, 256, 256);
+    if (cropQuadrant) {
+      ctx.drawImage(bitmap, cropQuadrant.qx * 128, cropQuadrant.qy * 128, 128, 128, 0, 0, 256, 256);
+    } else {
+      ctx.drawImage(bitmap, 0, 0, 256, 256);
+    }
+    if (palette) {
+      const imageData = ctx.getImageData(0, 0, 256, 256);
+      remapImageDataColors(imageData, palette);
+      ctx.putImageData(imageData, 0, 0);
+    }
     const outBlob = await canvas.convertToBlob({ type: "image/png" });
     return { data: await outBlob.arrayBuffer() };
   });
@@ -1094,6 +1202,7 @@ function MapCanvas({
   currentLocationPoint = null, // { lat, lon } | null。気象タブ「地点」モード中のGPS現在地(iOS風の青丸)
   nowcastVisible = false,      // 雨雲レーダーレイヤーを表示するか
   nowcastFrame = null,         // { basetime, validtime } | null。表示中の時刻コマ
+  nowcastColorSchemeId = "jma", // 雨雲レーダーの配色スキームID
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -2222,7 +2331,7 @@ function MapCanvas({
     removeExisting();
     map.addSource("nowcast", {
       type: "raster",
-      tiles: [nowcastProtocolUrl(nowcastFrame.basetime, nowcastFrame.validtime)],
+      tiles: [nowcastProtocolUrl(nowcastColorSchemeId, nowcastFrame.basetime, nowcastFrame.validtime)],
       tileSize: 256,
       minzoom: 3,
       maxzoom: 10,
@@ -2243,7 +2352,7 @@ function MapCanvas({
       if (map.getLayer("nowcast-layer")) map.removeLayer("nowcast-layer");
       if (map.getSource("nowcast")) map.removeSource("nowcast");
     };
-  }, [nowcastVisible, nowcastFrame?.basetime, nowcastFrame?.validtime, status]);
+  }, [nowcastVisible, nowcastFrame?.basetime, nowcastFrame?.validtime, nowcastColorSchemeId, status]);
 
   // 推計震度分布(気象庁 estimated_intensity_map)を更新する。
   // 選択中の地震・設定トグルが変わるたびに、画像を取得・ピクセル解析してGeoJSONに変換し、
@@ -8281,6 +8390,7 @@ function BottomDock({
   stationMarkersVisible = true, onToggleStationMarkersVisible,
   tideStationMarkersVisible = true, onToggleTideStationMarkersVisible,
   onChangeQuakeColorScheme,
+  onChangeNowcastColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
   faultsEnabled, onChangeFaultsEnabled,
@@ -8333,6 +8443,7 @@ function BottomDock({
 
   const colorSchemeId = useContext(QuakeColorSchemeContext);
   const colorScheme = QUAKE_COLOR_SCHEMES[colorSchemeId] || QUAKE_COLOR_SCHEMES.fill;
+  const nowcastColorSchemeId = useContext(NowcastColorSchemeContext);
 
   // 設定タブ内の階層メニューの現在地。[] = トップメニュー、["quake"] = 地震カテゴリの
   // メニュー、["quake","colorScheme"] = 震度配色の中身、のようにパスで表現する。
@@ -10122,6 +10233,8 @@ function BottomDock({
                   onNavigate={handleSettingsNavigate}
                   colorSchemeId={colorSchemeId}
                   onChangeColorScheme={onChangeQuakeColorScheme}
+                  nowcastColorSchemeId={nowcastColorSchemeId}
+                  onChangeNowcastColorScheme={onChangeNowcastColorScheme}
                   estIntensityEnabled={estIntensityEnabled}
                   onChangeEstIntensityEnabled={onChangeEstIntensityEnabled}
                   areaFillEnabled={areaFillEnabled}
@@ -13322,6 +13435,9 @@ const SETTINGS_ITEMS = {
     { id: "experimental", label: "実験的・テスト機能" },
     { id: "logs", label: "ログ" },
   ],
+  weather: [
+    { id: "nowcastColorScheme", label: "雨雲レーダー配色" },
+  ],
 };
 
 // 設定画面共通のヘッダー。「地図レイヤー」のような下線区切りは使わず、
@@ -14148,6 +14264,52 @@ function QuakeColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
   );
 }
 
+// 雨雲レーダー配色の一覧選択画面(震度配色ピッカーと全く同じ見た目・作り)。
+function NowcastColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
+  const { tokens } = useContext(ThemeContext);
+
+  const entries = Object.entries(NOWCAST_COLOR_SCHEMES);
+  return (
+    <SettingsCard>
+      {entries.map(([id, scheme], i) => {
+        const selected = colorSchemeId === id;
+        const previewColors = scheme.palette || JMA_NOWCAST_SOURCE_PALETTE;
+        return (
+          <div key={id}>
+            {i > 0 && <SettingsCardDivider/>}
+            <PressableButton
+              onClick={() => onChangeColorScheme(id)}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 12,
+                padding: "11px 12px",
+                background: selected ? `rgba(${tokens.ink},0.07)` : "transparent",
+                border: "none", cursor: "pointer", textAlign: "left",
+              }}
+            >
+              {/* ミニプレビュー(弱い雨→猛烈な雨の色見本を並べる) */}
+              <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+                {previewColors.map((rgb, ci) => (
+                  <div key={ci} style={{
+                    width: 7, height: 16, borderRadius: 2,
+                    background: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`,
+                  }}/>
+                ))}
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 600, color: tokens.text, flex: 1 }}>
+                {scheme.label}
+              </span>
+              {selected && (
+                <span style={{ fontSize: 13, color: `rgba(${tokens.ink},0.85)` }}>✓</span>
+              )}
+            </PressableButton>
+          </div>
+        );
+      })}
+    </SettingsCard>
+  );
+}
+
+
 // 震度観測点リストの表示方法(階層表示/一覧表示)の選択画面。震度配色ピッカーと同じ見た目のリスト。
 // 下にプレビュー用のサンプルデータを添えて、選んだ表示方法がどう見えるかその場で分かるようにする。
 const STATION_DISPLAY_PREVIEW_SAMPLE = [
@@ -14681,6 +14843,7 @@ function BoundaryLineColorSettings({ boundaryLineColorId, onChangeBoundaryLineCo
 
 function SettingsBody({
   path, onNavigate, colorSchemeId, onChangeColorScheme,
+  nowcastColorSchemeId, onChangeNowcastColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
   faultsEnabled, onChangeFaultsEnabled,
@@ -14779,6 +14942,19 @@ function SettingsBody({
       <>
         <SettingsHeader title="震度配色"/>
         <QuakeColorSchemeSettings colorSchemeId={colorSchemeId} onChangeColorScheme={onChangeColorScheme}/>
+      </>
+    );
+  }
+
+  // 雨雲レーダー配色(気象カテゴリの項目)の中身
+  if (category === "weather" && leaf === "nowcastColorScheme") {
+    return (
+      <>
+        <SettingsHeader title="雨雲レーダー配色"/>
+        <NowcastColorSchemeSettings
+          colorSchemeId={nowcastColorSchemeId}
+          onChangeColorScheme={onChangeNowcastColorScheme}
+        />
       </>
     );
   }
@@ -15531,6 +15707,15 @@ export default function App() {
   function handleChangeQuakeColorScheme(schemeId) {
     setQuakeColorScheme(schemeId);
     saveQuakeColorScheme(schemeId);
+  }
+
+  // 雨雲レーダー配色。設定タブの「気象」→「雨雲レーダー配色」から切り替える。
+  // 選択したスキームはlocalStorageに保存し、次回起動時も復元する。
+  const [nowcastColorScheme, setNowcastColorScheme] = useState(loadStoredNowcastColorScheme); // "jma" | "yahoo"
+
+  function handleChangeNowcastColorScheme(schemeId) {
+    setNowcastColorScheme(schemeId);
+    saveNowcastColorScheme(schemeId);
   }
 
   // 推計震度分布の表示ON/OFF。地図レイヤーパネルの「推計震度分布」トグルと
@@ -17269,6 +17454,7 @@ export default function App() {
     <ThemeContext.Provider value={themeContextValue}>
     <GlassOpaqueContext.Provider value={glassOpaqueContextValue}>
     <QuakeColorSchemeContext.Provider value={quakeColorScheme}>
+    <NowcastColorSchemeContext.Provider value={nowcastColorScheme}>
       <GlobalStyles tokens={themeContextValue.tokens}/>
       <Filters/>
 
@@ -17280,6 +17466,7 @@ export default function App() {
           currentLocationPoint={currentLocationPoint}
           nowcastVisible={!!nowcastFrame}
           nowcastFrame={nowcastFrame}
+          nowcastColorSchemeId={nowcastColorScheme}
           stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
           tideStationPoints={
@@ -17552,6 +17739,7 @@ export default function App() {
                   onToggleTideStationMarkersVisible={() => setTideStationMarkersVisible(v => !v)}
                   stationPoints={selectedQuakePoints}
                   onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
+                  onChangeNowcastColorScheme={handleChangeNowcastColorScheme}
                   estIntensityEnabled={estIntensityEnabled}
                   onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
                   areaFillEnabled={areaFillEnabled}
@@ -17648,6 +17836,7 @@ export default function App() {
               onToggleTideStationMarkersVisible={() => setTideStationMarkersVisible(v => !v)}
               stationPoints={selectedQuakePoints}
               onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
+                  onChangeNowcastColorScheme={handleChangeNowcastColorScheme}
               estIntensityEnabled={estIntensityEnabled}
               onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
               areaFillEnabled={areaFillEnabled}
@@ -17710,6 +17899,7 @@ export default function App() {
           UI(BottomDock等)とは別の全画面オーバーレイで、未同意の間は他の操作を
           一切ブロックする。同意済み(かつ内容に更新が無い)場合は何も描画しない。 */}
       <TermsConsentGate/>
+    </NowcastColorSchemeContext.Provider>
     </QuakeColorSchemeContext.Provider>
     </GlassOpaqueContext.Provider>
     </ThemeContext.Provider>
