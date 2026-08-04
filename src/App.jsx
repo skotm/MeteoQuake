@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.7b";
+const APP_VERSION = "1.5.7c";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -765,6 +765,99 @@ function loadTsunamiAreasData() {
 }
 
 /* ─────────────────────────────────────────────────────
+   雨雲レーダー(高解像度降水ナウキャスト) — 気象庁のPNGタイルをMapLibreで表示する。
+   ・提供されているズームレベルは偶数のみ(奇数ズームにはタイルが存在しない)。
+     MapLibreの独自プロトコル(addProtocol)でタイル要求をフックし、奇数ズームは
+     1段階粗い偶数ズームのタイルの該当象限(128×128)を切り出して256×256に
+     拡大することで代用する(=通常のオーバーズーム表示と同じ見た目になる)。
+   ・全国のデータが存在するのはおおよそ東経118°〜150°・北緯20°〜48°の範囲のみ。
+     この範囲外でタイルをリクエストしないよう、raster sourceにbounds(範囲)を
+     設定して無駄な通信を避ける(MapLibreは画面に映っている範囲のタイルしか
+     要求しないため、無駄になるのは主に日本から離れた場所を見ている時)。
+   ・それでも境界付近では404になり得るため、一度404だったタイルのURLを
+     覚えておき、同じURLを再度リクエストしない(パンで同じ境界付近を
+     行き来した時の無駄打ちを防ぐ)。
+   ───────────────────────────────────────────────────── */
+const NOWCAST_BOUNDS = [118, 20, 150, 48]; // [west, south, east, north] のおおよその提供範囲
+const NOWCAST_TARGET_TIMES_URLS = {
+  obs: "https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N1.json",       // 実況(過去)
+  forecast: "https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N2.json",  // 予測(60分先まで)
+};
+function nowcastTileUrl(basetime, validtime, z, x, y) {
+  return `https://www.jma.go.jp/bosai/jmatile/data/nowc/${basetime}/none/${validtime}/surf/hrpns/${z}/${x}/${y}.png`;
+}
+// MapLibreのraster sourceに渡す独自プロトコルURL(実タイルURLの組み立てや
+// 偶数ズームへの丸めは下のregisterNowcastProtocol内で行う)。
+function nowcastProtocolUrl(basetime, validtime) {
+  return `jmanowc://${basetime}/${validtime}/{z}/{x}/{y}`;
+}
+
+// 実況(N1)+予測(N2)を時刻昇順の1本のタイムラインにまとめて返す。
+// [{ basetime, validtime, kind: "obs"|"forecast" }, ...]
+async function loadNowcastFrames() {
+  const [obsRes, fcRes] = await Promise.all([
+    fetch(NOWCAST_TARGET_TIMES_URLS.obs),
+    fetch(NOWCAST_TARGET_TIMES_URLS.forecast),
+  ]);
+  if (!obsRes.ok) throw new Error(`雨雲レーダーの時刻一覧(実況)の取得に失敗(HTTP ${obsRes.status})`);
+  if (!fcRes.ok) throw new Error(`雨雲レーダーの時刻一覧(予測)の取得に失敗(HTTP ${fcRes.status})`);
+  const [obsList, fcList] = await Promise.all([obsRes.json(), fcRes.json()]);
+  // N1・N2とも新しい順(降順)で来るので、時系列順(昇順)に直してから連結する。
+  const obsFrames = [...obsList].reverse().map(t => ({ basetime: t.basetime, validtime: t.validtime, kind: "obs" }));
+  const fcFrames = [...fcList].reverse().map(t => ({ basetime: t.basetime, validtime: t.validtime, kind: "forecast" }));
+  return [...obsFrames, ...fcFrames];
+}
+
+// 404だったタイルURLの記録(モジュールスコープでアプリ全体を通じて使い回す)。
+const nowcastFailedTileUrls = new Set();
+
+let nowcastProtocolRegistered = false;
+function registerNowcastProtocol(maplibregl) {
+  if (nowcastProtocolRegistered) return;
+  nowcastProtocolRegistered = true;
+  maplibregl.addProtocol("jmanowc", async (params, abortController) => {
+    const m = params.url.match(/^jmanowc:\/\/(\d+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)$/);
+    if (!m) return { data: null };
+    const [, basetime, validtime, zStr, xStr, yStr] = m;
+    let z = Number(zStr), x = Number(xStr), y = Number(yStr);
+
+    // 奇数ズームは1段階粗い偶数ズームのタイルを取得し、該当する象限だけを
+    // 切り出して代用する。
+    let cropQuadrant = null; // {qx, qy} | null(0=左/上, 1=右/下)
+    if (z % 2 !== 0) {
+      cropQuadrant = { qx: x % 2, qy: y % 2 };
+      z = z - 1;
+      x = Math.floor(x / 2);
+      y = Math.floor(y / 2);
+    }
+    const url = nowcastTileUrl(basetime, validtime, z, x, y);
+    if (nowcastFailedTileUrls.has(url)) return { data: null };
+
+    let res;
+    try {
+      res = await fetch(url, { signal: abortController.signal });
+    } catch (err) {
+      if (err.name === "AbortError") throw err;
+      return { data: null };
+    }
+    if (!res.ok) {
+      if (res.status === 404) nowcastFailedTileUrls.add(url);
+      return { data: null };
+    }
+    const blob = await res.blob();
+    if (!cropQuadrant) return { data: await blob.arrayBuffer() };
+
+    const bitmap = await createImageBitmap(blob);
+    const canvas = new OffscreenCanvas(256, 256);
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(bitmap, cropQuadrant.qx * 128, cropQuadrant.qy * 128, 128, 128, 0, 0, 256, 256);
+    const outBlob = await canvas.convertToBlob({ type: "image/png" });
+    return { data: await outBlob.arrayBuffer() };
+  });
+}
+
+/* ─────────────────────────────────────────────────────
    MAPLIBREスタイル生成
    ローカルのworld.json(GeometryCollection)・prefectures.json(FeatureCollection)を
    そのままGeoJSONソースとしてMapLibreに渡し、ダークテーマで塗り分ける。
@@ -999,6 +1092,8 @@ function MapCanvas({
   quakeEpicenterPickActive = false, onPickQuakeEpicenter,
   eewDetailOpen = false,
   currentLocationPoint = null, // { lat, lon } | null。気象タブ「地点」モード中のGPS現在地(iOS風の青丸)
+  nowcastVisible = false,      // 雨雲レーダーレイヤーを表示するか
+  nowcastFrame = null,         // { basetime, validtime } | null。表示中の時刻コマ
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -1078,6 +1173,7 @@ function MapCanvas({
     Promise.all([loadMapLibre(), loadGeoData()])
       .then(([maplibregl, geo]) => {
         if (cancelled || !containerRef.current) return;
+        registerNowcastProtocol(maplibregl);
 
         let map;
         try {
@@ -2105,6 +2201,49 @@ function MapCanvas({
       }],
     });
   }, [currentLocationPoint, status]);
+
+  // 雨雲レーダー(高解像度降水ナウキャスト)。MapLibreは既存sourceのタイルURLを
+  // 差し替えるAPIが無いため、表示ON/OFFやコマ(時刻)が変わるたびに
+  // removeLayer→removeSource→addSource→addLayerし直す。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+
+    const removeExisting = () => {
+      if (map.getLayer("nowcast-layer")) map.removeLayer("nowcast-layer");
+      if (map.getSource("nowcast")) map.removeSource("nowcast");
+    };
+
+    if (!nowcastVisible || !nowcastFrame) {
+      removeExisting();
+      return;
+    }
+
+    removeExisting();
+    map.addSource("nowcast", {
+      type: "raster",
+      tiles: [nowcastProtocolUrl(nowcastFrame.basetime, nowcastFrame.validtime)],
+      tileSize: 256,
+      minzoom: 3,
+      maxzoom: 10,
+      bounds: NOWCAST_BOUNDS,
+      attribution: "気象庁",
+    });
+    // 細分区域の震度塗り分け(areas-intensity-fill)より下に挿入することで、
+    // 震度分布・各種マーカーの上に雨雲がかぶらないようにする。
+    const beforeId = map.getLayer("areas-intensity-fill") ? "areas-intensity-fill" : undefined;
+    map.addLayer({
+      id: "nowcast-layer",
+      type: "raster",
+      source: "nowcast",
+      paint: { "raster-opacity": 0.75 },
+    }, beforeId);
+
+    return () => {
+      if (map.getLayer("nowcast-layer")) map.removeLayer("nowcast-layer");
+      if (map.getSource("nowcast")) map.removeSource("nowcast");
+    };
+  }, [nowcastVisible, nowcastFrame?.basetime, nowcastFrame?.validtime, status]);
 
   // 推計震度分布(気象庁 estimated_intensity_map)を更新する。
   // 選択中の地震・設定トグルが変わるたびに、画像を取得・ピクセル解析してGeoJSONに変換し、
@@ -8166,6 +8305,7 @@ function BottomDock({
   mapSelectSignal,
   uiScale = 1,
   onCurrentLocationChange, // 気象タブ「地点」モードでGPS取得できた現在地をApp側(地図の青丸表示用)に伝える
+  onNowcastChange, // 雨雲レーダーがON中の現在の時刻コマをApp側(地図の雨雲レイヤー表示用)に伝える
 }) {
   const { tokens, mode } = useContext(ThemeContext);
   const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
@@ -8252,6 +8392,42 @@ function BottomDock({
   useEffect(() => {
     if (!(active === "weather" && weatherViewMode === "list")) setWeatherMenuOpen(false);
   }, [active, weatherViewMode]);
+
+  /* ─────────────────────────────────────────────────────
+     雨雲レーダー(高解像度降水ナウキャスト)。ONにした最初の1回だけ時刻一覧
+     (実況+予測)を取得し、デフォルトは最新の実況コマを表示する。ONの間だけ
+     App側(地図の雨雲レイヤー表示用)に現在のコマを伝える。
+     ───────────────────────────────────────────────────── */
+  const [nowcastEnabled, setNowcastEnabled] = useState(false);
+  const [nowcastFrames, setNowcastFrames] = useState(null); // null=未読込
+  const [nowcastFrameIndex, setNowcastFrameIndex] = useState(null);
+  const [nowcastLoadError, setNowcastLoadError] = useState(false);
+
+  useEffect(() => {
+    if (!nowcastEnabled || nowcastFrames || nowcastLoadError) return;
+    let cancelled = false;
+    loadNowcastFrames()
+      .then((frames) => {
+        if (cancelled) return;
+        setNowcastFrames(frames);
+        // デフォルトは「最新の実況」コマ(=obsの最後の要素)。
+        let latestObsIndex = -1;
+        frames.forEach((f, i) => { if (f.kind === "obs") latestObsIndex = i; });
+        setNowcastFrameIndex(latestObsIndex >= 0 ? latestObsIndex : 0);
+      })
+      .catch((err) => {
+        console.error("雨雲レーダーの時刻一覧の取得に失敗:", err);
+        if (!cancelled) setNowcastLoadError(true);
+      });
+    return () => { cancelled = true; };
+  }, [nowcastEnabled, nowcastFrames, nowcastLoadError]);
+
+  const currentNowcastFrame =
+    nowcastFrames && nowcastFrameIndex != null ? nowcastFrames[nowcastFrameIndex] : null;
+
+  useEffect(() => {
+    onNowcastChange?.(nowcastEnabled && currentNowcastFrame ? currentNowcastFrame : null);
+  }, [nowcastEnabled, currentNowcastFrame?.basetime, currentNowcastFrame?.validtime, onNowcastChange]);
 
   /* ─────────────────────────────────────────────────────
      気象タブ「地点」モード — 現在地(GPS)または登録地点(1件のみ)の天気予報。
@@ -9582,7 +9758,7 @@ function BottomDock({
             top: wideAnchorRect.top + 16,
             zIndex: 50,
           }}>
-            <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={false}/>
+            <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={false} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)}/>
           </div>,
           document.body
         ) : (
@@ -9593,7 +9769,7 @@ function BottomDock({
           transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
-          <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={true}/>
+          <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={true} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)}/>
         </div>
         )
       )}
@@ -10406,7 +10582,7 @@ const WEATHER_MENU_ITEM_GAP = 6;          // 項目同士の間隔
 const WEATHER_MENU_ITEMS_PAD = 8;         // 項目ブロックの上下左右の余白
 const WEATHER_MENU_WIDTH = 172;
 
-function WeatherMenuFloating({ open, onToggle, growUp = true }) {
+function WeatherMenuFloating({ open, onToggle, growUp = true, nowcastEnabled = false, onToggleNowcast }) {
   const { tokens } = useContext(ThemeContext);
   const [pressed, setPressed] = useState(false);
 
@@ -10473,24 +10649,32 @@ function WeatherMenuFloating({ open, onToggle, growUp = true }) {
             display: "flex", flexDirection: "column", gap: WEATHER_MENU_ITEM_GAP,
             width: "100%", padding: `0 ${WEATHER_MENU_ITEMS_PAD}px ${WEATHER_MENU_ITEMS_PAD}px`,
           }}>
-            {WEATHER_MENU_ITEMS.map((item) => (
-              <PressableButton
-                key={item.id}
-                onClick={onToggle} // 選択したら閉じる(実際の遷移は追って実装)
-                style={{
-                  height: WEATHER_MENU_ITEM_HEIGHT,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  textAlign: "center",
-                  fontSize: 11.5, fontWeight: 600, color: tokens.text,
-                  whiteSpace: "nowrap",
-                  borderRadius: 10,
-                  border: `0.75px solid rgba(${tokens.ink},0.22)`,
-                  background: `rgba(${tokens.ink},0.06)`,
-                }}
-              >
-                {item.label}
-              </PressableButton>
-            ))}
+            {WEATHER_MENU_ITEMS.map((item) => {
+              const isRainRadar = item.id === "rainRadar";
+              const active = isRainRadar && nowcastEnabled;
+              return (
+                <PressableButton
+                  key={item.id}
+                  onClick={() => {
+                    if (isRainRadar) onToggleNowcast?.();
+                    onToggle(); // 選択したらメニュー自体は閉じる
+                  }}
+                  style={{
+                    height: WEATHER_MENU_ITEM_HEIGHT,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    textAlign: "center",
+                    fontSize: 11.5, fontWeight: 600,
+                    color: active ? "#fff" : tokens.text,
+                    whiteSpace: "nowrap",
+                    borderRadius: 10,
+                    border: active ? "none" : `0.75px solid rgba(${tokens.ink},0.22)`,
+                    background: active ? "#0A84FF" : `rgba(${tokens.ink},0.06)`,
+                  }}
+                >
+                  {item.label}
+                </PressableButton>
+              );
+            })}
           </div>
         )}
       </div>
@@ -16067,6 +16251,9 @@ export default function App() {
   // 気象タブ「地点」モードでGPS取得できている間だけBottomDock側から伝わってくる、
   // 現在地の緯度経度(地図の青丸表示用)。それ以外は常にnull。
   const [currentLocationPoint, setCurrentLocationPoint] = useState(null);
+  // 雨雲レーダーがON中の現在の時刻コマ({basetime, validtime})。BottomDock側から
+  // 伝わってくる。OFFの間・未読込の間はnull。
+  const [nowcastFrame, setNowcastFrame] = useState(null);
   // 現在進行形で有効な(解除されていない)津波情報があるかどうか。潮位観測点
   // マスタの取得トリガー・自動表示の判定の両方で使う軽量な判定。
   const hasActiveTsunami = effectiveTsunamis.some(t => !t.cancelled);
@@ -17091,6 +17278,8 @@ export default function App() {
         <MapCanvas
           onReady={setMap}
           currentLocationPoint={currentLocationPoint}
+          nowcastVisible={!!nowcastFrame}
+          nowcastFrame={nowcastFrame}
           stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
           tideStationPoints={
@@ -17346,6 +17535,7 @@ export default function App() {
                   onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
                   onTsunamiViewModeChange={setTsunamiViewModeTop}
                   onCurrentLocationChange={setCurrentLocationPoint}
+                  onNowcastChange={setNowcastFrame}
                   tideStations={tideStationsWithGrade}
                   tideStationsStatus={tideStationsStatus}
                   selectedTideStationCode={selectedTideStationCode}
@@ -17441,6 +17631,7 @@ export default function App() {
               onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
               onTsunamiViewModeChange={setTsunamiViewModeTop}
               onCurrentLocationChange={setCurrentLocationPoint}
+                  onNowcastChange={setNowcastFrame}
               tideStations={tideStationsWithGrade}
               tideStationsStatus={tideStationsStatus}
               selectedTideStationCode={selectedTideStationCode}
