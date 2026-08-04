@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.8";
+const APP_VERSION = "1.5.8a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10623,33 +10623,45 @@ function NowcastLegend() {
   const schemeId = useContext(NowcastColorSchemeContext);
   const scheme = NOWCAST_COLOR_SCHEMES[schemeId] || NOWCAST_COLOR_SCHEMES.jma;
   const colors = scheme.palette || JMA_NOWCAST_SOURCE_PALETTE;
+  // colorsの各要素(弱い順)に対応する下限値(mm/h)。並びはJMA_NOWCAST_SOURCE_PALETTE
+  // /YAHOO_WEATHER_NOWCAST_PALETTEの区分(0~1,1~5,5~10,10~20,20~30,30~50,50~80,80~)と対応。
+  const NOWCAST_LEGEND_LOWER_BOUNDS = ["0", "1", "5", "10", "20", "30", "50", "80"];
+  const SWATCH_WIDTH = 22; // 数値ラベルが収まるよう、震度凡例・津波凡例より少し幅広にしている
 
   return (
     <Glass
       radius={12}
       style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "8px 9px" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 3, padding: "8px 9px" }}>
         <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 2 }}>
           {colors.map((rgb, i) => (
             // 震度凡例・津波凡例と同じ、隙間の詰まった横一列のバー
             <div
               key={i}
               style={{
-                width: 7, height: 16, borderRadius: 2,
+                width: SWATCH_WIDTH, height: 16, borderRadius: 2,
                 background: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`,
                 flexShrink: 0,
               }}
             />
           ))}
         </div>
-        <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", gap: 6 }}>
-          <span style={{ fontSize: 8.5, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, whiteSpace: "nowrap" }}>
-            弱い
-          </span>
-          <span style={{ fontSize: 8.5, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, whiteSpace: "nowrap" }}>
-            強い(mm/h)
-          </span>
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 2 }}>
+          {NOWCAST_LEGEND_LOWER_BOUNDS.map((label, i) => (
+            <div
+              key={i}
+              style={{
+                width: SWATCH_WIDTH, flexShrink: 0, textAlign: "center",
+                fontSize: 9, fontWeight: 600, color: `rgba(${tokens.ink},0.55)`,
+              }}
+            >
+              {label}
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 8.5, fontWeight: 600, color: `rgba(${tokens.ink},0.4)`, textAlign: "right" }}>
+          mm/h
         </div>
       </div>
     </Glass>
