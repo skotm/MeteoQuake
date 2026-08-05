@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.9c";
+const APP_VERSION = "1.5.9d";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -907,9 +907,8 @@ async function loadNowcastFrames() {
 // targetTimes_N1/N2.jsonのvalidtimeは"YYYYMMDDHHMMSS"形式の14桁文字列で、実際には
 // UTCで返ってくる(コメントでJSTと誤解していたのが「実際は7:20なのに22:20と表示
 // される」不具合の原因だった)。日付をまたぐ差し引きも正しく扱えるよう、一度UTCの
-// タイムスタンプとして組み立ててから+9時間してJSTへ変換し、時・分だけを取り出す。
-// スライダー上に出す「16:40」のような短い時刻表示に変換する。
-function parseNowcastValidTime(validtime) {
+// タイムスタンプ(ms)として組み立ててから使う。
+function nowcastValidtimeToMs(validtime) {
   if (!validtime || validtime.length < 12) return null;
   const y = Number(validtime.slice(0, 4));
   const mo = Number(validtime.slice(4, 6)) - 1;
@@ -917,8 +916,13 @@ function parseNowcastValidTime(validtime) {
   const h = Number(validtime.slice(8, 10));
   const mi = Number(validtime.slice(10, 12));
   const s = validtime.length >= 14 ? Number(validtime.slice(12, 14)) : 0;
-  const utcMs = Date.UTC(y, mo, d, h, mi, s);
-  if (Number.isNaN(utcMs)) return null;
+  const ms = Date.UTC(y, mo, d, h, mi, s);
+  return Number.isNaN(ms) ? null : ms;
+}
+// スライダー上に出す「16:40」のような短い時刻表示に変換する(UTC→JSTは+9時間)。
+function parseNowcastValidTime(validtime) {
+  const utcMs = nowcastValidtimeToMs(validtime);
+  if (utcMs == null) return null;
   const jst = new Date(utcMs + 9 * 60 * 60 * 1000);
   const hh = String(jst.getUTCHours()).padStart(2, "0");
   const mm = String(jst.getUTCMinutes()).padStart(2, "0");
@@ -10885,6 +10889,11 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
   const frame = frames[frameIndex] ?? frames[frames.length - 1];
   // 実況→予測の切り替わり(=「現在」)の位置。目盛りをここだけ目立たせる。
   const nowIndex = frames.findIndex(f => f.kind === "forecast");
+  // 目盛りを長くする基準となる「現在時刻」。実況/予測の切り替わり位置の
+  // validtimeを基準に、そこからプラマイ1時間ごと(60分刻み)のコマだけ
+  // 長い目盛りにする(時計の正時ではなく、あくまで「現在」からの相対時間)。
+  const nowFrame = nowIndex >= 0 ? frames[nowIndex] : frames[frames.length - 1];
+  const nowMs = nowFrame ? nowcastValidtimeToMs(nowFrame.validtime) : null;
 
   return (
     <Glass
@@ -10927,8 +10936,9 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
         <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
           {/* 目盛り — トラックに重ねて表示する。ネイティブのつまみ半径ぶん
               (左右7px)内側に収め、つまみの中心と目盛りの位置がずれないように
-              している。1コマごとに薄い目盛りを、正時(分が00)は少し濃く長い
-              目盛りにし、実況→予測の切り替わり(現在)だけ青く目立たせる。 */}
+              している。1コマごとに薄い目盛りを、「現在」からプラマイ1時間
+              ごとのコマは少し濃く長い目盛りにし、実況→予測の切り替わり
+              (現在そのもの)だけ青く目立たせる。 */}
           <div style={{
             position: "absolute", left: 7, right: 7, top: "50%",
             transform: "translateY(-50%)",
@@ -10936,7 +10946,9 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
           }}>
             {frames.map((f, i) => {
               const pct = frames.length > 1 ? (i / (frames.length - 1)) * 100 : 0;
-              const isHour = parseNowcastValidTime(f.validtime)?.endsWith(":00");
+              const fMs = nowcastValidtimeToMs(f.validtime);
+              const diffMin = nowMs != null && fMs != null ? Math.round((fMs - nowMs) / 60000) : null;
+              const isHour = diffMin != null && diffMin % 60 === 0;
               const isNow = i === nowIndex;
               return (
                 <div
