@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.9j";
+const APP_VERSION = "1.6.0";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -271,48 +271,11 @@ function Filters() {
                                  0    0    0    1   0"/>
         </filter>
 
-        {/* ── 天気アイコンの縁取り ────────────────────────────
-            JMAのアイコンは縁のアンチエイリアス・内部の陰影(雲の影/太陽の
-            グロー)にかなり広めの半透明のグラデーションを使っており、
-            drop-shadowを何重にも重ねる方式だとその半透明部分にまで縁取り色が
-            透けてアイコン全体が暗く/ぼやけて見えてしまう。
-            そこで、アルファをfeComponentTransferで一度2値化(0.5でスパッと
-            切る)してから1pxだけ膨張させ、その「本当の輪郭のすぐ外側」だけに
-            色を乗せることで、内部の半透明な陰影部分を巻き込まない、細く
-            くっきりした縁取りにする。 */}
-        <filter id="weather-icon-outline-dark" x="-20%" y="-20%" width="140%" height="140%"
-                colorInterpolationFilters="sRGB">
-          <feComponentTransfer in="SourceAlpha" result="binAlpha">
-            <feFuncA type="discrete" tableValues="0 1"/>
-          </feComponentTransfer>
-          <feMorphology in="binAlpha" operator="dilate" radius="1" result="dilated"/>
-          <feFlood floodColor="#fff" result="white"/>
-          <feComposite in="white" in2="dilated" operator="in" result="outline"/>
-          <feMerge>
-            <feMergeNode in="outline"/>
-            <feMergeNode in="SourceGraphic"/>
-          </feMerge>
-        </filter>
-        {/* ライトモード用: 縁は黒。加えて、内部の半透明な陰影部分(2値化で
-            「輪郭の外」扱いにならなかった、アイコン自体の本体部分)を白で
-            裏打ちしてから元の絵を重ねることで、影が暗く沈まず白っぽく
-            抜けるようにする。 */}
-        <filter id="weather-icon-outline-light" x="-20%" y="-20%" width="140%" height="140%"
-                colorInterpolationFilters="sRGB">
-          <feComponentTransfer in="SourceAlpha" result="binAlpha">
-            <feFuncA type="discrete" tableValues="0 1"/>
-          </feComponentTransfer>
-          <feMorphology in="binAlpha" operator="dilate" radius="1" result="dilated"/>
-          <feFlood floodColor="#000" result="black"/>
-          <feComposite in="black" in2="dilated" operator="in" result="outline"/>
-          <feFlood floodColor="#fff" result="white"/>
-          <feComposite in="white" in2="SourceAlpha" operator="in" result="whiteBacking"/>
-          <feMerge>
-            <feMergeNode in="outline"/>
-            <feMergeNode in="whiteBacking"/>
-            <feMergeNode in="SourceGraphic"/>
-          </feMerge>
-        </filter>
+        {/* 天気アイコンの縁取りは、以前はここのSVGフィルタ(weather-icon-
+            outline-dark/-light)を<img>にfilter:url(...)として直接適用して
+            いたが、外部SVG画像+多段フィルタという組み合わせがSafari/iOSで
+            アイコンの一部だけ透けて見える不具合を起こすため撤去した。
+            現在はWeatherIconコンポーネント側でcanvasに焼き込んで処理する。 */}
 
       </defs>
     </svg>
@@ -6422,6 +6385,125 @@ function weatherTelop(code) {
   const info = WEATHER_CODE_INFO[String(code)];
   return info ? info.telop : "不明";
 }
+
+/* ─────────────────────────────────────────────────────
+   天気アイコンの縁取り(canvas焼き込み版)
+
+   以前は weather-icon-outline-dark/light という多段のSVGフィルタ
+   (feComponentTransferでアルファを2値化→feMorphologyで膨張→
+   feComposite/feMergeで合成)を、JMAの外部SVGを読み込んだ<img>に
+   直接 filter: url(...) として適用していた。
+   しかしこの「外部SVG画像 + 複数プリミティブのCSSフィルタ」という
+   組み合わせは、特にSafari/iOSでフィルタのラスタライズ範囲が正しく
+   計算されず、アイコンの一部(右側や上側など)だけフィルタが反映されず
+   透けて見えたり縁取りが途切れたりする既知の不具合を引き起こすことが
+   ある(GPU合成レイヤー境界やdevicePixelRatioが絡むため再現条件が
+   絞りにくい)。
+
+   そこで、ライブのCSSフィルタに頼るのをやめ、アイコン読み込み時に
+   canvas上でピクセル単位の膨張処理を行って縁取りを一度だけ焼き込み、
+   結果をdata URLとして通常の<img>で表示する方式に変更した。
+   これにより実行時のフィルタ描画そのものが不要になり、上記の不具合
+   クラスを構造的に回避できる。CORS等でcanvasの読み出しに失敗した
+   場合(taint)は、縁取りなしの元画像URLへ静かにフォールバックする
+   ため、最悪の場合でも「一部が欠けて見える」状態にはならない。 */
+const weatherIconBakeCache = new Map(); // key: `${url}|${mode}|${size}` -> Promise<dataURL|null>
+
+function bakeWeatherIconOutline(url, mode, size) {
+  const key = `${url}|${mode}|${size}`;
+  if (weatherIconBakeCache.has(key)) return weatherIconBakeCache.get(key);
+
+  const promise = new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous"; // JMAはドメイン制限をかけていないため通る想定。失敗時はcatchでフォールバック。
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, size, size);
+        const src = ctx.getImageData(0, 0, size, size);
+        const n = size * size;
+
+        // アルファを2値化(閾値128)。元フィルタのfeComponentTransfer discreteに相当。
+        const alpha = new Uint8Array(n);
+        for (let i = 0; i < n; i++) alpha[i] = src.data[i * 4 + 3] >= 128 ? 1 : 0;
+
+        // 8近傍で1px膨張。元フィルタのfeMorphology dilate radius=1に相当。
+        const dilated = new Uint8Array(n);
+        for (let y = 0; y < size; y++) {
+          for (let x = 0; x < size; x++) {
+            const idx = y * size + x;
+            if (alpha[idx]) { dilated[idx] = 1; continue; }
+            let on = false;
+            for (let dy = -1; dy <= 1 && !on; dy++) {
+              const ny = y + dy;
+              if (ny < 0 || ny >= size) continue;
+              for (let dx = -1; dx <= 1 && !on; dx++) {
+                const nx = x + dx;
+                if (nx < 0 || nx >= size) continue;
+                if (alpha[ny * size + nx]) on = true;
+              }
+            }
+            dilated[idx] = on ? 1 : 0;
+          }
+        }
+
+        const out = ctx.createImageData(size, size);
+        for (let i = 0; i < n; i++) {
+          const o = i * 4;
+          const isBody = alpha[i] === 1;
+          const isOutline = !isBody && dilated[i] === 1;
+          if (isBody) {
+            // 本体部分はそのまま(ライトモードは白裏打ちしてから重ねるのと
+            // 実質同じ見た目になるよう、半透明部分もそのまま元の色を使う)。
+            out.data[o] = src.data[o];
+            out.data[o + 1] = src.data[o + 1];
+            out.data[o + 2] = src.data[o + 2];
+            out.data[o + 3] = src.data[o + 3];
+          } else if (isOutline) {
+            if (mode === "light") {
+              out.data[o] = 0; out.data[o + 1] = 0; out.data[o + 2] = 0; out.data[o + 3] = 255;
+            } else {
+              out.data[o] = 255; out.data[o + 1] = 255; out.data[o + 2] = 255; out.data[o + 3] = 255;
+            }
+          }
+          // それ以外(輪郭の外側)は透明のまま(初期値0)。
+        }
+        ctx.putImageData(out, 0, 0);
+        resolve(canvas.toDataURL("image/png"));
+      } catch (e) {
+        resolve(null); // CORSでcanvasがtaintされた場合など。元画像にフォールバック。
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+
+  weatherIconBakeCache.set(key, promise);
+  return promise;
+}
+
+// 天気アイコン表示用の共通コンポーネント。旧: <img src={weatherIconUrl(code)}
+// style={{filter: weatherIconOutlineFilter}}/> の置き換え。
+function WeatherIcon({ code, size = 68, alt = "", style }) {
+  const { mode } = useContext(ThemeContext);
+  const url = weatherIconUrl(code);
+  const bakeSize = Math.max(Math.round(size * 2), 96); // 高解像度で焼き込み、CSSで縮小表示してギザつきを抑える
+  const [dataUrl, setDataUrl] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDataUrl(null);
+    bakeWeatherIconOutline(url, mode, bakeSize).then((d) => {
+      if (!cancelled) setDataUrl(d);
+    });
+    return () => { cancelled = true; };
+  }, [url, mode, bakeSize]);
+
+  return <img src={dataUrl || url} alt={alt} width={size} height={size} style={style} />;
+}
 // 地域時系列予報(VPFD)は天気をweatherCodesではなく「くもり」「雨」のような短い
 // テキストでしか返さない。3時間ごとの1コマにつき単一の天気語(「時々」「後」の
 // ような複合表現は含まない)なので、キーワードを含むかどうかの単純な判定で
@@ -11223,17 +11305,13 @@ function WeatherLocationPanel({
   kanaPickerStep, onChangeKanaPickerStep, kanaPickerRow, onChangeKanaPickerRow, kanaPickerCol, onChangeKanaPickerCol,
   kanaGroupedMunicipalities, municipalityListError, onSelectMunicipality,
 }) {
-  const { tokens, mode } = useContext(ThemeContext);
+  const { tokens } = useContext(ThemeContext);
   const isStandalonePwa = useIsStandalonePwa();
   const [rangeMode, setRangeMode] = useState("3day"); // "3day" | "week"
-  // 天気アイコンの輪郭線。/Filters内のSVGフィルタ(weather-icon-outline-dark/
-  // -light)を使う。drop-shadowの重ね掛けだと、JMAアイコン内部の半透明な
-  // 陰影(雲の影・太陽のグロー)にまで縁取り色が透けて全体が暗く見えてしまって
-  // いたため、アルファを2値化してから膨張させる方式に切り替えた
-  // (ライトモードは縁を黒、陰影部分は白で裏打ち)。
-  const weatherIconOutlineFilter = mode === "light"
-    ? "url(#weather-icon-outline-light)"
-    : "url(#weather-icon-outline-dark)";
+  // 天気アイコンの縁取りはWeatherIconコンポーネント側(canvas焼き込み)で
+  // 処理するため、ここでは何もしない。旧: SVGフィルタ(weather-icon-outline-
+  // dark/-light)を<img>に直接filterで適用していたが、Safari/iOSで一部が
+  // 透けて見える不具合があったため撤去した。
   // 地点登録(五十音ピッカー)を開いている間は、それ専用の画面をフルで表示する。
   if (kanaPickerOpen) {
     return (
@@ -11405,7 +11483,7 @@ function WeatherLocationPanel({
               width: 68, height: 68, borderRadius: 16, flexShrink: 0,
               display: "flex", alignItems: "center", justifyContent: "center",
             }}>
-              <img src={weatherIconUrl(f.weatherCode)} alt="" width={68} height={68} style={{ filter: weatherIconOutlineFilter }}/>
+              <WeatherIcon code={f.weatherCode} size={68} alt=""/>
             </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -11447,7 +11525,7 @@ function WeatherLocationPanel({
                         width: 34, height: 34, borderRadius: 9, flexShrink: 0,
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
-                        <img src={weatherIconUrl(e.weatherCode)} alt={e.weather || ""} width={34} height={34} style={{ filter: weatherIconOutlineFilter }}/>
+                        <WeatherIcon code={e.weatherCode} size={34} alt={e.weather || ""}/>
                       </div>
                     ) : (
                       <div style={{ width: 34, height: 34 }}/>
@@ -11517,7 +11595,7 @@ function WeatherLocationPanel({
                         width: 36, height: 36, borderRadius: 9, flexShrink: 0,
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
-                        <img src={weatherIconUrl(d.weatherCode)} alt="" width={36} height={36} style={{ filter: weatherIconOutlineFilter }}/>
+                        <WeatherIcon code={d.weatherCode} size={36} alt=""/>
                       </div>
                     ) : (
                       <div style={{ width: 36, height: 36 }}/>
