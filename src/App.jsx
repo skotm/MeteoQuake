@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.9g";
+const APP_VERSION = "1.5.9h";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -11187,9 +11187,13 @@ function WeatherLocationPanel({
   // いたが、代わりにアイコンの縁取りで対応する:ダークモードは白、ライトモード
   // は黒の線をdrop-shadowで4方向に重ねて縁取りにする(アイコン自体はどんな
   // 背景の上でもコントラストが出る)。
+  // JMAのアイコンには雲の陰影や太陽の縁のグローなど半透明部分が多く、
+  // drop-shadowは元のアルファをそのまま引き継ぐため、完全に不透明な色だと
+  // アイコン全体が暗く/重く見えてしまう。縁取り色を半透明にすることで、
+  // 縁ははっきり出しつつアイコン全体への影響を抑える。
   const weatherIconOutlineFilter = mode === "light"
-    ? "drop-shadow(1px 0 0 #000) drop-shadow(-1px 0 0 #000) drop-shadow(0 1px 0 #000) drop-shadow(0 -1px 0 #000)"
-    : "drop-shadow(1px 0 0 #fff) drop-shadow(-1px 0 0 #fff) drop-shadow(0 1px 0 #fff) drop-shadow(0 -1px 0 #fff)";
+    ? "drop-shadow(1px 0 0 rgba(0,0,0,0.5)) drop-shadow(-1px 0 0 rgba(0,0,0,0.5)) drop-shadow(0 1px 0 rgba(0,0,0,0.5)) drop-shadow(0 -1px 0 rgba(0,0,0,0.5))"
+    : "drop-shadow(1px 0 0 rgba(255,255,255,0.5)) drop-shadow(-1px 0 0 rgba(255,255,255,0.5)) drop-shadow(0 1px 0 rgba(255,255,255,0.5)) drop-shadow(0 -1px 0 rgba(255,255,255,0.5))";
   // 地点登録(五十音ピッカー)を開いている間は、それ専用の画面をフルで表示する。
   if (kanaPickerOpen) {
     return (
