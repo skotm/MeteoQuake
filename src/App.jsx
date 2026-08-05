@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.9d";
+const APP_VERSION = "1.5.9e";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -942,78 +942,54 @@ let nowcastProtocolRegistered = false;
 function registerNowcastProtocol(maplibregl) {
   if (nowcastProtocolRegistered) return;
   nowcastProtocolRegistered = true;
+  maplibregl.addProtocol("jmanowc", async (params, abortController) => {
+    const m = params.url.match(/^jmanowc:\/\/([a-z]+)\/(\d+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)$/);
+    if (!m) return { data: null };
+    const [, schemeId, basetime, validtime, zStr, xStr, yStr] = m;
+    let z = Number(zStr), x = Number(xStr), y = Number(yStr);
+    const palette = NOWCAST_COLOR_SCHEMES[schemeId]?.palette || null;
 
-  // 404だったタイルURLをキャッシュして、無駄な再フェッチを避ける(モジュール
-  // スコープのnowcastFailedTileUrlsを共有)。
-  const fetchNowcastTileBlob = async (basetime, validtime, z, x, y, abortController) => {
+    // 奇数ズームは1段階粗い偶数ズームのタイルを取得し、該当する象限だけを
+    // 切り出して代用する。
+    // (鮮明さ優先で「1段階細かいズームの子タイル4枚を縮小合成」する方式も
+    // 試したが、通信量が4倍になって重かったため、軽いこちらの方式に戻した)
+    let cropQuadrant = null; // {qx, qy} | null(0=左/上, 1=右/下)
+    if (z % 2 !== 0) {
+      cropQuadrant = { qx: x % 2, qy: y % 2 };
+      z = z - 1;
+      x = Math.floor(x / 2);
+      y = Math.floor(y / 2);
+    }
     const url = nowcastTileUrl(basetime, validtime, z, x, y);
-    if (nowcastFailedTileUrls.has(url)) return null;
+    if (nowcastFailedTileUrls.has(url)) return { data: null };
+
     let res;
     try {
       res = await fetch(url, { signal: abortController.signal });
     } catch (err) {
       if (err.name === "AbortError") throw err;
-      return null;
+      return { data: null };
     }
     if (!res.ok) {
       if (res.status === 404) nowcastFailedTileUrls.add(url);
-      return null;
+      return { data: null };
     }
-    return res.blob();
-  };
+    const blob = await res.blob();
 
-  maplibregl.addProtocol("jmanowc", async (params, abortController) => {
-    const m = params.url.match(/^jmanowc:\/\/([a-z]+)\/(\d+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)$/);
-    if (!m) return { data: null };
-    const [, schemeId, basetime, validtime, zStr, xStr, yStr] = m;
-    const z = Number(zStr), x = Number(xStr), y = Number(yStr);
-    const palette = NOWCAST_COLOR_SCHEMES[schemeId]?.palette || null;
-
-    if (z % 2 === 0) {
-      // 偶数ズーム: JMAの実データそのまま。
-      const blob = await fetchNowcastTileBlob(basetime, validtime, z, x, y, abortController);
-      if (!blob) return { data: null };
-      // 配色変換が不要ならcanvasを経由せずそのまま返す(その方が速い)。
-      if (!palette) return { data: await blob.arrayBuffer() };
-      const bitmap = await createImageBitmap(blob);
-      const canvas = new OffscreenCanvas(256, 256);
-      const ctx = canvas.getContext("2d");
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(bitmap, 0, 0);
-      const imageData = ctx.getImageData(0, 0, 256, 256);
-      remapImageDataColors(imageData, palette);
-      ctx.putImageData(imageData, 0, 0);
-      const outBlob = await canvas.convertToBlob({ type: "image/png" });
-      return { data: await outBlob.arrayBuffer() };
+    // 奇数ズームの切り出しも、配色変換も不要な場合だけ、そのまま素通しする
+    // (canvas処理をまるごと省いた方が速いため)。
+    if (!cropQuadrant && !palette) {
+      return { data: await blob.arrayBuffer() };
     }
 
-    // 奇数ズーム: JMAには実データが無いので合成する。1段階粗い偶数ズームの
-    // タイルを引き伸ばすと不必要にぼやけるため、代わりに1段階細かい(実データ
-    // がある)偶数ズームの子タイル4枚を取得し、それぞれ128x128に縮小して
-    // 合成する。JMAの実データ解像度の範囲内で最大限鮮明に見せるための処理で、
-    // 通信量は1タイルあたり4倍になる。
-    const fz = z + 1;
-    const quadrants = [
-      { qx: 0, qy: 0, tx: x * 2,     ty: y * 2     },
-      { qx: 1, qy: 0, tx: x * 2 + 1, ty: y * 2     },
-      { qx: 0, qy: 1, tx: x * 2,     ty: y * 2 + 1 },
-      { qx: 1, qy: 1, tx: x * 2 + 1, ty: y * 2 + 1 },
-    ];
-    const blobs = await Promise.all(
-      quadrants.map(q => fetchNowcastTileBlob(basetime, validtime, fz, q.tx, q.ty, abortController))
-    );
-    if (blobs.every(b => !b)) return { data: null }; // 4枚とも取得できなければタイル自体無し扱い
-
+    const bitmap = await createImageBitmap(blob);
     const canvas = new OffscreenCanvas(256, 256);
     const ctx = canvas.getContext("2d");
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
-    for (let i = 0; i < quadrants.length; i++) {
-      const blob = blobs[i];
-      if (!blob) continue;
-      const bitmap = await createImageBitmap(blob);
-      const { qx, qy } = quadrants[i];
-      ctx.drawImage(bitmap, qx * 128, qy * 128, 128, 128);
+    ctx.imageSmoothingEnabled = false;
+    if (cropQuadrant) {
+      ctx.drawImage(bitmap, cropQuadrant.qx * 128, cropQuadrant.qy * 128, 128, 128, 0, 0, 256, 256);
+    } else {
+      ctx.drawImage(bitmap, 0, 0, 256, 256);
     }
     if (palette) {
       const imageData = ctx.getImageData(0, 0, 256, 256);
