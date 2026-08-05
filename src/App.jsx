@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.9";
+const APP_VERSION = "1.5.9a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -779,6 +779,9 @@ function loadTsunamiAreasData() {
      行き来した時の無駄打ちを防ぐ)。
    ───────────────────────────────────────────────────── */
 const NOWCAST_BOUNDS = [118, 20, 150, 48]; // [west, south, east, north] のおおよその提供範囲
+// コマ切り替え(自動再生・手動スライダー操作とも)で一瞬レーダーが消えないよう、
+// 前後何コマぶんタイルを先読みしておくか。
+const NOWCAST_PRELOAD_RADIUS = 3;
 const NOWCAST_TARGET_TIMES_URLS = {
   obs: "https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N1.json",       // 実況(過去)
   forecast: "https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N2.json",  // 予測(60分先まで)
@@ -1229,6 +1232,8 @@ function MapCanvas({
   currentLocationPoint = null, // { lat, lon } | null。気象タブ「地点」モード中のGPS現在地(iOS風の青丸)
   nowcastVisible = false,      // 雨雲レーダーレイヤーを表示するか
   nowcastFrame = null,         // { basetime, validtime } | null。表示中の時刻コマ
+  nowcastPreloadFrames = [],   // 前後の先読み対象コマ({basetime,validtime}の配列)。
+                                // タイルをバックグラウンドで読み込んでおき、切り替え時に一瞬消えるのを防ぐ
   nowcastColorSchemeId = "jma", // 雨雲レーダーの配色スキームID
 }) {
   const containerRef = useRef(null);
@@ -2338,48 +2343,92 @@ function MapCanvas({
     });
   }, [currentLocationPoint, status]);
 
-  // 雨雲レーダー(高解像度降水ナウキャスト)。MapLibreは既存sourceのタイルURLを
-  // 差し替えるAPIが無いため、表示ON/OFFやコマ(時刻)が変わるたびに
-  // removeLayer→removeSource→addSource→addLayerし直す。
+  // 雨雲レーダー(高解像度降水ナウキャスト)。
+  // 表示中のコマ(nowcastFrame)に加えて、前後の先読み対象コマ(nowcastPreloadFrames)
+  // ぶんもopacity:0のレイヤーとしてあらかじめ追加しておく。MapLibreは
+  // visibility:visibleなレイヤーであればopacityが0でもタイルを読み込むため、
+  // これで「表示に使う前からバックグラウンドでタイルを読み込んでおく」先読みになる。
+  // コマが切り替わった時は、既存レイヤーのopacityを差し替えるだけで済むので
+  // (先読み済みなら)一瞬レーダーが消える瞬間が無くなる。
+  // コマ(validtime)ごとに専用のsource/layerを持たせ、先読み範囲から外れた
+  // ものだけ都度removeする。
+  const nowcastPreloadKey = nowcastPreloadFrames.map(f => f.validtime).join(",");
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
 
-    const removeExisting = () => {
-      if (map.getLayer("nowcast-layer")) map.removeLayer("nowcast-layer");
-      if (map.getSource("nowcast")) map.removeSource("nowcast");
+    const removeAllNowcastLayers = () => {
+      const style = map.getStyle();
+      if (!style) return;
+      (style.layers || []).forEach(l => {
+        if (l.id.startsWith("nowcast-layer-")) map.removeLayer(l.id);
+      });
+      Object.keys(style.sources || {}).forEach(id => {
+        if (id.startsWith("nowcast-src-")) map.removeSource(id);
+      });
     };
 
     if (!nowcastVisible || !nowcastFrame) {
-      removeExisting();
+      removeAllNowcastLayers();
       return;
     }
 
-    removeExisting();
-    map.addSource("nowcast", {
-      type: "raster",
-      tiles: [nowcastProtocolUrl(nowcastColorSchemeId, nowcastFrame.basetime, nowcastFrame.validtime)],
-      tileSize: 256,
-      minzoom: 3,
-      maxzoom: 10,
-      bounds: NOWCAST_BOUNDS,
-      attribution: "気象庁",
-    });
+    const wantedFrames = [nowcastFrame, ...nowcastPreloadFrames];
+    const keyOf = (f) => `${nowcastColorSchemeId}-${f.validtime}`;
+    const wantedKeys = new Set(wantedFrames.map(keyOf));
+
+    // 先読み範囲(配色切り替え含む)から外れたレイヤー・ソースを削除。
+    // ソースはレイヤーから参照されている間は削除できないので、必ずレイヤー→ソースの順で消す。
+    const style = map.getStyle();
+    if (style) {
+      (style.layers || []).forEach(l => {
+        if (l.id.startsWith("nowcast-layer-") && !wantedKeys.has(l.id.slice("nowcast-layer-".length))) {
+          map.removeLayer(l.id);
+        }
+      });
+      Object.keys(style.sources || {}).forEach(srcId => {
+        if (srcId.startsWith("nowcast-src-") && !wantedKeys.has(srcId.slice("nowcast-src-".length))) {
+          map.removeSource(srcId);
+        }
+      });
+    }
+
     // 細分区域の震度塗り分け(areas-intensity-fill)より下に挿入することで、
     // 震度分布・各種マーカーの上に雨雲がかぶらないようにする。
     const beforeId = map.getLayer("areas-intensity-fill") ? "areas-intensity-fill" : undefined;
-    map.addLayer({
-      id: "nowcast-layer",
-      type: "raster",
-      source: "nowcast",
-      paint: { "raster-opacity": 0.75 },
-    }, beforeId);
+
+    // 必要なレイヤー・ソースを用意(無ければ追加)し、表示中のコマだけopacityを上げる。
+    wantedFrames.forEach(f => {
+      const key = keyOf(f);
+      const srcId = `nowcast-src-${key}`;
+      const layerId = `nowcast-layer-${key}`;
+      if (!map.getSource(srcId)) {
+        map.addSource(srcId, {
+          type: "raster",
+          tiles: [nowcastProtocolUrl(nowcastColorSchemeId, f.basetime, f.validtime)],
+          tileSize: 256,
+          minzoom: 3,
+          maxzoom: 10,
+          bounds: NOWCAST_BOUNDS,
+          attribution: "気象庁",
+        });
+      }
+      if (!map.getLayer(layerId)) {
+        map.addLayer({
+          id: layerId,
+          type: "raster",
+          source: srcId,
+          paint: { "raster-opacity": 0 },
+        }, beforeId);
+      }
+      const isCurrent = f.validtime === nowcastFrame.validtime;
+      map.setPaintProperty(layerId, "raster-opacity", isCurrent ? 0.75 : 0);
+    });
 
     return () => {
-      if (map.getLayer("nowcast-layer")) map.removeLayer("nowcast-layer");
-      if (map.getSource("nowcast")) map.removeSource("nowcast");
+      removeAllNowcastLayers();
     };
-  }, [nowcastVisible, nowcastFrame?.basetime, nowcastFrame?.validtime, nowcastColorSchemeId, status]);
+  }, [nowcastVisible, nowcastFrame?.basetime, nowcastFrame?.validtime, nowcastColorSchemeId, status, nowcastPreloadKey]);
 
   // 推計震度分布(気象庁 estimated_intensity_map)を更新する。
   // 選択中の地震・設定トグルが変わるたびに、画像を取得・ピクセル解析してGeoJSONに変換し、
@@ -8600,9 +8649,26 @@ function BottomDock({
   const currentNowcastFrame =
     nowcastFrames && nowcastFrameIndex != null ? nowcastFrames[nowcastFrameIndex] : null;
 
+  // コマ切り替え時に一瞬レーダーが消えないよう、前後NOWCAST_PRELOAD_RADIUSコマぶんを
+  // 地図側で先読みしてもらう(自動再生の間隔0.7秒でも先読みが追いつくよう、少し多め)。
+  const nowcastPreloadFrames = useMemo(() => {
+    if (!nowcastFrames || nowcastFrameIndex == null) return [];
+    const start = Math.max(0, nowcastFrameIndex - NOWCAST_PRELOAD_RADIUS);
+    const end = Math.min(nowcastFrames.length - 1, nowcastFrameIndex + NOWCAST_PRELOAD_RADIUS);
+    const result = [];
+    for (let i = start; i <= end; i++) if (i !== nowcastFrameIndex) result.push(nowcastFrames[i]);
+    return result;
+  }, [nowcastFrames, nowcastFrameIndex]);
+  const nowcastPreloadKey = nowcastPreloadFrames.map(f => f.validtime).join(",");
+
   useEffect(() => {
-    onNowcastChange?.(nowcastEnabled && currentNowcastFrame ? currentNowcastFrame : null);
-  }, [nowcastEnabled, currentNowcastFrame?.basetime, currentNowcastFrame?.validtime, onNowcastChange]);
+    onNowcastChange?.(
+      nowcastEnabled && currentNowcastFrame
+        ? { frame: currentNowcastFrame, preloadFrames: nowcastPreloadFrames }
+        : null
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nowcastEnabled, currentNowcastFrame?.basetime, currentNowcastFrame?.validtime, nowcastPreloadKey, onNowcastChange]);
 
   /* ─────────────────────────────────────────────────────
      気象タブ「地点」モード — 現在地(GPS)または登録地点(1件のみ)の天気予報。
@@ -16687,6 +16753,15 @@ export default function App() {
   // 雨雲レーダーがON中の現在の時刻コマ({basetime, validtime})。BottomDock側から
   // 伝わってくる。OFFの間・未読込の間はnull。
   const [nowcastFrame, setNowcastFrame] = useState(null);
+  // 前後の先読み対象コマ(コマ切り替え時に一瞬レーダーが消えないよう、地図側で
+  // バックグラウンドにタイルを読み込んでおくために使う)。
+  const [nowcastPreloadFrames, setNowcastPreloadFrames] = useState([]);
+  // BottomDock側のonNowcastChangeは{frame, preloadFrames} | nullを渡してくる。
+  // 2つのstateへ振り分ける。
+  const handleNowcastChange = useCallback((payload) => {
+    setNowcastFrame(payload ? payload.frame : null);
+    setNowcastPreloadFrames(payload ? payload.preloadFrames : []);
+  }, []);
   // 現在進行形で有効な(解除されていない)津波情報があるかどうか。潮位観測点
   // マスタの取得トリガー・自動表示の判定の両方で使う軽量な判定。
   const hasActiveTsunami = effectiveTsunamis.some(t => !t.cancelled);
@@ -17714,6 +17789,7 @@ export default function App() {
           currentLocationPoint={currentLocationPoint}
           nowcastVisible={!!nowcastFrame}
           nowcastFrame={nowcastFrame}
+          nowcastPreloadFrames={nowcastPreloadFrames}
           nowcastColorSchemeId={nowcastColorScheme}
           stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
@@ -17983,7 +18059,7 @@ export default function App() {
                   onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
                   onTsunamiViewModeChange={setTsunamiViewModeTop}
                   onCurrentLocationChange={setCurrentLocationPoint}
-                  onNowcastChange={setNowcastFrame}
+                  onNowcastChange={handleNowcastChange}
                   tideStations={tideStationsWithGrade}
                   tideStationsStatus={tideStationsStatus}
                   selectedTideStationCode={selectedTideStationCode}
@@ -18080,7 +18156,7 @@ export default function App() {
               onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
               onTsunamiViewModeChange={setTsunamiViewModeTop}
               onCurrentLocationChange={setCurrentLocationPoint}
-                  onNowcastChange={setNowcastFrame}
+                  onNowcastChange={handleNowcastChange}
               tideStations={tideStationsWithGrade}
               tideStationsStatus={tideStationsStatus}
               selectedTideStationCode={selectedTideStationCode}
