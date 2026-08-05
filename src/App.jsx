@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.9i";
+const APP_VERSION = "1.5.9j";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -269,6 +269,49 @@ function Filters() {
                                  0    1    0    0   0
                                  0    0    1    0  -0.004
                                  0    0    0    1   0"/>
+        </filter>
+
+        {/* ── 天気アイコンの縁取り ────────────────────────────
+            JMAのアイコンは縁のアンチエイリアス・内部の陰影(雲の影/太陽の
+            グロー)にかなり広めの半透明のグラデーションを使っており、
+            drop-shadowを何重にも重ねる方式だとその半透明部分にまで縁取り色が
+            透けてアイコン全体が暗く/ぼやけて見えてしまう。
+            そこで、アルファをfeComponentTransferで一度2値化(0.5でスパッと
+            切る)してから1pxだけ膨張させ、その「本当の輪郭のすぐ外側」だけに
+            色を乗せることで、内部の半透明な陰影部分を巻き込まない、細く
+            くっきりした縁取りにする。 */}
+        <filter id="weather-icon-outline-dark" x="-20%" y="-20%" width="140%" height="140%"
+                colorInterpolationFilters="sRGB">
+          <feComponentTransfer in="SourceAlpha" result="binAlpha">
+            <feFuncA type="discrete" tableValues="0 1"/>
+          </feComponentTransfer>
+          <feMorphology in="binAlpha" operator="dilate" radius="1" result="dilated"/>
+          <feFlood floodColor="#fff" result="white"/>
+          <feComposite in="white" in2="dilated" operator="in" result="outline"/>
+          <feMerge>
+            <feMergeNode in="outline"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+        {/* ライトモード用: 縁は黒。加えて、内部の半透明な陰影部分(2値化で
+            「輪郭の外」扱いにならなかった、アイコン自体の本体部分)を白で
+            裏打ちしてから元の絵を重ねることで、影が暗く沈まず白っぽく
+            抜けるようにする。 */}
+        <filter id="weather-icon-outline-light" x="-20%" y="-20%" width="140%" height="140%"
+                colorInterpolationFilters="sRGB">
+          <feComponentTransfer in="SourceAlpha" result="binAlpha">
+            <feFuncA type="discrete" tableValues="0 1"/>
+          </feComponentTransfer>
+          <feMorphology in="binAlpha" operator="dilate" radius="1" result="dilated"/>
+          <feFlood floodColor="#000" result="black"/>
+          <feComposite in="black" in2="dilated" operator="in" result="outline"/>
+          <feFlood floodColor="#fff" result="white"/>
+          <feComposite in="white" in2="SourceAlpha" operator="in" result="whiteBacking"/>
+          <feMerge>
+            <feMergeNode in="outline"/>
+            <feMergeNode in="whiteBacking"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
         </filter>
 
       </defs>
@@ -11183,19 +11226,14 @@ function WeatherLocationPanel({
   const { tokens, mode } = useContext(ThemeContext);
   const isStandalonePwa = useIsStandalonePwa();
   const [rangeMode, setRangeMode] = useState("3day"); // "3day" | "week"
-  // 天気アイコンの輪郭線。以前は背景に不透明なチップを敷いて視認性を確保して
-  // いたが、代わりにアイコンの縁取りで対応する:ダークモードは白、ライトモード
-  // は黒の線をdrop-shadowで4方向に重ねて縁取りにする(アイコン自体はどんな
-  // 背景の上でもコントラストが出る)。
-  // JMAのアイコンには雲の陰影や太陽の縁のグローなど半透明部分が多く、
-  // drop-shadowは元のアルファをそのまま引き継ぐため、そのまま黒を敷くと
-  // アイコン内部の半透明な陰影部分にも黒が透けて全体が暗く見えてしまう。
-  // ライトモードはまず0オフセットの白いdrop-shadowをアイコンの真下(同じ位置)
-  // に敷いて陰影部分を先に白く裏打ちしてから、その上に1pxオフセットの黒い
-  // drop-shadowを4方向重ねて縁だけをはっきり黒くする。
+  // 天気アイコンの輪郭線。/Filters内のSVGフィルタ(weather-icon-outline-dark/
+  // -light)を使う。drop-shadowの重ね掛けだと、JMAアイコン内部の半透明な
+  // 陰影(雲の影・太陽のグロー)にまで縁取り色が透けて全体が暗く見えてしまって
+  // いたため、アルファを2値化してから膨張させる方式に切り替えた
+  // (ライトモードは縁を黒、陰影部分は白で裏打ち)。
   const weatherIconOutlineFilter = mode === "light"
-    ? "drop-shadow(0 0 0 #fff) drop-shadow(1px 0 0 #000) drop-shadow(-1px 0 0 #000) drop-shadow(0 1px 0 #000) drop-shadow(0 -1px 0 #000)"
-    : "drop-shadow(1px 0 0 rgba(255,255,255,0.5)) drop-shadow(-1px 0 0 rgba(255,255,255,0.5)) drop-shadow(0 1px 0 rgba(255,255,255,0.5)) drop-shadow(0 -1px 0 rgba(255,255,255,0.5))";
+    ? "url(#weather-icon-outline-light)"
+    : "url(#weather-icon-outline-dark)";
   // 地点登録(五十音ピッカー)を開いている間は、それ専用の画面をフルで表示する。
   if (kanaPickerOpen) {
     return (
