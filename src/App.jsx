@@ -906,7 +906,14 @@ async function loadNowcastFrames() {
   const [obsList, fcList] = await Promise.all([obsRes.json(), fcRes.json()]);
   // N1・N2とも新しい順(降順)で来るので、時系列順(昇順)に直してから連結する。
   const obsFrames = [...obsList].reverse().map(t => ({ basetime: t.basetime, validtime: t.validtime, kind: "obs" }));
-  const fcFrames = [...fcList].reverse().map(t => ({ basetime: t.basetime, validtime: t.validtime, kind: "forecast" }));
+  const fcFramesRaw = [...fcList].reverse().map(t => ({ basetime: t.basetime, validtime: t.validtime, kind: "forecast" }));
+  // N1(実況)の最新コマとN2(予測)の先頭コマは、境目の「現在時刻」を指す
+  // validtimeが一致することがある(予測は現在時刻を起点に60分先までを
+  // 含むため)。そのまま連結すると、スライダー上に同じ時刻の目盛りが
+  // 「実況」「予測」として2つ並んでしまう。実況側を正としてそちらを残し、
+  // 予測側にある重複コマは取り除く。
+  const obsValidtimes = new Set(obsFrames.map(f => f.validtime));
+  const fcFrames = fcFramesRaw.filter(f => !obsValidtimes.has(f.validtime));
   return [...obsFrames, ...fcFrames];
 }
 
