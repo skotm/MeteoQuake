@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.8j";
+const APP_VERSION = "1.5.9";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10788,7 +10788,7 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
           <div style={{
             position: "absolute", left: 7, right: 7, top: "50%",
             transform: "translateY(-50%)",
-            height: 10, pointerEvents: "none",
+            height: 22, pointerEvents: "none",
           }}>
             {frames.map((f, i) => {
               const pct = frames.length > 1 ? (i / (frames.length - 1)) * 100 : 0;
@@ -10801,7 +10801,7 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
                     position: "absolute", left: `${pct}%`, top: 0,
                     transform: "translateX(-50%)",
                     width: isNow ? 2 : 1,
-                    height: isNow ? 10 : isHour ? 8 : 5,
+                    height: isNow ? 22 : isHour ? 18 : 11,
                     borderRadius: 1,
                     background: isNow ? "#0A84FF" : `rgba(${tokens.ink},${isHour ? 0.35 : 0.16})`,
                   }}
