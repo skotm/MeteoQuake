@@ -10764,6 +10764,23 @@ function NowcastLegend() {
    ───────────────────────────────────────────────────── */
 function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
   const { tokens } = useContext(ThemeContext);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  // 自動再生。frames自体が変わった(=一覧が5分おきに取り直された)時や
+  // コマが無くなった時は再生を止める。onChangeFrameIndexは実体が
+  // useStateのsetterなので関数更新(prev => ...)を渡せる。
+  useEffect(() => {
+    if (!isPlaying || !frames || frames.length < 2) return;
+    const id = setInterval(() => {
+      onChangeFrameIndex(prev => ((prev ?? 0) + 1) % frames.length);
+    }, 700);
+    return () => clearInterval(id);
+  }, [isPlaying, frames, onChangeFrameIndex]);
+
+  useEffect(() => {
+    if (!frames || frames.length === 0) setIsPlaying(false);
+  }, [frames]);
+
   if (!frames || frames.length === 0) return null;
   const frame = frames[frameIndex] ?? frames[frames.length - 1];
   // 実況→予測の切り替わり(=「現在」)の位置。目盛りをここだけ目立たせる。
@@ -10774,9 +10791,36 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
       radius={14}
       style={{ flex: 1, minWidth: 0, animation: "appear 0.3s cubic-bezier(.25,1,.5,1)" }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px" }}>
+        <button
+          onClick={() => setIsPlaying(v => !v)}
+          aria-label={isPlaying ? "自動再生を止める" : "自動再生する"}
+          style={{
+            flexShrink: 0, width: 26, height: 26, borderRadius: 999,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            color: tokens.text, background: `rgba(${tokens.ink},0.08)`,
+          }}
+        >
+          {isPlaying ? (
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+              <rect x="5" y="4" width="5" height="16" rx="1.2"/>
+              <rect x="14" y="4" width="5" height="16" rx="1.2"/>
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+              <path d="M6 4.2c0-1 1.1-1.7 2-1.1l12 7.8c.8.5.8 1.7 0 2.2l-12 7.8c-.9.6-2-.1-2-1.1z"/>
+            </svg>
+          )}
+        </button>
+        {/* 数値ラベル。プロポーショナルフォントだと数字ごとにグリフ幅が違い
+            (「1」は「8」より細い等)、コマが変わるたびにこのラベルの実測幅が
+            微妙に変わってスライダー本体の長さがガタつく原因になっていたため、
+            tabular-numsで数字幅を揃え、かつ幅を固定してレイアウトに影響しない
+            ようにする。 */}
         <span style={{
-          fontSize: 12.5, fontWeight: 700, color: tokens.text, flexShrink: 0, whiteSpace: "nowrap",
+          fontSize: 12.5, fontWeight: 700, color: tokens.text, flexShrink: 0,
+          whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums",
+          width: 74, textAlign: "left",
         }}>
           {formatNowcastFrameLabel(frame)}
         </span>
