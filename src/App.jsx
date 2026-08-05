@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.9e";
+const APP_VERSION = "1.5.9f";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10053,7 +10053,7 @@ function BottomDock({
               position: "fixed",
               left: wideAnchorRect.right + 12,
               right: 16,
-              bottom: "calc(16px + env(safe-area-inset-bottom))",
+              bottom: 16, // サイドバー(SideNavRail)側のフローティングと同じ bottom:16 に揃える
               zIndex: 50,
             }}>
               <NowcastTimeSlider
@@ -10836,7 +10836,7 @@ function NowcastLegend() {
             <div
               key={i}
               style={{
-                width: SWATCH_WIDTH, height: 16,
+                width: SWATCH_WIDTH, height: 9,
                 borderRadius: i === 0 ? "2px 0 0 2px" : i === colors.length - 1 ? "0 2px 2px 0" : 0,
                 background: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`,
                 flexShrink: 0,
