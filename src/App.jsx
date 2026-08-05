@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.0";
+const APP_VERSION = "1.6.0a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -6407,79 +6407,129 @@ function weatherTelop(code) {
    クラスを構造的に回避できる。CORS等でcanvasの読み出しに失敗した
    場合(taint)は、縁取りなしの元画像URLへ静かにフォールバックする
    ため、最悪の場合でも「一部が欠けて見える」状態にはならない。 */
-const weatherIconBakeCache = new Map(); // key: `${url}|${mode}|${size}` -> Promise<dataURL|null>
+// SVGのルート要素にwidth/heightが明示されていない場合、viewBoxから補って
+// 埋め込む。これをやらないと、new Image()でSVGを読み込んだ際にブラウザが
+// 本来の縦横比を取得できず、CSS既定の代替サイズ(300×150、横長)にフォール
+// バックすることがあり、その状態で正方形canvasに描画すると意図せず縦に
+// 引き伸ばされてしまう(実際に発生した不具合)。
+function ensureSvgHasExplicitSize(svgText) {
+  const tagMatch = svgText.match(/<svg\b[^>]*>/i);
+  if (!tagMatch) return svgText;
+  const tag = tagMatch[0];
+  if (/\bwidth\s*=/.test(tag) && /\bheight\s*=/.test(tag)) return svgText;
+  const vb = tag.match(/viewBox\s*=\s*["']\s*[\d.\-]+\s+[\d.\-]+\s+([\d.\-]+)\s+([\d.\-]+)\s*["']/i);
+  if (!vb) return svgText;
+  const newTag = tag.replace(/<svg\b/i, `<svg width="${vb[1]}" height="${vb[2]}"`);
+  return svgText.slice(0, tagMatch.index) + newTag + svgText.slice(tagMatch.index + tag.length);
+}
 
-function bakeWeatherIconOutline(url, mode, size) {
-  const key = `${url}|${mode}|${size}`;
+function loadImageFromUrl(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("image load failed"));
+    img.src = src;
+  });
+}
+
+const weatherIconBakeCache = new Map(); // key: `${url}|${mode}|${longSidePx}` -> Promise<dataURL|null>
+
+// 天気アイコンに縁取りを焼き込む。
+// SVGを直接<img crossOrigin>で読み込むと、(1) JMA側のCORS状況次第で
+// canvasがtaintされて読み出せなかったり、(2) ブラウザが縦横比を正しく
+// 取得できず縦(または横)に伸びて描画されることがあったため、
+//   1. fetchでSVGの生テキストを取得(通常のGETなのでCORSに左右されにくい)
+//   2. viewBoxから縦横比を補って明示
+//   3. Blob URL化して読み込む(blob:はcanvasにとって同一オリジン扱いなので
+//      taintの心配がない)
+// という手順に変更した。どこかで失敗した場合は null を返し、呼び出し側で
+// 縁取りなしの元画像URLに静かにフォールバックする。
+async function bakeWeatherIconOutline(url, mode, longSidePx) {
+  const key = `${url}|${mode}|${longSidePx}`;
   if (weatherIconBakeCache.has(key)) return weatherIconBakeCache.get(key);
 
-  const promise = new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous"; // JMAはドメイン制限をかけていないため通る想定。失敗時はcatchでフォールバック。
-    img.onload = () => {
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = size;
-        canvas.height = size;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, size, size);
-        const src = ctx.getImageData(0, 0, size, size);
-        const n = size * size;
+  const promise = (async () => {
+    let blobUrl = null;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const rawSvgText = await res.text();
+      const svgText = ensureSvgHasExplicitSize(rawSvgText);
+      blobUrl = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml" }));
 
-        // アルファを2値化(閾値128)。元フィルタのfeComponentTransfer discreteに相当。
-        const alpha = new Uint8Array(n);
-        for (let i = 0; i < n; i++) alpha[i] = src.data[i * 4 + 3] >= 128 ? 1 : 0;
+      const img = await loadImageFromUrl(blobUrl);
+      const nw = img.naturalWidth || 100;
+      const nh = img.naturalHeight || 100;
+      const scale = longSidePx / Math.max(nw, nh);
+      const cw = Math.max(1, Math.round(nw * scale));
+      const ch = Math.max(1, Math.round(nh * scale));
 
-        // 8近傍で1px膨張。元フィルタのfeMorphology dilate radius=1に相当。
-        const dilated = new Uint8Array(n);
-        for (let y = 0; y < size; y++) {
-          for (let x = 0; x < size; x++) {
-            const idx = y * size + x;
-            if (alpha[idx]) { dilated[idx] = 1; continue; }
-            let on = false;
-            for (let dy = -1; dy <= 1 && !on; dy++) {
-              const ny = y + dy;
-              if (ny < 0 || ny >= size) continue;
-              for (let dx = -1; dx <= 1 && !on; dx++) {
-                const nx = x + dx;
-                if (nx < 0 || nx >= size) continue;
-                if (alpha[ny * size + nx]) on = true;
-              }
-            }
-            dilated[idx] = on ? 1 : 0;
-          }
-        }
+      const canvas = document.createElement("canvas");
+      canvas.width = cw;
+      canvas.height = ch;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, cw, ch); // 縦横比を保ったまま描画(引き伸ばしなし)
+      const src = ctx.getImageData(0, 0, cw, ch);
+      const n = cw * ch;
 
-        const out = ctx.createImageData(size, size);
-        for (let i = 0; i < n; i++) {
-          const o = i * 4;
-          const isBody = alpha[i] === 1;
-          const isOutline = !isBody && dilated[i] === 1;
-          if (isBody) {
-            // 本体部分はそのまま(ライトモードは白裏打ちしてから重ねるのと
-            // 実質同じ見た目になるよう、半透明部分もそのまま元の色を使う)。
-            out.data[o] = src.data[o];
-            out.data[o + 1] = src.data[o + 1];
-            out.data[o + 2] = src.data[o + 2];
-            out.data[o + 3] = src.data[o + 3];
-          } else if (isOutline) {
-            if (mode === "light") {
-              out.data[o] = 0; out.data[o + 1] = 0; out.data[o + 2] = 0; out.data[o + 3] = 255;
-            } else {
-              out.data[o] = 255; out.data[o + 1] = 255; out.data[o + 2] = 255; out.data[o + 3] = 255;
+      // 輪郭を膨張させるための「覆われている」判定は、ごく薄いアンチエイリアス
+      // ノイズだけ除外する低い閾値にする(以前の128という高い閾値だと、羽根状の
+      // 光条など細く薄いパーツがまるごと欠けて見える原因になっていた)。
+      const COVERAGE_THRESHOLD = 12;
+      const covered = new Uint8Array(n);
+      for (let i = 0; i < n; i++) covered[i] = src.data[i * 4 + 3] > COVERAGE_THRESHOLD ? 1 : 0;
+
+      // 膨張半径は、供給解像度(longSidePx)と表示時の縮小率に応じて、最終的に
+      // 画面上でおよそ1〜1.5px程度の縁取りに見えるよう供給側の解像度に比例させる。
+      const radius = Math.max(1, Math.round(scale * 0.35));
+      const dilated = new Uint8Array(n);
+      for (let y = 0; y < ch; y++) {
+        for (let x = 0; x < cw; x++) {
+          const idx = y * cw + x;
+          if (covered[idx]) { dilated[idx] = 1; continue; }
+          let on = false;
+          for (let dy = -radius; dy <= radius && !on; dy++) {
+            const ny = y + dy;
+            if (ny < 0 || ny >= ch) continue;
+            for (let dx = -radius; dx <= radius && !on; dx++) {
+              const nx = x + dx;
+              if (nx < 0 || nx >= cw) continue;
+              if (covered[ny * cw + nx]) on = true;
             }
           }
-          // それ以外(輪郭の外側)は透明のまま(初期値0)。
+          dilated[idx] = on ? 1 : 0;
         }
-        ctx.putImageData(out, 0, 0);
-        resolve(canvas.toDataURL("image/png"));
-      } catch (e) {
-        resolve(null); // CORSでcanvasがtaintされた場合など。元画像にフォールバック。
       }
-    };
-    img.onerror = () => resolve(null);
-    img.src = url;
-  });
+
+      const out = ctx.createImageData(cw, ch);
+      for (let i = 0; i < n; i++) {
+        const o = i * 4;
+        const a = src.data[o + 3];
+        if (a > 0) {
+          // 元画像にごくわずかでも不透明度があるピクセルはそのまま描画する
+          // (2値化して切り捨てない。これにより薄いグラデーション部分や
+          // 細い接続部分が消えて見える「欠け」を防ぐ)。
+          out.data[o] = src.data[o];
+          out.data[o + 1] = src.data[o + 1];
+          out.data[o + 2] = src.data[o + 2];
+          out.data[o + 3] = a;
+        } else if (dilated[i]) {
+          if (mode === "light") {
+            out.data[o] = 0; out.data[o + 1] = 0; out.data[o + 2] = 0; out.data[o + 3] = 255;
+          } else {
+            out.data[o] = 255; out.data[o + 1] = 255; out.data[o + 2] = 255; out.data[o + 3] = 255;
+          }
+        }
+        // それ以外(輪郭の外側)は透明のまま(初期値0)。
+      }
+      ctx.putImageData(out, 0, 0);
+      return canvas.toDataURL("image/png");
+    } catch (e) {
+      return null; // fetch失敗・パース失敗等。元画像にフォールバック。
+    } finally {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    }
+  })();
 
   weatherIconBakeCache.set(key, promise);
   return promise;
@@ -6490,19 +6540,32 @@ function bakeWeatherIconOutline(url, mode, size) {
 function WeatherIcon({ code, size = 68, alt = "", style }) {
   const { mode } = useContext(ThemeContext);
   const url = weatherIconUrl(code);
-  const bakeSize = Math.max(Math.round(size * 2), 96); // 高解像度で焼き込み、CSSで縮小表示してギザつきを抑える
+  // 表示サイズの4倍で焼き込み、縮小表示してギザつきを抑える(縁取りの
+  // 太さはbakeWeatherIconOutline内でこの倍率に応じて自動調整される)。
+  const longSidePx = Math.max(Math.round(size * 4), 160);
   const [dataUrl, setDataUrl] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     setDataUrl(null);
-    bakeWeatherIconOutline(url, mode, bakeSize).then((d) => {
+    bakeWeatherIconOutline(url, mode, longSidePx).then((d) => {
       if (!cancelled) setDataUrl(d);
     });
     return () => { cancelled = true; };
-  }, [url, mode, bakeSize]);
+  }, [url, mode, longSidePx]);
 
-  return <img src={dataUrl || url} alt={alt} width={size} height={size} style={style} />;
+  // objectFit: "contain" は保険。焼き込みは常に元の縦横比を保って行われる
+  // ため通常は引き伸ばされないが、万一縦横比が正方形からずれるアイコンが
+  // あっても、表示側で潰れたり伸びたりしないようにしておく。
+  return (
+    <img
+      src={dataUrl || url}
+      alt={alt}
+      width={size}
+      height={size}
+      style={{ objectFit: "contain", ...style }}
+    />
+  );
 }
 // 地域時系列予報(VPFD)は天気をweatherCodesではなく「くもり」「雨」のような短い
 // テキストでしか返さない。3時間ごとの1コマにつき単一の天気語(「時々」「後」の
