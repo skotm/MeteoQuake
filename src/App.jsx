@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.5.9a";
+const APP_VERSION = "1.5.9c";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1234,6 +1234,8 @@ function MapCanvas({
   nowcastFrame = null,         // { basetime, validtime } | null。表示中の時刻コマ
   nowcastPreloadFrames = [],   // 前後の先読み対象コマ({basetime,validtime}の配列)。
                                 // タイルをバックグラウンドで読み込んでおき、切り替え時に一瞬消えるのを防ぐ
+  nowcastKnownValidtimes = [], // 実況+予測の現在の全validtime一覧。この一覧に無くなった
+                                // (=特に予測コマで一覧更新のたびに起きる)キャッシュ済みレイヤーの掃除に使う
   nowcastColorSchemeId = "jma", // 雨雲レーダーの配色スキームID
 }) {
   const containerRef = useRef(null);
@@ -2350,9 +2352,12 @@ function MapCanvas({
   // これで「表示に使う前からバックグラウンドでタイルを読み込んでおく」先読みになる。
   // コマが切り替わった時は、既存レイヤーのopacityを差し替えるだけで済むので
   // (先読み済みなら)一瞬レーダーが消える瞬間が無くなる。
-  // コマ(validtime)ごとに専用のsource/layerを持たせ、先読み範囲から外れた
-  // ものだけ都度removeする。
+  // コマ(validtime)ごとに専用のsource/layerを持たせ、一度読み込んだコマは
+  // (配色スキームを変えない限り)ずっとキャッシュしておく。ただし予測コマは
+  // 5分おきの一覧更新のたびにほぼ総入れ替えになるので、nowcastKnownValidtimes
+  // に無くなったコマだけは都度削除する(でないとキャッシュが際限なく増え続ける)。
   const nowcastPreloadKey = nowcastPreloadFrames.map(f => f.validtime).join(",");
+  const nowcastKnownValidtimesKey = nowcastKnownValidtimes.join(",");
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
@@ -2375,21 +2380,27 @@ function MapCanvas({
 
     const wantedFrames = [nowcastFrame, ...nowcastPreloadFrames];
     const keyOf = (f) => `${nowcastColorSchemeId}-${f.validtime}`;
-    const wantedKeys = new Set(wantedFrames.map(keyOf));
+    const knownValidtimeSet = new Set(nowcastKnownValidtimes);
 
-    // 先読み範囲(配色切り替え含む)から外れたレイヤー・ソースを削除。
+    // 一度読み込んだコマはそのまま(opacity:0で)残しておき、後で戻ってきた時に
+    // 再取得・再デコードしなくて済むようにする。削除するのは、(1)配色スキームが
+    // 変わって別物になったもの、(2)実況/予測の一覧更新でもう存在しなくなったコマ
+    // (特に予測コマは「今から60分先まで」を毎回丸ごと再計算するので、5分おきの
+    // 更新のたびにほぼ総入れ替えになる)の2種類だけ。
     // ソースはレイヤーから参照されている間は削除できないので、必ずレイヤー→ソースの順で消す。
     const style = map.getStyle();
     if (style) {
       (style.layers || []).forEach(l => {
-        if (l.id.startsWith("nowcast-layer-") && !wantedKeys.has(l.id.slice("nowcast-layer-".length))) {
-          map.removeLayer(l.id);
-        }
+        if (!l.id.startsWith("nowcast-layer-")) return;
+        const [scheme, validtime] = l.id.slice("nowcast-layer-".length).split("-");
+        const stale = scheme !== nowcastColorSchemeId || !knownValidtimeSet.has(validtime);
+        if (stale) map.removeLayer(l.id);
       });
       Object.keys(style.sources || {}).forEach(srcId => {
-        if (srcId.startsWith("nowcast-src-") && !wantedKeys.has(srcId.slice("nowcast-src-".length))) {
-          map.removeSource(srcId);
-        }
+        if (!srcId.startsWith("nowcast-src-")) return;
+        const [scheme, validtime] = srcId.slice("nowcast-src-".length).split("-");
+        const stale = scheme !== nowcastColorSchemeId || !knownValidtimeSet.has(validtime);
+        if (stale) map.removeSource(srcId);
       });
     }
 
@@ -2397,11 +2408,25 @@ function MapCanvas({
     // 震度分布・各種マーカーの上に雨雲がかぶらないようにする。
     const beforeId = map.getLayer("areas-intensity-fill") ? "areas-intensity-fill" : undefined;
 
-    // 必要なレイヤー・ソースを用意(無ければ追加)し、表示中のコマだけopacityを上げる。
+    // 既にキャッシュ済み(=前に一度でも表示したことがある)レイヤーは、現在のコマだけ
+    // 不透明にし、それ以外は透明に戻す。ここで既存レイヤーのopacityを直接切り替える
+    // ことで、先読み・キャッシュ済みのコマへはremoveLayer/addLayerを介さず瞬時に切り替わる。
+    const currentKey = keyOf(nowcastFrame);
+    if (style) {
+      (style.layers || []).forEach(l => {
+        if (!l.id.startsWith("nowcast-layer-")) return;
+        const key = l.id.slice("nowcast-layer-".length);
+        if (!key.startsWith(`${nowcastColorSchemeId}-`)) return;
+        map.setPaintProperty(l.id, "raster-opacity", key === currentKey ? 0.75 : 0);
+      });
+    }
+
+    // 先読み対象コマ(まだキャッシュに無いもの)だけ、新たにsource/layerを追加する。
     wantedFrames.forEach(f => {
       const key = keyOf(f);
       const srcId = `nowcast-src-${key}`;
       const layerId = `nowcast-layer-${key}`;
+      if (map.getSource(srcId) && map.getLayer(layerId)) return; // キャッシュ済み(上のループで処理済み)
       if (!map.getSource(srcId)) {
         map.addSource(srcId, {
           type: "raster",
@@ -2418,17 +2443,17 @@ function MapCanvas({
           id: layerId,
           type: "raster",
           source: srcId,
-          paint: { "raster-opacity": 0 },
+          paint: { "raster-opacity": key === currentKey ? 0.75 : 0 },
         }, beforeId);
       }
-      const isCurrent = f.validtime === nowcastFrame.validtime;
-      map.setPaintProperty(layerId, "raster-opacity", isCurrent ? 0.75 : 0);
     });
-
-    return () => {
-      removeAllNowcastLayers();
-    };
-  }, [nowcastVisible, nowcastFrame?.basetime, nowcastFrame?.validtime, nowcastColorSchemeId, status, nowcastPreloadKey]);
+    // このeffectは既存レイヤーのopacity書き換え・不足分の追加だけで完結しており、
+    // 依存配列の値が変わるたびに(=コマが変わるたびに)全部作り直す必要は無いので、
+    // ここではクリーンアップ関数を返さない(返すとコマが変わるたびにキャッシュが
+    // 消えてしまい、先読み・キャッシュの意味が無くなる)。OFF時の後片付けは上の
+    // 早期returnブランチで、マウント解除時の後片付けは地図本体の破棄(map.remove())
+    // で行われる。
+  }, [nowcastVisible, nowcastFrame?.basetime, nowcastFrame?.validtime, nowcastColorSchemeId, status, nowcastPreloadKey, nowcastKnownValidtimesKey]);
 
   // 推計震度分布(気象庁 estimated_intensity_map)を更新する。
   // 選択中の地震・設定トグルが変わるたびに、画像を取得・ピクセル解析してGeoJSONに変換し、
@@ -8664,11 +8689,20 @@ function BottomDock({
   useEffect(() => {
     onNowcastChange?.(
       nowcastEnabled && currentNowcastFrame
-        ? { frame: currentNowcastFrame, preloadFrames: nowcastPreloadFrames }
+        ? {
+            frame: currentNowcastFrame,
+            preloadFrames: nowcastPreloadFrames,
+            // 実況+予測の全validtime。予測コマは5分おきの一覧更新のたびに
+            // (「今から60分先まで」で毎回ほぼ丸ごと)入れ替わるため、地図側の
+            // キャッシュにこの一覧を渡して、もう存在しない予測コマのレイヤーを
+            // 掃除できるようにする(でないと予測コマのキャッシュが更新のたびに
+            // 溜まり続けてしまう)。
+            knownValidtimes: nowcastFrames.map(f => f.validtime),
+          }
         : null
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nowcastEnabled, currentNowcastFrame?.basetime, currentNowcastFrame?.validtime, nowcastPreloadKey, onNowcastChange]);
+  }, [nowcastEnabled, currentNowcastFrame?.basetime, currentNowcastFrame?.validtime, nowcastPreloadKey, nowcastFrames, onNowcastChange]);
 
   /* ─────────────────────────────────────────────────────
      気象タブ「地点」モード — 現在地(GPS)または登録地点(1件のみ)の天気予報。
@@ -16756,11 +16790,16 @@ export default function App() {
   // 前後の先読み対象コマ(コマ切り替え時に一瞬レーダーが消えないよう、地図側で
   // バックグラウンドにタイルを読み込んでおくために使う)。
   const [nowcastPreloadFrames, setNowcastPreloadFrames] = useState([]);
-  // BottomDock側のonNowcastChangeは{frame, preloadFrames} | nullを渡してくる。
-  // 2つのstateへ振り分ける。
+  // 実況+予測の全validtime一覧(5分おきに更新される)。地図側のキャッシュのうち、
+  // もうどのコマにも該当しなくなった(=特に予測コマは更新のたびにほぼ丸ごと
+  // 入れ替わる)ものを掃除するために使う。
+  const [nowcastKnownValidtimes, setNowcastKnownValidtimes] = useState([]);
+  // BottomDock側のonNowcastChangeは{frame, preloadFrames, knownValidtimes} | nullを渡してくる。
+  // 3つのstateへ振り分ける。
   const handleNowcastChange = useCallback((payload) => {
     setNowcastFrame(payload ? payload.frame : null);
     setNowcastPreloadFrames(payload ? payload.preloadFrames : []);
+    setNowcastKnownValidtimes(payload ? payload.knownValidtimes : []);
   }, []);
   // 現在進行形で有効な(解除されていない)津波情報があるかどうか。潮位観測点
   // マスタの取得トリガー・自動表示の判定の両方で使う軽量な判定。
@@ -17790,6 +17829,7 @@ export default function App() {
           nowcastVisible={!!nowcastFrame}
           nowcastFrame={nowcastFrame}
           nowcastPreloadFrames={nowcastPreloadFrames}
+          nowcastKnownValidtimes={nowcastKnownValidtimes}
           nowcastColorSchemeId={nowcastColorScheme}
           stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
