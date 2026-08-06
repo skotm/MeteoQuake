@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.0b";
+const APP_VERSION = "1.6.0c";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -6499,23 +6499,53 @@ async function bakeWeatherIconOutline(url, mode, longSidePx, displaySize) {
       const bakeToDisplayScale = longSidePx / Math.max(displaySize, 1);
       const OUTLINE_THICKNESS_CSS_PX = 2;
       const radius = Math.max(2, Math.round(bakeToDisplayScale * OUTLINE_THICKNESS_CSS_PX));
-      const dilated = new Uint8Array(n);
-      for (let y = 0; y < ch; y++) {
+
+      // 以前は「±radius四方の正方形の中にcoveredが1つでもあれば膨張」という
+      // 単純な判定だったため、縁の形が正方形カーネルの影響でカクカク・
+      // ギザギザして見えていた。ここではchamfer距離変換(3x3近傍を2パスで
+      // 走査する近似ユークリッド距離)で「最寄りの覆われたピクセルまでの
+      // 距離」を滑らかに求め、半径ちょうどで急に切るのではなく境界付近だけ
+      // アルファをなだらかに変化させる(フェザリング)ことで、縁を丸く
+      // なめらかに見せる。
+      const INF = 1e9;
+      const dist = new Float32Array(n);
+      for (let i = 0; i < n; i++) dist[i] = covered[i] ? 0 : INF;
+      const D1 = 1, D2 = Math.SQRT2;
+      for (let y = 0; y < ch; y++) { // 順方向パス(左上→右下)
         for (let x = 0; x < cw; x++) {
           const idx = y * cw + x;
-          if (covered[idx]) { dilated[idx] = 1; continue; }
-          let on = false;
-          for (let dy = -radius; dy <= radius && !on; dy++) {
-            const ny = y + dy;
-            if (ny < 0 || ny >= ch) continue;
-            for (let dx = -radius; dx <= radius && !on; dx++) {
-              const nx = x + dx;
-              if (nx < 0 || nx >= cw) continue;
-              if (covered[ny * cw + nx]) on = true;
-            }
+          let d = dist[idx];
+          if (x > 0) d = Math.min(d, dist[idx - 1] + D1);
+          if (y > 0) {
+            const up = idx - cw;
+            d = Math.min(d, dist[up] + D1);
+            if (x > 0) d = Math.min(d, dist[up - 1] + D2);
+            if (x < cw - 1) d = Math.min(d, dist[up + 1] + D2);
           }
-          dilated[idx] = on ? 1 : 0;
+          dist[idx] = d;
         }
+      }
+      for (let y = ch - 1; y >= 0; y--) { // 逆方向パス(右下→左上)
+        for (let x = cw - 1; x >= 0; x--) {
+          const idx = y * cw + x;
+          let d = dist[idx];
+          if (x < cw - 1) d = Math.min(d, dist[idx + 1] + D1);
+          if (y < ch - 1) {
+            const down = idx + cw;
+            d = Math.min(d, dist[down] + D1);
+            if (x < cw - 1) d = Math.min(d, dist[down + 1] + D2);
+            if (x > 0) d = Math.min(d, dist[down - 1] + D2);
+          }
+          dist[idx] = d;
+        }
+      }
+
+      const FEATHER = Math.max(1, bakeToDisplayScale * 1.1); // 表示上でおよそ1px幅のフェザリング
+      const ringAlpha = new Uint8ClampedArray(n);
+      for (let i = 0; i < n; i++) {
+        if (covered[i]) continue;
+        const t = (radius + FEATHER - dist[i]) / FEATHER; // radius以内=1、radius+FEATHER以遠=0、間はなだらか
+        ringAlpha[i] = Math.max(0, Math.min(1, t)) * 255;
       }
 
       const out = ctx.createImageData(cw, ch);
@@ -6530,11 +6560,11 @@ async function bakeWeatherIconOutline(url, mode, longSidePx, displaySize) {
           out.data[o + 1] = src.data[o + 1];
           out.data[o + 2] = src.data[o + 2];
           out.data[o + 3] = a;
-        } else if (dilated[i]) {
+        } else if (ringAlpha[i] > 0) {
           if (mode === "light") {
-            out.data[o] = 0; out.data[o + 1] = 0; out.data[o + 2] = 0; out.data[o + 3] = 255;
+            out.data[o] = 0; out.data[o + 1] = 0; out.data[o + 2] = 0; out.data[o + 3] = ringAlpha[i];
           } else {
-            out.data[o] = 255; out.data[o + 1] = 255; out.data[o + 2] = 255; out.data[o + 3] = 255;
+            out.data[o] = 255; out.data[o + 1] = 255; out.data[o + 2] = 255; out.data[o + 3] = ringAlpha[i];
           }
         }
         // それ以外(輪郭の外側)は透明のまま(初期値0)。
