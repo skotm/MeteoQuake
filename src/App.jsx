@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.2b";
+const APP_VERSION = "1.6.2c";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -18303,6 +18303,25 @@ export default function App() {
           </div>
         </div>
         */}
+
+        {/* フローティングのナビ(縦持ちのタブバー/横画面の縦レール)の下端より下は、
+            見た目上ナビの外側なのに地図の全画面キャンバスがそのまま裏に伸びている
+            ため、何もしないとそこをドラッグ/ピンチしても地図が反応してしまう。
+            中身の無い透明divを地図より上の重ね順に置くだけで、この帯の中の
+            ポインタ/タッチ操作を地図の手前で止められる(下のcanvasには一切届かない)。
+            縦持ち(!isWide)はタブバー自身のbottomオフセットと同じ式、横画面(isWide)
+            は縦レールのbottom:16と同じ16pxを高さにして、ナビの下端にぴったり合わせる。 */}
+        <div style={{
+          position: "absolute",
+          left: 0, right: 0, bottom: 0,
+          height: isWide
+            ? 16
+            : isStandalonePwa
+              ? "max(0px, calc(env(safe-area-inset-bottom) - 10px))"
+              : "calc(env(safe-area-inset-bottom) + 10px)",
+          zIndex: 35,
+          touchAction: "none",
+        }}/>
 
         {/* ボトムドック — ナビバーと地図レイヤーパネルをひとつのGlassに統合。
             レイヤーを開くと、このガラス自体の高さ・角丸が滑らかに変化し、
