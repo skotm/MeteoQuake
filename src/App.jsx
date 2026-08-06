@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.0d";
+const APP_VERSION = "1.6.0e";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -6271,25 +6271,30 @@ async function resolveForecastAreaFromMunicipalityCode(regioncode) {
 // のみ、全国のアメダス観測点から単純に最寄りを探すやり方にフォールバックする。
 // 気温を取る観測点(amedasCode)は、officeCodeが判明していればその予報区に属する
 // 観測点の中だけから最寄りを探す(そうしないと気温だけ隣県の観測点になりうるため)。
-async function resolveForecastLocation(lat, lon) {
+async function resolveForecastLocation(lat, lon, opts = {}) {
   let officeCode = null;
   let class10Code = null;
-  try {
-    const muni = await findMunicipalityAtPoint(lat, lon);
-    if (muni?.regioncode) {
-      const resolved = await resolveForecastAreaFromMunicipalityCode(muni.regioncode);
-      if (resolved) {
-        officeCode = resolved.officeCode;
-        class10Code = resolved.class10Code;
+  if (!opts.ignoreMunicipality) {
+    try {
+      const muni = await findMunicipalityAtPoint(lat, lon);
+      if (muni?.regioncode) {
+        const resolved = await resolveForecastAreaFromMunicipalityCode(muni.regioncode);
+        if (resolved) {
+          officeCode = resolved.officeCode;
+          class10Code = resolved.class10Code;
+        }
       }
+    } catch (err) {
+      console.error("市区町村境界からの予報エリア解決に失敗。距離ベースの推定にフォールバックします:", err);
     }
-  } catch (err) {
-    console.error("市区町村境界からの予報エリア解決に失敗。距離ベースの推定にフォールバックします:", err);
   }
 
   const [points, areaData] = await Promise.all([loadAmedasPoints(), loadForecastAreaData()]);
   const { index: areaIndex, byOffice } = areaData;
-  let candidateSet = officeCode ? new Set(byOffice[officeCode] || []) : null;
+  // area.jsonとforecast_area.jsonでコードの型(文字列/数値)が食い違っていても
+  // 一致判定できるよう、Setに入れる側・検索する側の両方を文字列に揃えておく
+  // (離島など特定の地域だけ突き合わせが崩れる不具合の予防策)。
+  let candidateSet = officeCode ? new Set((byOffice[officeCode] || []).map(String)) : null;
   // area.jsonとforecast_area.jsonでofficeコードの対応が取れず、絞り込んだ結果
   // 候補が1件も無い場合は、行政区分による解決自体を諦めて全国検索にフォールバック
   // する(「予報が全く出ない」よりは、多少不正確でも予報が出る方が良いため)。
@@ -6302,7 +6307,7 @@ async function resolveForecastLocation(lat, lon) {
   let best = null;
   let bestDist2 = Infinity;
   for (const pt of points) {
-    const isCandidate = candidateSet ? candidateSet.has(pt.code) : !!areaIndex[pt.code];
+    const isCandidate = candidateSet ? candidateSet.has(String(pt.code)) : !!areaIndex[pt.code];
     if (!isCandidate) continue;
     const d2 = fastDist2(lat, lon, pt.lat, pt.lon);
     if (d2 < bestDist2) {
@@ -6772,6 +6777,24 @@ function extractDailyForecasts(forecastJson, class10Code, amedasCode) {
 async function fetchCurrentLocationForecast(lat, lon) {
   const resolved = await resolveForecastLocation(lat, lon);
   if (!resolved) throw new Error("最寄りの予報地点を特定できませんでした");
+
+  let result;
+  try {
+    result = await fetchForecastForResolvedLocation(resolved);
+  } catch (err) {
+    // 市区町村の行政区分から解決したofficeCode/class10Codeで取得・解析できな
+    // かった場合(奄美市など、行政区分の階層とforecast.json側の区域コードの
+    // 対応がうまく取れない離島地域で起こりうる)、行政区分を無視して「単純に
+    // 一番近いアメダス観測点」から素直に求め直すフォールバックを1回だけ試す。
+    console.warn("行政区分ベースの予報取得に失敗。距離ベースの推定に切り替えます:", err);
+    const fallbackResolved = await resolveForecastLocation(lat, lon, { ignoreMunicipality: true });
+    if (!fallbackResolved) throw err;
+    result = await fetchForecastForResolvedLocation(fallbackResolved);
+  }
+  return result;
+}
+
+async function fetchForecastForResolvedLocation(resolved) {
   const res = await fetch(forecastDataUrl(resolved.officeCode));
   if (!res.ok) throw new Error(`天気予報の取得に失敗(HTTP ${res.status})`);
   const json = await res.json();
@@ -11569,8 +11592,23 @@ function WeatherLocationPanel({
     );
   } else if (forecastState.status === "error") {
     body = (
-      <div style={{ padding: "36px 18px", textAlign: "center", fontSize: 14, color: `rgba(${tokens.ink},0.6)` }}>
-        天気予報を取得できませんでした
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "30px 18px" }}>
+        <span style={{ fontSize: 14, color: `rgba(${tokens.ink},0.6)`, textAlign: "center", lineHeight: 1.6 }}>
+          天気予報を取得できませんでした
+        </span>
+        {weatherSourceMode === "registered" && (
+          // 登録地点の予報がどうしても取得できない場合(離島など)でも、
+          // ここで行き詰まらず別の地点を登録し直せるようにする。
+          <PressableButton
+            onClick={onOpenKanaPicker}
+            style={{
+              fontSize: 13.5, fontWeight: 600, color: "#fff",
+              padding: "9px 18px", borderRadius: 999, background: "#0A84FF",
+            }}
+          >
+            別の地点を登録
+          </PressableButton>
+        )}
       </div>
     );
   } else {
