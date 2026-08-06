@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, use
 import { createPortal } from "react-dom";
 
 /* ─────────────────────────────────────────────────────
-   APP VERSION 
+   APP VERSION
    バージョン表記のルール(vMAJOR.MINOR.PATCH):
    - PATCH(3つ目の数字)を更新のたびに1ずつ増やす
    - PATCHが10になったらMINOR(2つ目)を1増やし、PATCHは0に戻す
@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.3";
+const APP_VERSION = "1.6.3a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -921,6 +921,27 @@ function saveNowcastColorScheme(schemeId) {
   }
 }
 
+// 台風予報円の表示間隔(時間)。台風接近時は気象庁の予報が3時間おきに増えるため、
+// 「現在から○時間ごと」の予報円だけを間引いて表示する設定。初期値は12時間ごと。
+const TYPHOON_FORECAST_INTERVAL_STORAGE_KEY = "typhoonForecastIntervalHours";
+const TYPHOON_FORECAST_INTERVAL_VALID_HOURS = new Set([3, 6, 12, 24]);
+function loadStoredTyphoonForecastInterval() {
+  try {
+    const saved = Number(localStorage.getItem(TYPHOON_FORECAST_INTERVAL_STORAGE_KEY));
+    if (TYPHOON_FORECAST_INTERVAL_VALID_HOURS.has(saved)) return saved;
+  } catch (err) {
+    console.warn("台風予報円の表示間隔の設定を読み込めませんでした:", err);
+  }
+  return 12;
+}
+function saveTyphoonForecastInterval(hours) {
+  try {
+    localStorage.setItem(TYPHOON_FORECAST_INTERVAL_STORAGE_KEY, String(hours));
+  } catch (err) {
+    console.warn("台風予報円の表示間隔の設定を保存できませんでした:", err);
+  }
+}
+
 // ピクセルの色を、最も近いJMA元パレットの色に対応する変換先の色へ置き換える
 // (透明度はそのまま維持する)。JMAのタイルは基本的に固定色のパレット画像なので、
 // 単純なユークリッド距離での最近傍マッチングで十分な精度になる。
@@ -1148,9 +1169,12 @@ async function fetchTyphoonJsonOrNull(url) {
 
 // 気象庁「現在活動中の台風」一覧とその予報・実況を取得し、地図表示用GeoJSONと
 // 一覧パネル表示用のサマリー配列にまとめて返す。
+// forecastIntervalHours: 予報円を間引く間隔(時間)。台風接近時は気象庁の予報が
+// 3時間おきに増えるため、advancedHoursがこの倍数の予報円だけを表示する
+// (例: 12なら12,24,36...時間先だけ。3,6,9時間先などは間引かれる)。
 // 戻り値: { geojson: FeatureCollection, list: [{id,name,category,weakened,pressure,
 //           maxWind,maxGust,scale,intensity,speed,lon,lat}] }
-async function fetchTyphoonData() {
+async function fetchTyphoonData(forecastIntervalHours = 12) {
   const turf = await loadTurf();
   const features = [];
   const list = [];
@@ -1236,6 +1260,9 @@ async function fetchTyphoonData() {
       const forecastCircles = [];
       points.forEach(item => {
         if (item.advancedHours === 0 || !item.probabilityCircle?.radius) return;
+        // 「現在からN時間ごと」だけを表示する間引き。台風接近時に気象庁が
+        // 3時間おきの予報を追加しても、この倍数の時点だけ予報円を出す。
+        if (item.advancedHours % forecastIntervalHours !== 0) return;
         const fPos = parseJMACoord(item.center);
         const radiusKm = getJMATyphoonRadiusKm(item.probabilityCircle.radius);
         if (!fPos || !radiusKm) return;
@@ -9431,6 +9458,12 @@ function BottomDock({
   const [typhoonGeojson, setTyphoonGeojson] = useState(null);
   const [typhoonList, setTyphoonList] = useState([]);
   const [typhoonLoadError, setTyphoonLoadError] = useState(false);
+  // 予報円の表示間隔(時間)。設定タブ(気象カテゴリ)から変更でき、localStorageに保存する。
+  const [typhoonForecastIntervalHours, setTyphoonForecastIntervalHoursState] = useState(loadStoredTyphoonForecastInterval);
+  function handleChangeTyphoonForecastIntervalHours(hours) {
+    setTyphoonForecastIntervalHoursState(hours);
+    saveTyphoonForecastInterval(hours);
+  }
 
   useEffect(() => {
     if (!typhoonEnabled) {
@@ -9443,7 +9476,7 @@ function BottomDock({
     let timeoutId = null;
 
     const fetchAndApply = () => {
-      fetchTyphoonData()
+      fetchTyphoonData(typhoonForecastIntervalHours)
         .then(({ geojson, list }) => {
           if (cancelled) return;
           setTyphoonLoadError(false);
@@ -9469,7 +9502,8 @@ function BottomDock({
     fetchAndApply();
     scheduleNext();
     return () => { cancelled = true; if (timeoutId) clearTimeout(timeoutId); };
-  }, [typhoonEnabled]);
+  }, [typhoonEnabled, typhoonForecastIntervalHours]);
+
 
   useEffect(() => {
     onTyphoonChange?.(typhoonEnabled && typhoonGeojson ? typhoonGeojson : null);
@@ -11207,6 +11241,8 @@ function BottomDock({
                   onChangeColorScheme={onChangeQuakeColorScheme}
                   nowcastColorSchemeId={nowcastColorSchemeId}
                   onChangeNowcastColorScheme={onChangeNowcastColorScheme}
+                  typhoonForecastIntervalHours={typhoonForecastIntervalHours}
+                  onChangeTyphoonForecastIntervalHours={handleChangeTyphoonForecastIntervalHours}
                   estIntensityEnabled={estIntensityEnabled}
                   onChangeEstIntensityEnabled={onChangeEstIntensityEnabled}
                   areaFillEnabled={areaFillEnabled}
@@ -14676,6 +14712,7 @@ const SETTINGS_ITEMS = {
   ],
   weather: [
     { id: "nowcastColorScheme", label: "雨雲レーダー配色" },
+    { id: "typhoonForecastInterval", label: "台風予報円の表示間隔" },
   ],
 };
 
@@ -15548,8 +15585,50 @@ function NowcastColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
   );
 }
 
+// 台風予報円の表示間隔(3/6/12/24時間ごと)の選択画面。台風接近時、気象庁は
+// 3時間ごとに予報を出すため、全部表示すると予報円が密集して見づらくなる。
+// 「現在から○時間ごと」の予報円だけを間引いて表示するための設定で、初期値は12時間。
+const TYPHOON_FORECAST_INTERVAL_OPTIONS = [
+  { hours: 3,  label: "3時間ごと" },
+  { hours: 6,  label: "6時間ごと" },
+  { hours: 12, label: "12時間ごと" },
+  { hours: 24, label: "24時間ごと" },
+];
 
-// 震度観測点リストの表示方法(階層表示/一覧表示)の選択画面。震度配色ピッカーと同じ見た目のリスト。
+function TyphoonForecastIntervalSettings({ intervalHours, onChangeIntervalHours }) {
+  const { tokens } = useContext(ThemeContext);
+
+  return (
+    <SettingsCard>
+      {TYPHOON_FORECAST_INTERVAL_OPTIONS.map((opt, i) => {
+        const selected = intervalHours === opt.hours;
+        return (
+          <div key={opt.hours}>
+            {i > 0 && <SettingsCardDivider/>}
+            <PressableButton
+              onClick={() => onChangeIntervalHours(opt.hours)}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 12,
+                padding: "11px 12px",
+                background: selected ? `rgba(${tokens.ink},0.07)` : "transparent",
+                border: "none", cursor: "pointer", textAlign: "left",
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600, color: tokens.text, flex: 1 }}>
+                {opt.label}
+              </span>
+              {selected && (
+                <span style={{ fontSize: 13, color: `rgba(${tokens.ink},0.85)` }}>✓</span>
+              )}
+            </PressableButton>
+          </div>
+        );
+      })}
+    </SettingsCard>
+  );
+}
+
+
 // 下にプレビュー用のサンプルデータを添えて、選んだ表示方法がどう見えるかその場で分かるようにする。
 const STATION_DISPLAY_PREVIEW_SAMPLE = [
   { pref: "東京都",   city: "千代田区", addr: "千代田区大手町", intensityKey: "3" },
@@ -16083,6 +16162,7 @@ function BoundaryLineColorSettings({ boundaryLineColorId, onChangeBoundaryLineCo
 function SettingsBody({
   path, onNavigate, colorSchemeId, onChangeColorScheme,
   nowcastColorSchemeId, onChangeNowcastColorScheme,
+  typhoonForecastIntervalHours, onChangeTyphoonForecastIntervalHours,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
   faultsEnabled, onChangeFaultsEnabled,
@@ -16193,6 +16273,23 @@ function SettingsBody({
         <NowcastColorSchemeSettings
           colorSchemeId={nowcastColorSchemeId}
           onChangeColorScheme={onChangeNowcastColorScheme}
+        />
+      </>
+    );
+  }
+
+  // 台風予報円の表示間隔(気象カテゴリの項目)の中身
+  if (category === "weather" && leaf === "typhoonForecastInterval") {
+    return (
+      <>
+        <SettingsHeader title="台風予報円の表示間隔"/>
+        <div style={{ padding: "0 14px 10px", fontSize: 12, color: `rgba(${tokens.ink},0.5)` }}>
+          台風接近時は気象庁の予報が3時間おきに増えるため、予報円が密集しがちです。
+          「現在から○時間ごと」の予報円だけを間引いて表示します。
+        </div>
+        <TyphoonForecastIntervalSettings
+          intervalHours={typhoonForecastIntervalHours}
+          onChangeIntervalHours={onChangeTyphoonForecastIntervalHours}
         />
       </>
     );
