@@ -11566,11 +11566,12 @@ function WeatherLocationPanel({
             <div style={{
               width: 68, height: 68, borderRadius: 16, flexShrink: 0,
               display: "flex", alignItems: "center", justifyContent: "center",
+              marginLeft: 6,
             }}>
               <WeatherIcon code={f.weatherCode} size={68} alt=""/>
             </div>
           )}
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, marginLeft: 16 }}>
             <span style={{ fontSize: 19, fontWeight: 700, color: `rgba(${tokens.ink},0.92)` }}>{f.telop || "-"}</span>
             <span style={{ fontSize: 14, color: `rgba(${tokens.ink},0.7)` }}>
               {f.tempMax != null ? `${f.tempMax}°` : "--°"} / {f.tempMin != null ? `${f.tempMin}°` : "--°"}
