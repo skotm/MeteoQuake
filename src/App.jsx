@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, use
 import { createPortal } from "react-dom";
 
 /* ─────────────────────────────────────────────────────
-   APP VERSION 
+   APP VERSION
    バージョン表記のルール(vMAJOR.MINOR.PATCH):
    - PATCH(3つ目の数字)を更新のたびに1ずつ増やす
    - PATCHが10になったらMINOR(2つ目)を1増やし、PATCHは0に戻す
@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.3a";
+const APP_VERSION = "1.6.3b";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1080,9 +1080,32 @@ function getJMATyphoonRadiusKm(value) {
   if (typeof value === "number") return value / 1000;
   if (Array.isArray(value)) return getJMATyphoonRadiusKm(value[0]);
   if (typeof value === "object") {
+    // {km, nm}形式(気象庁specifications.jsonのprobabilityCircleRadius/stormWarning.range
+    // 等で使われる形。値は既にkm単位なのでそのまま返す)
+    if (typeof value.km === "number") return value.km;
     if (typeof value.radius === "number") return value.radius / 1000;
     if (typeof value.base === "number") return value.base / 1000;
     if (Array.isArray(value.base)) return getJMATyphoonRadiusKm(value.base[0]);
+  }
+  return null;
+}
+
+// forecast.json上の1予報点(item)から予報円の半径(km)を取り出す。
+// 以前は item.probabilityCircle.radius という決め打ちのキー名だけを見ていたが、
+// 実際の気象庁データではprobabilityCircleRadius(specifications.jsonと同じ{km,nm}形式)
+// など別名で入ってくるケースがあり、その場合常にnullになって予報円が
+// ひとつも描画されない不具合があった。そのため複数の候補キーを順に試す。
+function getForecastCircleRadiusKm(item) {
+  const candidates = [
+    item.probabilityCircle?.radius,
+    item.probabilityCircle,
+    item.probabilityCircleRadius,
+    item.circle?.radius,
+    item.circle,
+  ];
+  for (const candidate of candidates) {
+    const km = getJMATyphoonRadiusKm(candidate);
+    if (km) return km;
   }
   return null;
 }
@@ -1259,13 +1282,22 @@ async function fetchTyphoonData(forecastIntervalHours = 12) {
 
       const forecastCircles = [];
       points.forEach(item => {
-        if (item.advancedHours === 0 || !item.probabilityCircle?.radius) return;
+        if (item.advancedHours === 0) return;
         // 「現在からN時間ごと」だけを表示する間引き。台風接近時に気象庁が
         // 3時間おきの予報を追加しても、この倍数の時点だけ予報円を出す。
         if (item.advancedHours % forecastIntervalHours !== 0) return;
         const fPos = parseJMACoord(item.center);
-        const radiusKm = getJMATyphoonRadiusKm(item.probabilityCircle.radius);
-        if (!fPos || !radiusKm) return;
+        const radiusKm = getForecastCircleRadiusKm(item);
+        if (!fPos || !radiusKm) {
+          // 半径が取れなかった場合、原因調査用に生データのキー名だけをログに残す
+          // (実機での不具合調査用。設定タブ「詳細設定」→「ログ」で確認できる)
+          console.warn(
+            "台風予報円: 半径を取得できなかった予報点をスキップしました",
+            `advancedHours=${item.advancedHours}`,
+            `keys=${Object.keys(item).join(",")}`
+          );
+          return;
+        }
 
         const forecastLabel = formatTyphoonForecastTimeLabel(item.validtime?.JST || item.validtime?.UTC);
         const forecastSpec = specifications.find(spec => spec.advancedHours === item.advancedHours) || {};
