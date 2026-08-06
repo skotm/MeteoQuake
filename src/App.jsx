@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.2a";
+const APP_VERSION = "1.6.2b";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -8801,7 +8801,11 @@ function BottomDock({
   // 開閉状態。気象タブにいる間はいつでも出しておき、タブを離れたら閉じておく。
   const [weatherMenuOpen, setWeatherMenuOpen] = useState(true);
   useEffect(() => {
-    if (active !== "weather") setWeatherMenuOpen(false);
+    // 気象タブに入るたびに開いた状態にする(離れたら閉じる)。マウント時点の
+    // activeが最初から"weather"とは限らない(既定タブは別にある)ため、
+    // 初期値をtrueにしただけでは、このeffectが最初に走った時点で
+    // すぐfalseに上書きされてしまっていた。
+    setWeatherMenuOpen(active === "weather");
   }, [active]);
 
   /* ─────────────────────────────────────────────────────
@@ -11086,7 +11090,11 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
   if (!frames || frames.length === 0) return null;
   const frame = frames[frameIndex] ?? frames[frames.length - 1];
   // 実況→予測の切り替わり(=「現在」)の位置。目盛りをここだけ目立たせる。
-  const nowIndex = frames.findIndex(f => f.kind === "forecast");
+  // 「最初の予測コマ」ではなく「最後の実況コマ」を現在とする(予測コマは
+  // 現在より先の時刻なので、最初の予測コマを現在扱いにすると実際より
+  // 先のコマが「現在」として長く目立ってしまっていた)。
+  const firstForecastIndex = frames.findIndex(f => f.kind === "forecast");
+  const nowIndex = firstForecastIndex === -1 ? frames.length - 1 : Math.max(0, firstForecastIndex - 1);
   // 目盛りを長くする基準となる「現在時刻」。実況/予測の切り替わり位置の
   // validtimeを基準に、そこからプラマイ1時間ごと(60分刻み)のコマだけ
   // 長い目盛りにする(時計の正時ではなく、あくまで「現在」からの相対時間)。
@@ -11132,12 +11140,13 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
           {formatNowcastFrameLabel(frame)}
         </span>
         <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
-          {/* トラックとつまみのサイズをブラウザ既定に任せず16pxに固定している。
-              目盛り側の内側マージン(left/right)もこれと同じ8px(半径)に
+          {/* トラックとつまみのサイズをブラウザ既定に任せず固定している。
+              目盛り側の内側マージン(left/right)もつまみの半幅(5px)に
               揃えることで、各目盛りの位置とスライダーのつまみが実際にその
               値になったときの中心位置が常に一致するようにしている
               (既定のつまみサイズはブラウザ・OSごとにまちまちで、決め打ちの
-              マージンとズレることがあったため)。 */}
+              マージンとズレることがあったため)。つまみは目盛り線と馴染む
+              よう、丸ではなく角の取れた縦長の長方形にしている。 */}
           <style>{`
             .nowcast-range { -webkit-appearance: none; appearance: none; background: transparent; }
             .nowcast-range::-webkit-slider-runnable-track {
@@ -11145,24 +11154,24 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
             }
             .nowcast-range::-webkit-slider-thumb {
               -webkit-appearance: none; appearance: none;
-              width: 16px; height: 16px; border-radius: 50%;
-              background: #0A84FF; margin-top: -6px; cursor: pointer;
+              width: 10px; height: 26px; border-radius: 4px;
+              background: #0A84FF; margin-top: -11px; cursor: pointer;
             }
             .nowcast-range::-moz-range-track {
               height: 4px; border-radius: 2px; background: rgba(${tokens.ink},0.16);
             }
             .nowcast-range::-moz-range-thumb {
-              width: 16px; height: 16px; border-radius: 50%;
+              width: 10px; height: 26px; border-radius: 4px;
               background: #0A84FF; border: none; cursor: pointer;
             }
           `}</style>
-          {/* 目盛り — トラックに重ねて表示する。つまみの半径ぶん(左右8px)
+          {/* 目盛り — トラックに重ねて表示する。つまみの半幅ぶん(左右5px)
               内側に収め、つまみの中心と目盛りの位置がずれないように
               している。1コマごとに薄い目盛りを、「現在」からプラマイ1時間
               ごとのコマは少し濃く長い目盛りにし、実況→予測の切り替わり
               (現在そのもの)だけ青く目立たせる。 */}
           <div style={{
-            position: "absolute", left: 8, right: 8, top: "50%",
+            position: "absolute", left: 5, right: 5, top: "50%",
             transform: "translateY(-50%)",
             height: 22, pointerEvents: "none",
           }}>
