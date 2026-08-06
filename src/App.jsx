@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.1a";
+const APP_VERSION = "1.6.2";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -6406,51 +6406,152 @@ const WEATHER_CODE_INFO = {
   "426": { icon: "400", telop: "雪後みぞれ" }, "427": { icon: "400", telop: "雪一時みぞれ" },
   "450": { icon: "400", telop: "雪で雷を伴う" },
 };
-function weatherIconUrl(code) {
-  const info = WEATHER_CODE_INFO[String(code)];
-  return `https://www.jma.go.jp/bosai/forecast/img/${info ? info.icon : "200"}.svg`;
-}
 function weatherTelop(code) {
   const info = WEATHER_CODE_INFO[String(code)];
   return info ? info.telop : "不明";
 }
 
 /* ─────────────────────────────────────────────────────
-   天気アイコン表示用の共通コンポーネント。
+   天気アイコン(https://github.com/ciscorn/jma-weather-images, license: CC0)
 
-   以前はcanvasで縁取り(輪郭線)を焼き込む処理をしていたが、JMAのアイコンに
-   よっては細い斜線が何本も並ぶ構造のものがあり、縁取りのにじみがその隙間を
-   橋渡ししてつぶれた見た目になる不具合が解決しなかった。
-   縁取り処理そのものをやめ、代わりにアイコンの背後に半透明の明るいグレーの
-   円を敷くだけのシンプルな方式に変更した。これなら元のSVGを一切加工しない
-   ため、アイコン自体が欠けたり潰れたりすることは原理的に起こらない。
-   アイコンの大きさ(width/height)は変えず、背景円だけをその内側に敷く。 */
+   あのリポジトリは「基本アイコン(晴・くもり・雨…)+のちサイン」の少数の
+   部品画像を、weathercodeごとの指定(b=ベース, m=修飾子, t=対象)に従って
+   PILで合成し、weathercodeごとの画像を書き出す、という仕組みになっている
+   (generate.py参照)。
+   今回は事前に静止画として書き出す代わりに、同じ合成ロジックをそのまま
+   このコンポーネントに移植し、部品SVG(public/srcimgs_refs/に配置)を
+   CSSの絶対配置で重ねることでブラウザ側で合成する。これなら部品SVGを
+   1セット(16個程度)用意するだけで済み、weathercodeが増えても新しい
+   組み合わせを追加するだけでよい。
+
+   generate.pyの座標算出(WIDTH=260, HEIGHT=145のキャンバス基準)をそのまま
+   %に変換してある。ロジックの対応関係:
+   - make_one            → ICON_LAYOUT.single
+   - make_two (mod=="tr" のときの d=0 の大きめレイアウト)
+                         → ICON_LAYOUT.trTarget / trBase
+   - make_two (mod!="tr" のときの d=HEIGHT//8 の縮小・右上寄せレイアウト。
+     "st"/"te"だけでなく"trst"/"trte"もこちら側に入る点はgenerate.py通り)
+                         → ICON_LAYOUT.cornerTarget / cornerBase
+   - draw_modifier(mod=="tr"のときだけ、のち矢印を重ねる)
+                         → ICON_LAYOUT.trArrow
+   PILのcomposite()は後から描いた画像が上に乗るため、DOM上の描画順も
+   target→base→(のち矢印) の順にして同じ重なりにしている。 */
+
+// codes.json (ciscorn/jma-weather-images) から、このアプリが実際に使う
+// weathercodeの分だけ抜き出したもの。b=ベースアイコン、m=修飾子
+// (tr=のち, st=時々, te=一時, trst/trte=のち+時々/一時), t=対象アイコン。
+const WEATHER_ICON_SPEC = {
+  "100": { b: "sun" }, "101": { b: "sun", m: "st", t: "cloud" },
+  "102": { b: "sun", m: "te", t: "rain" }, "103": { b: "sun", m: "st", t: "rain" },
+  "104": { b: "sun", m: "te", t: "snow" }, "105": { b: "sun", m: "st", t: "snow" },
+  "106": { b: "sun", m: "te", t: "rain_or_snow" }, "107": { b: "sun", m: "st", t: "rain_or_snow" },
+  "108": { b: "sun", m: "te", t: "rain_thunder" }, "110": { b: "sun", m: "trst", t: "cloud" },
+  "111": { b: "sun", m: "tr", t: "cloud" }, "112": { b: "sun", m: "trst", t: "rain" },
+  "113": { b: "sun", m: "trte", t: "rain" }, "114": { b: "sun", m: "tr", t: "rain" },
+  "115": { b: "sun", m: "trte", t: "snow" }, "116": { b: "sun", m: "trst", t: "snow" },
+  "117": { b: "sun", m: "tr", t: "snow" }, "118": { b: "sun", m: "tr", t: "rain_or_snow" },
+  "119": { b: "sun", m: "tr", t: "rain_thunder" }, "120": { b: "sun", m: "te", t: "rain" },
+  "121": { b: "sun", m: "te", t: "rain" }, "122": { b: "sun", m: "te", t: "rain" },
+  "123": { b: "sun" }, "124": { b: "sun" },
+  "125": { b: "sun", m: "tr", t: "rain_thunder" }, "126": { b: "sun", m: "tr", t: "rain" },
+  "127": { b: "sun", m: "tr", t: "rain" }, "128": { b: "sun", m: "tr", t: "rain" },
+  "130": { b: "mist", m: "tr", t: "sun" }, "131": { b: "sun", m: "tr", t: "mist" },
+  "132": { b: "sun", m: "st", t: "cloud" }, "140": { b: "sun", m: "st", t: "rain_thunder" },
+  "160": { b: "sun", m: "te", t: "snow_or_rain" }, "170": { b: "sun", m: "st", t: "snow_or_rain" },
+  "181": { b: "sun", m: "tr", t: "snow_or_rain" },
+  "200": { b: "cloud" }, "201": { b: "cloud", m: "st", t: "sun" },
+  "202": { b: "cloud", m: "te", t: "rain" }, "204": { b: "cloud", m: "te", t: "snow" },
+  "209": { b: "mist" }, "210": { b: "cloud", m: "trst", t: "sun" },
+  "212": { b: "cloud", m: "trte", t: "rain" }, "215": { b: "cloud", m: "trte", t: "snow" },
+  "300": { b: "rain" }, "301": { b: "rain", m: "st", t: "sun" },
+  "302": { b: "rain", m: "st", t: "cloud" }, "303": { b: "rain", m: "st", t: "snow" },
+  "308": { b: "rain_wind" },
+  "311": { b: "rain", m: "tr", t: "sun" }, "313": { b: "rain", m: "tr", t: "cloud" },
+  "314": { b: "rain", m: "trst", t: "snow" },
+  "400": { b: "snow" }, "401": { b: "snow", m: "st", t: "sun" },
+  "402": { b: "snow", m: "st", t: "cloud" }, "403": { b: "snow", m: "st", t: "rain" },
+  "406": { b: "snow_wind" },
+  "411": { b: "snow", m: "tr", t: "sun" }, "413": { b: "snow", m: "tr", t: "cloud" },
+  "414": { b: "snow", m: "tr", t: "rain" },
+};
+
+// codes.jsonの意味的なキー(rain_or_snowなど)→実ファイル名。generate.pyの
+// BASE_IMAGESで複数のキーが同じ画像ファイルを指しているのに合わせてある。
+const WEATHER_ICON_FILE = {
+  sun: "sun", cloud: "cloud", rain: "rain", snow: "snow", mist: "mist",
+  rain_thunder: "rain_thunder", snow_thunder: "snow_thunder",
+  rain_heavy: "rain_heavy", snow_heavy: "snow_heavy",
+  rain_wind: "rain_wind", snow_wind: "snow_wind", rain_heavy_wind: "rain_heavy_wind",
+  rain_or_snow: "rain_and_snow", snow_or_rain: "rain_and_snow", rain_and_snow: "rain_and_snow",
+  night_fair: "fair_night", tr: "tr",
+};
+
+function weatherIconAssetUrl(name) {
+  const file = WEATHER_ICON_FILE[name] || name;
+  return `${import.meta.env.BASE_URL}srcimgs_refs/${file}.svg`;
+}
+
+// generate.pyのWIDTH=260, HEIGHT=145キャンバス上の座標・サイズを%に変換。
+const ICON_LAYOUT = {
+  single:       { left: (57 / 260) * 100, top: 0, width: (145 / 260) * 100, height: 100 },
+  trTarget:     { left: (115 / 260) * 100, top: 0, width: (145 / 260) * 100, height: 100 },
+  trBase:       { left: 0, top: 0, width: (145 / 260) * 100, height: 100 },
+  trArrow:      { left: (57 / 260) * 100, top: 0, width: (145 / 260) * 100, height: 100 },
+  cornerTarget: { left: (124 / 260) * 100, top: (18 / 145) * 100, width: (109 / 260) * 100, height: (109 / 145) * 100 },
+  cornerBase:   { left: (27 / 260) * 100, top: 0, width: (145 / 260) * 100, height: 100 },
+};
+
+function WeatherIconLayer({ name, layout }) {
+  if (!name) return null;
+  return (
+    <img
+      src={weatherIconAssetUrl(name)}
+      alt=""
+      style={{
+        position: "absolute",
+        left: `${layout.left}%`, top: `${layout.top}%`,
+        width: `${layout.width}%`, height: `${layout.height}%`,
+        objectFit: "contain",
+      }}
+    />
+  );
+}
+
+// WIDTH:HEIGHT = 260:145 のキャンバス比率(部品アイコンの配置がこの比率を
+// 前提にしているため、正方形に押し込めると位置がずれる)。
+const WEATHER_ICON_ASPECT = 260 / 145;
+
 function WeatherIcon({ code, size = 68, alt = "", style }) {
-  const url = weatherIconUrl(code);
-  // 背景円はアイコンよりわずかに小さくして、円の縁がアイコンの絵の外に
-  // はみ出て見えないようにする。
-  const circleSize = Math.round(size * 0.86);
+  const spec = WEATHER_ICON_SPEC[String(code)] || WEATHER_ICON_SPEC["200"];
+  const height = size;
+  const width = Math.round(size * WEATHER_ICON_ASPECT);
+
+  let content;
+  if (spec.t) {
+    // generate.pyのmake_two: mod=="tr"(完全一致)のときだけ「大きい二枚を
+    // 並べて、のち矢印を重ねる」レイアウトになり、st/te/trst/trteはすべて
+    // 「ベースを大きく、対象を右上に小さく」のレイアウトになる。
+    const isTr = spec.m === "tr";
+    const targetLayout = isTr ? ICON_LAYOUT.trTarget : ICON_LAYOUT.cornerTarget;
+    const baseLayout = isTr ? ICON_LAYOUT.trBase : ICON_LAYOUT.cornerBase;
+    content = (
+      <>
+        <WeatherIconLayer name={spec.t} layout={targetLayout} />
+        <WeatherIconLayer name={spec.b} layout={baseLayout} />
+        {isTr && <WeatherIconLayer name="tr" layout={ICON_LAYOUT.trArrow} />}
+      </>
+    );
+  } else {
+    content = <WeatherIconLayer name={spec.b} layout={ICON_LAYOUT.single} />;
+  }
+
   return (
     <div
-      style={{
-        position: "relative", width: size, height: size,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        flexShrink: 0,
-      }}
+      role="img"
+      aria-label={alt}
+      style={{ position: "relative", width, height, flexShrink: 0, ...style }}
     >
-      <div
-        style={{
-          position: "absolute", width: circleSize, height: circleSize,
-          borderRadius: "50%", background: "rgba(220,220,225,0.55)",
-        }}
-      />
-      <img
-        src={url}
-        alt={alt}
-        width={size}
-        height={size}
-        style={{ position: "relative", ...style }}
-      />
+      {content}
     </div>
   );
 }
