@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.0a";
+const APP_VERSION = "1.6.0b";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -6451,8 +6451,10 @@ const weatherIconBakeCache = new Map(); // key: `${url}|${mode}|${longSidePx}` -
 //      taintの心配がない)
 // という手順に変更した。どこかで失敗した場合は null を返し、呼び出し側で
 // 縁取りなしの元画像URLに静かにフォールバックする。
-async function bakeWeatherIconOutline(url, mode, longSidePx) {
-  const key = `${url}|${mode}|${longSidePx}`;
+// displaySize: 実際に画面上へ表示するCSSピクセルサイズ。膨張(縁取り)半径を
+// 「表示時に何px相当に見せたいか」から逆算するために必要(後述)。
+async function bakeWeatherIconOutline(url, mode, longSidePx, displaySize) {
+  const key = `${url}|${mode}|${longSidePx}|${displaySize}`;
   if (weatherIconBakeCache.has(key)) return weatherIconBakeCache.get(key);
 
   const promise = (async () => {
@@ -6467,9 +6469,9 @@ async function bakeWeatherIconOutline(url, mode, longSidePx) {
       const img = await loadImageFromUrl(blobUrl);
       const nw = img.naturalWidth || 100;
       const nh = img.naturalHeight || 100;
-      const scale = longSidePx / Math.max(nw, nh);
-      const cw = Math.max(1, Math.round(nw * scale));
-      const ch = Math.max(1, Math.round(nh * scale));
+      const svgToBakeScale = longSidePx / Math.max(nw, nh); // 元SVG座標→焼き込みcanvasの拡大率(キャンバスサイズ決定用)
+      const cw = Math.max(1, Math.round(nw * svgToBakeScale));
+      const ch = Math.max(1, Math.round(nh * svgToBakeScale));
 
       const canvas = document.createElement("canvas");
       canvas.width = cw;
@@ -6486,9 +6488,17 @@ async function bakeWeatherIconOutline(url, mode, longSidePx) {
       const covered = new Uint8Array(n);
       for (let i = 0; i < n; i++) covered[i] = src.data[i * 4 + 3] > COVERAGE_THRESHOLD ? 1 : 0;
 
-      // 膨張半径は、供給解像度(longSidePx)と表示時の縮小率に応じて、最終的に
-      // 画面上でおよそ1〜1.5px程度の縁取りに見えるよう供給側の解像度に比例させる。
-      const radius = Math.max(1, Math.round(scale * 0.35));
+      // 膨張半径は「焼き込みcanvasの解像度 ÷ 表示サイズ(=最終的にブラウザが
+      // 何倍に縮小するか)」を基準に決める必要がある。以前はsvgToBakeScale
+      // (元SVG自体の座標系→canvasの拡大率。JMAアイコンごとのviewBoxの数値に
+      // 左右され、表示上の縮小率とは無関係)を誤って使っていたため、アイコンに
+      // よって縁がほぼ消えるほど細くなってしまっていた(このバグの原因)。
+      // 表示縮小率(bakeToDisplayScale)に基づけば、太さは常に「表示上で
+      // 何pxに見えるか」で一定になる。太めが見やすいとのことなので、
+      // 表示CSSピクセル換算で約2px相当を狙う。
+      const bakeToDisplayScale = longSidePx / Math.max(displaySize, 1);
+      const OUTLINE_THICKNESS_CSS_PX = 2;
+      const radius = Math.max(2, Math.round(bakeToDisplayScale * OUTLINE_THICKNESS_CSS_PX));
       const dilated = new Uint8Array(n);
       for (let y = 0; y < ch; y++) {
         for (let x = 0; x < cw; x++) {
@@ -6555,7 +6565,7 @@ function WeatherIcon({ code, size = 68, alt = "", style }) {
   useEffect(() => {
     let cancelled = false;
     setDataUrl(null);
-    bakeWeatherIconOutline(url, mode, longSidePx).then((d) => {
+    bakeWeatherIconOutline(url, mode, longSidePx, size).then((d) => {
       if (!cancelled) setDataUrl(d);
     });
     return () => { cancelled = true; };
