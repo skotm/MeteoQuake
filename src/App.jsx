@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.2";
+const APP_VERSION = "1.6.2a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -8799,7 +8799,7 @@ function BottomDock({
 
   // 雨雲レーダー等のメニュー(右下に浮かぶ、展開式のフローティングボタン)の
   // 開閉状態。気象タブにいる間はいつでも出しておき、タブを離れたら閉じておく。
-  const [weatherMenuOpen, setWeatherMenuOpen] = useState(false);
+  const [weatherMenuOpen, setWeatherMenuOpen] = useState(true);
   useEffect(() => {
     if (active !== "weather") setWeatherMenuOpen(false);
   }, [active]);
@@ -11132,13 +11132,37 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
           {formatNowcastFrameLabel(frame)}
         </span>
         <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
-          {/* 目盛り — トラックに重ねて表示する。ネイティブのつまみ半径ぶん
-              (左右7px)内側に収め、つまみの中心と目盛りの位置がずれないように
+          {/* トラックとつまみのサイズをブラウザ既定に任せず16pxに固定している。
+              目盛り側の内側マージン(left/right)もこれと同じ8px(半径)に
+              揃えることで、各目盛りの位置とスライダーのつまみが実際にその
+              値になったときの中心位置が常に一致するようにしている
+              (既定のつまみサイズはブラウザ・OSごとにまちまちで、決め打ちの
+              マージンとズレることがあったため)。 */}
+          <style>{`
+            .nowcast-range { -webkit-appearance: none; appearance: none; background: transparent; }
+            .nowcast-range::-webkit-slider-runnable-track {
+              height: 4px; border-radius: 2px; background: rgba(${tokens.ink},0.16);
+            }
+            .nowcast-range::-webkit-slider-thumb {
+              -webkit-appearance: none; appearance: none;
+              width: 16px; height: 16px; border-radius: 50%;
+              background: #0A84FF; margin-top: -6px; cursor: pointer;
+            }
+            .nowcast-range::-moz-range-track {
+              height: 4px; border-radius: 2px; background: rgba(${tokens.ink},0.16);
+            }
+            .nowcast-range::-moz-range-thumb {
+              width: 16px; height: 16px; border-radius: 50%;
+              background: #0A84FF; border: none; cursor: pointer;
+            }
+          `}</style>
+          {/* 目盛り — トラックに重ねて表示する。つまみの半径ぶん(左右8px)
+              内側に収め、つまみの中心と目盛りの位置がずれないように
               している。1コマごとに薄い目盛りを、「現在」からプラマイ1時間
               ごとのコマは少し濃く長い目盛りにし、実況→予測の切り替わり
               (現在そのもの)だけ青く目立たせる。 */}
           <div style={{
-            position: "absolute", left: 7, right: 7, top: "50%",
+            position: "absolute", left: 8, right: 8, top: "50%",
             transform: "translateY(-50%)",
             height: 22, pointerEvents: "none",
           }}>
@@ -11164,13 +11188,14 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
             })}
           </div>
           <input
+            className="nowcast-range"
             type="range"
             min={0}
             max={frames.length - 1}
             step={1}
             value={frameIndex}
             onChange={(e) => onChangeFrameIndex(Number(e.target.value))}
-            style={{ position: "relative", display: "block", width: "100%", accentColor: "#0A84FF" }}
+            style={{ position: "relative", display: "block", width: "100%" }}
           />
         </div>
       </div>
@@ -18048,7 +18073,7 @@ export default function App() {
         <MapCanvas
           onReady={setMap}
           currentLocationPoint={currentLocationPoint}
-          nowcastVisible={!!nowcastFrame}
+          nowcastVisible={activeNav === "weather" && !!nowcastFrame}
           nowcastFrame={nowcastFrame}
           nowcastPreloadFrames={nowcastPreloadFrames}
           nowcastKnownValidtimes={nowcastKnownValidtimes}
@@ -18244,7 +18269,7 @@ export default function App() {
 
         {/* 雨雲レーダー凡例 — レーダーレイヤーを表示している間だけ、画面右上に浮かぶ
             (震度凡例・津波凡例と対の構成)。 */}
-        {nowcastFrame && (
+        {activeNav === "weather" && nowcastFrame && (
           <div style={{
             position: "absolute",
             top: "calc(16px + env(safe-area-inset-top))",
