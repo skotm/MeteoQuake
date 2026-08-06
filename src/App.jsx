@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useContext, createContext, forwardRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 
-/* ───────────────────────────────────────────────────── 
+/* ─────────────────────────────────────────────────────
    APP VERSION
    バージョン表記のルール(vMAJOR.MINOR.PATCH):
    - PATCH(3つ目の数字)を更新のたびに1ずつ増やす
@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.2c";
+const APP_VERSION = "1.6.3";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -606,6 +606,28 @@ function GlobalStyles({ tokens = THEME_TOKENS.dark }) {
 
       .mono { font-variant-numeric: tabular-nums; }
 
+      /* 台風の予報円の横に出す時刻ラベル(maplibregl.Marker) */
+      .typhoon-forecast-time-marker {
+        display: flex; align-items: center; gap: 4px;
+        padding: 3px 7px;
+        font-size: 11px; font-weight: 600; white-space: nowrap;
+        color: #fff;
+        background: rgba(28,28,30,0.72);
+        border: 1px solid rgba(255,255,255,0.25);
+        border-radius: 8px;
+        pointer-events: auto;
+        cursor: pointer;
+        -webkit-backdrop-filter: blur(6px);
+        backdrop-filter: blur(6px);
+      }
+      .typhoon-forecast-class-badge {
+        padding: 1px 5px;
+        font-size: 9px; font-weight: 700;
+        color: #1c1c1e;
+        background: #9AA0A6;
+        border-radius: 5px;
+      }
+
       @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after {
           animation-duration: 0.01ms !important;
@@ -650,6 +672,36 @@ function loadMapLibre() {
   });
 
   return maplibreLoadPromise;
+}
+
+/* ─────────────────────────────────────────────────────
+   TURF.JS LOADER
+   CDNからturf.js本体を動的読み込みする(maplibre-glと同じ理由でnpm importできない)。
+   台風レイヤーの幾何計算(暴風域の円・警戒領域ポリゴンの結合など)にのみ使うため、
+   台風情報がONになった時点で初めて読み込む(使わない利用者には一切通信させない)。
+   ───────────────────────────────────────────────────── */
+const TURF_JS = "https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js";
+
+let turfLoadPromise = null;
+function loadTurf() {
+  if (window.turf) return Promise.resolve(window.turf);
+  if (turfLoadPromise) return turfLoadPromise;
+
+  turfLoadPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${TURF_JS}"]`);
+    if (existing) {
+      existing.addEventListener("load", () => resolve(window.turf));
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = TURF_JS;
+    script.async = true;
+    script.onload = () => resolve(window.turf);
+    script.onerror = () => reject(new Error("turf.js の読み込みに失敗しました"));
+    document.head.appendChild(script);
+  });
+
+  return turfLoadPromise;
 }
 
 /* ─────────────────────────────────────────────────────
@@ -947,6 +999,297 @@ function formatNowcastFrameLabel(frame) {
   if (!time) return frame.kind === "obs" ? "実況" : "予測";
   return frame.kind === "obs" ? `${time} 実況` : `${time} 予測`;
 }
+
+/* ─────────────────────────────────────────────────────
+   台風情報 — 気象庁 台風情報API(bosai/typhoon)の取得と空間処理。
+   turf.jsで暴風域・強風域の円、暴風警戒域(輪郭線から結合したポリゴン)、
+   予報円の遷移から作る「警戒領域」の結合ポリゴンを組み立てる。
+   1本のGeoJSON FeatureCollectionに全台風ぶんの各種フィーチャーを
+   properties.type("center"/"forecastCircle"/"stormArea"/"windArea"/
+   "pastTrack"/"track"/"forecastArea"/"stormWarningArea")で区別して入れ、
+   MapCanvas側は1つのsourceに対してtypeごとにfilterした複数レイヤーを重ねる
+   (雨雲レーダーの仕組みとは別で、こちらは前に作った参考実装をそのまま踏襲)。
+   ───────────────────────────────────────────────────── */
+const TYPHOON_DATA_BASE = "https://www.jma.go.jp/bosai/typhoon/data";
+
+function parseJMACoord(coord) {
+  if (!coord) return null;
+  if (Array.isArray(coord) && coord.length >= 2) {
+    const lat = Number(coord[0]);
+    const lon = Number(coord[1]);
+    return Number.isFinite(lat) && Number.isFinite(lon) ? [lon, lat] : null;
+  }
+  const match = String(coord).match(/([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)/);
+  if (match) {
+    const lat = parseFloat(match[1]);
+    const lon = parseFloat(match[2]);
+    return [lon, lat];
+  }
+  return null;
+}
+
+// 台風の「階級」(種別)がTY/STS/TSのいずれでもない場合は、熱帯低気圧・温帯低気圧などに
+// 変化(減衰)したとみなす
+const TYPHOON_CLASS_CODES = new Set(["TY", "STS", "TS"]);
+function isWeakenedTyphoonClass(category) {
+  if (!category || !category.en) return false;
+  return !TYPHOON_CLASS_CODES.has(category.en);
+}
+
+// 種別(category: {jp, en})・台風番号・名称から表示名を組み立てる
+function getTyphoonDisplayName(category, typhoonNo, name) {
+  const suffix = name ? ` (${name})` : "";
+  const jp = category?.jp;
+  if (jp) {
+    if (jp === "台風") {
+      return `${Number(typhoonNo) ? `台風第${Number(typhoonNo)}号` : "台風"}${suffix}`;
+    }
+    return `${jp}${suffix}`;
+  }
+  return `${Number(typhoonNo) ? `台風第${Number(typhoonNo)}号` : "熱帯低気圧"}${suffix}`;
+}
+
+function formatTyphoonCategoryLabel(category, fallback) {
+  if (category?.jp) return `${category.jp}${category.en ? `(${category.en})` : ""}`;
+  return fallback || "-";
+}
+
+function getJMATyphoonRadiusKm(value) {
+  if (value == null) return null;
+  if (typeof value === "number") return value / 1000;
+  if (Array.isArray(value)) return getJMATyphoonRadiusKm(value[0]);
+  if (typeof value === "object") {
+    if (typeof value.radius === "number") return value.radius / 1000;
+    if (typeof value.base === "number") return value.base / 1000;
+    if (Array.isArray(value.base)) return getJMATyphoonRadiusKm(value.base[0]);
+  }
+  return null;
+}
+function getTyphoonPointDistanceSq(a, b) {
+  const dx = a[0] - b[0];
+  const dy = a[1] - b[1];
+  return dx * dx + dy * dy;
+}
+
+function makeStormWarningArcSegment(turf, arc) {
+  const center = parseJMACoord(arc?.[0]);
+  const radiusKm = getJMATyphoonRadiusKm(arc?.[1]);
+  const angles = arc?.[2];
+  if (!center || !radiusKm || !Array.isArray(angles)) return null;
+
+  let start = Number(angles[0]);
+  let end = Number(angles[1]);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  if (end < start) end += 360;
+
+  const span = Math.max(1, end - start);
+  const steps = Math.max(8, Math.ceil(span / 5));
+  const centerPoint = turf.point(center);
+  const coordinates = [];
+  for (let i = 0; i <= steps; i++) {
+    const bearing = start + (span * i / steps);
+    coordinates.push(turf.destination(centerPoint, radiusKm, bearing, { units: "kilometers" }).geometry.coordinates);
+  }
+  return coordinates;
+}
+
+function buildStormWarningAreaFeature(turf, stormWarningArea) {
+  const segments = [];
+  (stormWarningArea?.arc || []).forEach(arc => {
+    const segment = makeStormWarningArcSegment(turf, arc);
+    if (segment && segment.length >= 2) segments.push(segment);
+  });
+  (stormWarningArea?.line || []).forEach(line => {
+    const start = parseJMACoord(line?.[0]);
+    const end = parseJMACoord(line?.[1]);
+    if (start && end) segments.push([start, end]);
+  });
+  if (segments.length === 0) return null;
+
+  const unused = segments.slice(1);
+  const ring = segments[0].slice();
+  while (unused.length > 0) {
+    const tail = ring[ring.length - 1];
+    let bestIndex = 0;
+    let bestReverse = false;
+    let bestDistance = Infinity;
+    unused.forEach((segment, index) => {
+      const startDistance = getTyphoonPointDistanceSq(tail, segment[0]);
+      const endDistance = getTyphoonPointDistanceSq(tail, segment[segment.length - 1]);
+      if (startDistance < bestDistance) { bestIndex = index; bestReverse = false; bestDistance = startDistance; }
+      if (endDistance < bestDistance) { bestIndex = index; bestReverse = true; bestDistance = endDistance; }
+    });
+    const next = unused.splice(bestIndex, 1)[0];
+    const ordered = bestReverse ? next.slice().reverse() : next;
+    ring.push(...ordered.slice(1));
+  }
+  if (getTyphoonPointDistanceSq(ring[0], ring[ring.length - 1]) > 0) ring.push(ring[0]);
+
+  return turf.polygon([ring], { type: "stormWarningArea" });
+}
+
+function formatTyphoonForecastTimeLabel(time) {
+  if (!time) return "予報";
+  const date = new Date(time);
+  if (Number.isNaN(date.getTime())) return "予報";
+  const day = date.getDate();
+  const hour = date.getHours();
+  if (hour === 0) return `${day}日午前0時`;
+  if (hour < 12) return `${day}日午前${hour}時`;
+  if (hour === 12) return `${day}日午後0時`;
+  return `${day}日午後${hour - 12}時`;
+}
+
+async function fetchTyphoonJsonOrNull(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+// 気象庁「現在活動中の台風」一覧とその予報・実況を取得し、地図表示用GeoJSONと
+// 一覧パネル表示用のサマリー配列にまとめて返す。
+// 戻り値: { geojson: FeatureCollection, list: [{id,name,category,weakened,pressure,
+//           maxWind,maxGust,scale,intensity,speed,lon,lat}] }
+async function fetchTyphoonData() {
+  const turf = await loadTurf();
+  const features = [];
+  const list = [];
+
+  try {
+    const targetTc = await fetchTyphoonJsonOrNull(`${TYPHOON_DATA_BASE}/targetTc.json`);
+    if (!Array.isArray(targetTc) || targetTc.length === 0) {
+      return { geojson: turf.featureCollection([]), list: [] };
+    }
+
+    const typhoonData = await Promise.all(targetTc.map(async (tc) => {
+      const id = tc.tropicalCyclone;
+      const [forecast, specifications] = await Promise.all([
+        fetchTyphoonJsonOrNull(`${TYPHOON_DATA_BASE}/${id}/forecast.json`),
+        fetchTyphoonJsonOrNull(`${TYPHOON_DATA_BASE}/${id}/specifications.json`),
+      ]);
+      return { tc, forecast: Array.isArray(forecast) ? forecast : [], specifications: Array.isArray(specifications) ? specifications : [] };
+    }));
+
+    typhoonData.forEach(({ tc, forecast, specifications }) => {
+      const title = forecast.find(item => item.part === "title") || specifications.find(item => item.part === "title") || tc;
+      const specNow = specifications.find(item => item.advancedHours === 0) || {};
+      const points = forecast.filter(item => item && item.advancedHours !== undefined && item.center);
+      const current = points.find(item => item.advancedHours === 0) || points[0];
+      if (!current) return;
+
+      const centerPos = parseJMACoord(current.center);
+      if (!centerPos) return;
+
+      const typhoonNo = String(title.typhoonNumber || tc.typhoonNumber || "").slice(-2).replace(/^0/, "");
+      const name = title.name?.jp || title.name?.en || "";
+      const maxWind = specNow.maximumWind?.sustained?.["m/s"] || specNow.maximumWind?.sustained?.mps || "不明";
+      const maxGust = specNow.maximumWind?.gust?.["m/s"] || specNow.maximumWind?.gust?.mps || "不明";
+      const currentCategory = specNow.category || (tc.category ? { jp: null, en: tc.category } : null);
+      const displayName = getTyphoonDisplayName(currentCategory, typhoonNo, name);
+      const weakened = isWeakenedTyphoonClass(currentCategory);
+      const pressure = specNow.pressure || "不明";
+      const scale = specNow.scale || "-";
+      const intensity = specNow.intensity || "-";
+      const speed = specNow.speed?.["km/h"] ? `${specNow.course || ""} ${specNow.speed["km/h"]}km/h`.trim() : (specNow.course || "-");
+
+      features.push(turf.point(centerPos, {
+        type: "center",
+        id: tc.tropicalCyclone,
+        name: displayName,
+        category: formatTyphoonCategoryLabel(currentCategory, tc.category),
+        weakened, pressure, maxWind, maxGust, scale, intensity, speed,
+      }));
+      list.push({
+        id: tc.tropicalCyclone, name: displayName,
+        category: formatTyphoonCategoryLabel(currentCategory, tc.category),
+        weakened, pressure, maxWind, maxGust, scale, intensity, speed,
+        lon: centerPos[0], lat: centerPos[1],
+      });
+
+      // 暴風警戒域(輪郭線)の元データを先に確定させ、暴風域の塗りも同じ円弧を使う
+      const stormWarningSource = points.slice().reverse().find(item => item.stormWarningArea?.arc?.length);
+      const currentStormArc = current.stormWarningArea?.arc?.[0] || stormWarningSource?.stormWarningArea?.arc?.[0];
+      const stormAreaCenter = parseJMACoord(currentStormArc?.[0]) || centerPos;
+      const stormRadiusKm = getJMATyphoonRadiusKm(currentStormArc?.[1]);
+      if (stormRadiusKm) {
+        features.push(turf.circle(stormAreaCenter, stormRadiusKm, { steps: 64, units: "kilometers", properties: { type: "stormArea" } }));
+      }
+
+      const galeRadiusKm = getJMATyphoonRadiusKm(current.galeWarningArea?.radius);
+      if (galeRadiusKm) {
+        const galeCenter = parseJMACoord(current.galeWarningArea?.center) || centerPos;
+        features.push(turf.circle(galeCenter, galeRadiusKm, { steps: 64, units: "kilometers", properties: { type: "windArea" } }));
+      }
+
+      const pastTrack = [
+        ...(current.track?.preTyphoon || []),
+        ...(current.track?.typhoon || []),
+      ].map(point => parseJMACoord(point)).filter(Boolean);
+      if (pastTrack.length >= 2) features.push(turf.lineString(pastTrack, { type: "pastTrack" }));
+
+      const forecastTrack = points.map(item => parseJMACoord(item.center)).filter(Boolean);
+      if (forecastTrack.length >= 2) features.push(turf.lineString(forecastTrack, { type: "track" }));
+
+      const stormWarningArea = buildStormWarningAreaFeature(turf, stormWarningSource?.stormWarningArea);
+      if (stormWarningArea) features.push(stormWarningArea);
+
+      const forecastCircles = [];
+      points.forEach(item => {
+        if (item.advancedHours === 0 || !item.probabilityCircle?.radius) return;
+        const fPos = parseJMACoord(item.center);
+        const radiusKm = getJMATyphoonRadiusKm(item.probabilityCircle.radius);
+        if (!fPos || !radiusKm) return;
+
+        const forecastLabel = formatTyphoonForecastTimeLabel(item.validtime?.JST || item.validtime?.UTC);
+        const forecastSpec = specifications.find(spec => spec.advancedHours === item.advancedHours) || {};
+        const forecastCategory = forecastSpec.category || currentCategory;
+        const labelPoint = turf.destination(turf.point(fPos), radiusKm + 35, 45, { units: "kilometers" }).geometry.coordinates;
+        const circle = turf.circle(fPos, radiusKm, {
+          steps: 64, units: "kilometers",
+          properties: {
+            type: "forecastCircle",
+            id: tc.tropicalCyclone,
+            name: getTyphoonDisplayName(forecastCategory, typhoonNo, name),
+            category: formatTyphoonCategoryLabel(forecastCategory, tc.category),
+            weakened: isWeakenedTyphoonClass(forecastCategory),
+            forecastTime: forecastLabel,
+            labelPoint,
+            pressure: forecastSpec.pressure || "不明",
+            maxWind: forecastSpec.maximumWind?.sustained?.["m/s"] || "不明",
+            maxGust: forecastSpec.maximumWind?.gust?.["m/s"] || "不明",
+            scale: forecastSpec.scale || "-",
+            intensity: forecastSpec.intensity || "-",
+            speed: forecastSpec.speed?.["km/h"] ? `${forecastSpec.course || ""} ${forecastSpec.speed["km/h"]}km/h`.trim() : (forecastSpec.course || "-"),
+          },
+        });
+        forecastCircles.push(circle);
+        features.push(circle);
+      });
+
+      if (forecastCircles.length > 0) {
+        let previousCircle = turf.circle(centerPos, 1, { steps: 64, units: "kilometers" });
+        let finalWarningArea = null;
+        forecastCircles.forEach(circle => {
+          const warningAreaSegment = turf.convex(turf.explode(turf.featureCollection([previousCircle, circle])));
+          if (warningAreaSegment) {
+            finalWarningArea = finalWarningArea ? (turf.union(finalWarningArea, warningAreaSegment) || finalWarningArea) : warningAreaSegment;
+          }
+          previousCircle = circle;
+        });
+        if (finalWarningArea) {
+          finalWarningArea.properties = { type: "forecastArea" };
+          features.push(finalWarningArea);
+        }
+      }
+    });
+
+    return { geojson: turf.featureCollection(features), list };
+  } catch (e) {
+    console.warn("[台風] データ取得に失敗:", e);
+    return { geojson: turf.featureCollection([]), list: [] };
+  }
+}
+
 
 // 404だったタイルURLの記録(モジュールスコープでアプリ全体を通じて使い回す)。
 const nowcastFailedTileUrls = new Set();
@@ -1256,6 +1599,10 @@ function MapCanvas({
   nowcastKnownValidtimes = [], // 実況+予測の現在の全validtime一覧。この一覧に無くなった
                                 // (=特に予測コマで一覧更新のたびに起きる)キャッシュ済みレイヤーの掃除に使う
   nowcastColorSchemeId = "jma", // 雨雲レーダーの配色スキームID
+  typhoonVisible = false,       // 台風情報レイヤーを表示するか
+  typhoonGeojson = null,        // fetchTyphoonData()が返すgeojson({type:"FeatureCollection"})| null
+  onSelectTyphoonCenter,        // 台風の中心点/予報円をタップした時にpropertiesを渡すコールバック
+  typhoonFlyToRequest = null,   // {lon, lat, nonce} | null。台風一覧の項目をタップした時のflyTo先
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -1288,6 +1635,13 @@ function MapCanvas({
   onSelectTideStationRef.current = onSelectTideStation;
   const tideStationsInteractiveRef = useRef(tideStationsInteractive);
   tideStationsInteractiveRef.current = tideStationsInteractive;
+  // 台風の中心点/予報円をタップした時のコールバック。map.on("load")内の登録は
+  // 初回マウント時の1回きりなので、他のピック系コールバックと同様にrefで最新を参照する。
+  const onSelectTyphoonCenterRef = useRef(onSelectTyphoonCenter);
+  onSelectTyphoonCenterRef.current = onSelectTyphoonCenter;
+  // 予報円の横に出す時刻ラベル(maplibregl.Marker)。map.on("load")の外(typhoonGeojsonが
+  // 変わるたびに動くuseEffect)で作り直すため、現在出しているマーカーの配列をrefで保持する。
+  const typhoonForecastMarkersRef = useRef([]);
 
   // 津波予報区の「地図タップで選択」モード用。map.on("load")内の登録は初回のみなので、
   // 最新のモードON/OFF・コールバック・読み込み済みデータをrefで参照できるようにする。
@@ -1943,6 +2297,82 @@ function MapCanvas({
             },
           });
 
+          // ─────────────────────────────────────────────
+          // 台風情報。1つのgeojson sourceに全台風ぶんの中心点・予報円・
+          // 暴風域/強風域・過去/予測経路・警戒領域(結合ポリゴン)・暴風警戒域を
+          // properties.typeで区別して入れ、typeごとにfilterした複数レイヤーを
+          // 重ねる。データ本体はtyphoonGeojsonが変わるたびに動く別のuseEffectが
+          // setDataするため、ここでは空のソースを用意するだけでよい。
+          map.addSource("typhoon", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+
+          map.addLayer({
+            id: "layer-typhoon-forecast-fill", type: "fill", source: "typhoon",
+            layout: { visibility: "none" }, filter: ["==", "type", "forecastArea"],
+            paint: { "fill-color": "#FFFFFF", "fill-opacity": 0.1 },
+          });
+          map.addLayer({
+            id: "layer-typhoon-storm-warning-fill", type: "fill", source: "typhoon",
+            layout: { visibility: "none" }, filter: ["==", "type", "stormWarningArea"],
+            paint: { "fill-color": "#FF2800", "fill-opacity": 0.12 },
+          });
+          map.addLayer({
+            id: "layer-typhoon-storm-warning-line", type: "line", source: "typhoon",
+            layout: { visibility: "none" }, filter: ["==", "type", "stormWarningArea"],
+            paint: { "line-color": "#FF2800", "line-width": 2.5, "line-opacity": 0.95 },
+          });
+          map.addLayer({
+            id: "layer-typhoon-forecast-area-line", type: "line", source: "typhoon",
+            layout: { visibility: "none" }, filter: ["==", "type", "forecastArea"],
+            paint: { "line-color": "#FFFFFF", "line-width": 1.5, "line-opacity": 0.6 },
+          });
+          map.addLayer({
+            id: "layer-typhoon-forecast-circle-line", type: "line", source: "typhoon",
+            layout: { visibility: "none" }, filter: ["==", "type", "forecastCircle"],
+            paint: {
+              // 熱帯低気圧・温帯低気圧に変化した予報円はグレーで区別する
+              "line-color": ["case", ["==", ["get", "weakened"], true], "#9AA0A6", "#FFFFFF"],
+              "line-width": 1.4, "line-dasharray": [3, 4], "line-opacity": 0.8,
+            },
+          });
+          map.addLayer({
+            id: "layer-typhoon-area", type: "fill", source: "typhoon",
+            layout: { visibility: "none" }, filter: ["in", "type", "stormArea", "windArea"],
+            paint: {
+              "fill-color": ["match", ["get", "type"], "stormArea", "#FF2800", "windArea", "#FFEF00", "#FFFFFF"],
+              "fill-opacity": 0.35,
+            },
+          });
+          map.addLayer({
+            id: "layer-typhoon-past-track", type: "line", source: "typhoon",
+            layout: { visibility: "none" }, filter: ["==", "type", "pastTrack"],
+            paint: { "line-color": "#FFFFFF", "line-width": 1.6, "line-opacity": 0.55 },
+          });
+          map.addLayer({
+            id: "layer-typhoon-track", type: "line", source: "typhoon",
+            layout: { visibility: "none" }, filter: ["==", "type", "track"],
+            paint: { "line-color": "#FFFFFF", "line-width": 2, "line-dasharray": [3, 3], "line-opacity": 0.75 },
+          });
+          map.addLayer({
+            id: "layer-typhoon-center", type: "circle", source: "typhoon",
+            layout: { visibility: "none" }, filter: ["==", "type", "center"],
+            paint: {
+              "circle-radius": 8,
+              // 熱帯低気圧・温帯低気圧に変化している場合はグレーで区別する
+              "circle-color": ["case", ["==", ["get", "weakened"], true], "#9AA0A6", "#FF2800"],
+              "circle-stroke-width": 2, "circle-stroke-color": "#FFFFFF",
+            },
+          });
+          map.on("mouseenter", "layer-typhoon-center", () => {
+            map.getCanvas().style.cursor = "pointer";
+          });
+          map.on("mouseleave", "layer-typhoon-center", () => {
+            map.getCanvas().style.cursor = "";
+          });
+          map.on("click", "layer-typhoon-center", (e) => {
+            if (!e.features || !e.features.length) return;
+            onSelectTyphoonCenterRef.current?.(e.features[0].properties);
+          });
+
           setStatus("ready");
           if (onReady) onReady(map);
         });
@@ -2059,6 +2489,84 @@ function MapCanvas({
 
     return () => { if (frameId != null) cancelAnimationFrame(frameId); };
   }, [status]);
+
+  // 台風情報: typhoonGeojsonが変わるたびにsourceへ流し込み、予報円の横に出す
+  // 時刻ラベル(maplibregl.Marker)も同じタイミングで作り直す。
+  // マーカーはDOM要素なのでReactツリー外で自前管理し、古いものは必ず先にremoveする。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+
+    const source = map.getSource("typhoon");
+    if (source) source.setData(typhoonGeojson || { type: "FeatureCollection", features: [] });
+
+    // 既存マーカーを掃除
+    typhoonForecastMarkersRef.current.forEach(marker => marker.remove());
+    typhoonForecastMarkersRef.current = [];
+
+    if (!typhoonVisible || !typhoonGeojson?.features) return;
+
+    let maplibregl = window.maplibregl;
+    if (!maplibregl) return; // 地図自体が読めていればここは通常falsyにならない
+
+    typhoonGeojson.features
+      .filter(f => f.properties?.type === "forecastCircle")
+      .forEach(f => {
+        const label = f.properties.forecastTime;
+        const center = f.properties.labelPoint;
+        if (!label || !center) return;
+
+        const el = document.createElement("div");
+        el.className = "typhoon-forecast-time-marker";
+        if (f.properties.weakened && f.properties.category) {
+          // 「熱帯低気圧(TD)」のように括弧付きで格納されているため、日本語部分のみ短く表示する
+          const classText = String(f.properties.category).split("(")[0] || f.properties.category;
+          const timeEl = document.createElement("span");
+          timeEl.textContent = label;
+          const badgeEl = document.createElement("span");
+          badgeEl.className = "typhoon-forecast-class-badge";
+          badgeEl.textContent = classText;
+          el.appendChild(timeEl);
+          el.appendChild(badgeEl);
+        } else {
+          el.textContent = label;
+        }
+        el.onclick = (event) => {
+          event.stopPropagation();
+          onSelectTyphoonCenterRef.current?.(f.properties);
+        };
+        typhoonForecastMarkersRef.current.push(
+          new maplibregl.Marker({ element: el, anchor: "center" }).setLngLat(center).addTo(map)
+        );
+      });
+
+    return () => {
+      typhoonForecastMarkersRef.current.forEach(marker => marker.remove());
+      typhoonForecastMarkersRef.current = [];
+    };
+  }, [status, typhoonGeojson, typhoonVisible]);
+
+  // 台風情報レイヤーのON/OFF切り替え。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    const vis = typhoonVisible ? "visible" : "none";
+    [
+      "layer-typhoon-forecast-fill", "layer-typhoon-storm-warning-fill",
+      "layer-typhoon-storm-warning-line", "layer-typhoon-forecast-area-line",
+      "layer-typhoon-forecast-circle-line", "layer-typhoon-area",
+      "layer-typhoon-past-track", "layer-typhoon-track", "layer-typhoon-center",
+    ].forEach(id => {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
+    });
+  }, [status, typhoonVisible]);
+
+  // 台風一覧の項目をタップした時、その台風の中心へflyToする。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready" || !typhoonFlyToRequest) return;
+    map.flyTo({ center: [typhoonFlyToRequest.lon, typhoonFlyToRequest.lat], zoom: 6 });
+  }, [status, typhoonFlyToRequest]);
 
   // 緊急地震速報: areas[]に予測震度がある場合、その地域を細分区域.json上で
   // 名前が一致するポリゴンを探し、震度の色で塗りつぶす。P/S波の円と違って
@@ -8719,6 +9227,8 @@ function BottomDock({
   uiScale = 1,
   onCurrentLocationChange, // 気象タブ「地点」モードでGPS取得できた現在地をApp側(地図の青丸表示用)に伝える
   onNowcastChange, // 雨雲レーダーがON中の現在の時刻コマをApp側(地図の雨雲レイヤー表示用)に伝える
+  onTyphoonChange, // 台風情報がON中の現在のgeojsonをApp側(地図の台風レイヤー表示用)に伝える
+  onSelectTyphoon, // 台風一覧の項目をタップした時に呼ぶ(App側で地図をflyTo)
 }) {
   const { tokens, mode } = useContext(ThemeContext);
   const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
@@ -8909,6 +9419,62 @@ function BottomDock({
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nowcastEnabled, currentNowcastFrame?.basetime, currentNowcastFrame?.validtime, nowcastPreloadKey, nowcastFrames, onNowcastChange]);
+
+  /* ─────────────────────────────────────────────────────
+     台風情報。ONにするたびに気象庁 台風情報API(bosai/typhoon)を取得し直し、
+     ON中は毎時0分10秒(気象庁の発表タイミングに合わせた台風スケジューラーと
+     同じ考え方)に自動更新して追従させる。ONの間だけApp側(地図の台風レイヤー
+     表示用)に現在のgeojsonを伝える。一覧パネル用のサマリー配列(typhoonList)
+     も同時に保持する。
+     ───────────────────────────────────────────────────── */
+  const [typhoonEnabled, setTyphoonEnabled] = useState(false);
+  const [typhoonGeojson, setTyphoonGeojson] = useState(null);
+  const [typhoonList, setTyphoonList] = useState([]);
+  const [typhoonLoadError, setTyphoonLoadError] = useState(false);
+
+  useEffect(() => {
+    if (!typhoonEnabled) {
+      setTyphoonGeojson(null);
+      setTyphoonList([]);
+      setTyphoonLoadError(false);
+      return;
+    }
+    let cancelled = false;
+    let timeoutId = null;
+
+    const fetchAndApply = () => {
+      fetchTyphoonData()
+        .then(({ geojson, list }) => {
+          if (cancelled) return;
+          setTyphoonLoadError(false);
+          setTyphoonGeojson(geojson);
+          setTyphoonList(list);
+        })
+        .catch((err) => {
+          console.error("台風情報の取得に失敗:", err);
+          if (!cancelled) setTyphoonLoadError(true);
+        });
+    };
+    // 毎時0分10秒に次回実行を予約する(気象庁の台風情報の発表タイミングに合わせた遅延)
+    const scheduleNext = () => {
+      const now = Date.now();
+      const HOUR_MS = 60 * 60 * 1000;
+      const nextTick = Math.ceil(now / HOUR_MS) * HOUR_MS + 10_000;
+      const wait = Math.max(1000, nextTick - now);
+      timeoutId = setTimeout(() => {
+        fetchAndApply();
+        scheduleNext();
+      }, wait);
+    };
+    fetchAndApply();
+    scheduleNext();
+    return () => { cancelled = true; if (timeoutId) clearTimeout(timeoutId); };
+  }, [typhoonEnabled]);
+
+  useEffect(() => {
+    onTyphoonChange?.(typhoonEnabled && typhoonGeojson ? typhoonGeojson : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typhoonEnabled, typhoonGeojson, onTyphoonChange]);
 
   /* ─────────────────────────────────────────────────────
      気象タブ「地点」モード — 現在地(GPS)または登録地点(1件のみ)の天気予報。
@@ -10241,7 +10807,7 @@ function BottomDock({
             top: wideAnchorRect.top + 16,
             zIndex: 50,
           }}>
-            <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={false} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)}/>
+            <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={false} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)} typhoonEnabled={typhoonEnabled} onToggleTyphoon={() => setTyphoonEnabled(v => !v)}/>
           </div>
           {/* 雨雲レーダーの時刻スライダー(横画面) — 縦画面の時と同じく、展開メニューが
               閉じている間だけ表示する。縦画面ではボタンのすぐ上に置いているが、
@@ -10286,7 +10852,7 @@ function BottomDock({
               onChangeFrameIndex={setNowcastFrameIndex}
             />
           )}
-          <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={true} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)}/>
+          <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={true} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)} typhoonEnabled={typhoonEnabled} onToggleTyphoon={() => setTyphoonEnabled(v => !v)}/>
         </div>
         )
       )}
@@ -10690,6 +11256,13 @@ function BottomDock({
             ) : (active === "weather" || active === "alert") ? (
               <>
                 {active === "weather" ? (
+                  typhoonEnabled ? (
+                    <TyphoonListPanel
+                      typhoons={typhoonList}
+                      loadError={typhoonLoadError}
+                      onSelectTyphoon={onSelectTyphoon}
+                    />
+                  ) : (
                   <WeatherLocationPanel
                     geoState={geoState}
                     onConsentLocation={requestWeatherLocationPermission}
@@ -10718,6 +11291,7 @@ function BottomDock({
                       closeKanaPicker();
                     }}
                   />
+                  )
                 ) : (
                   <div style={{
                     display: "flex", alignItems: "center", justifyContent: "center",
@@ -11283,6 +11857,7 @@ function StationMarkerToggleButton({ visible, onClick }) {
    ボタンだと分かるようにしている(文字は中央揃え)。
    ───────────────────────────────────────────────────── */
 const WEATHER_MENU_ITEMS = [
+  { id: "typhoonInfo", label: "台風情報" },
   { id: "rainRadar", label: "雨雲レーダー" },
 ];
 
@@ -11294,7 +11869,7 @@ const WEATHER_MENU_ITEM_GAP = 6;          // 項目同士の間隔
 const WEATHER_MENU_ITEMS_PAD = 8;         // 項目ブロックの上下左右の余白
 const WEATHER_MENU_WIDTH = 172;
 
-function WeatherMenuFloating({ open, onToggle, growUp = true, nowcastEnabled = false, onToggleNowcast }) {
+function WeatherMenuFloating({ open, onToggle, growUp = true, nowcastEnabled = false, onToggleNowcast, typhoonEnabled = false, onToggleTyphoon }) {
   const { tokens } = useContext(ThemeContext);
   const [pressed, setPressed] = useState(false);
 
@@ -11363,12 +11938,14 @@ function WeatherMenuFloating({ open, onToggle, growUp = true, nowcastEnabled = f
           }}>
             {WEATHER_MENU_ITEMS.map((item) => {
               const isRainRadar = item.id === "rainRadar";
-              const active = isRainRadar && nowcastEnabled;
+              const isTyphoonInfo = item.id === "typhoonInfo";
+              const active = (isRainRadar && nowcastEnabled) || (isTyphoonInfo && typhoonEnabled);
               return (
                 <PressableButton
                   key={item.id}
                   onClick={() => {
                     if (isRainRadar) onToggleNowcast?.();
+                    if (isTyphoonInfo) onToggleTyphoon?.();
                     onToggle(); // 選択したらメニュー自体は閉じる
                   }}
                   style={{
@@ -11391,6 +11968,64 @@ function WeatherMenuFloating({ open, onToggle, growUp = true, nowcastEnabled = f
         )}
       </div>
     </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   TYPHOON LIST PANEL — 気象タブで「台風情報」ONの間、WeatherLocationPanelの
+   代わりに表示する「現在活動中の台風」一覧。地震一覧・警報一覧と同じ
+   パネル枠に、名前(弱化していればグレー)・中心気圧・最大風速を並べる。
+   タップすると地図がその台風の中心へflyToする(参考実装のupdateRanking()の
+   台風分岐を踏襲)。
+   ───────────────────────────────────────────────────── */
+function TyphoonListPanel({ typhoons = [], loadError = false, onSelectTyphoon }) {
+  const { tokens } = useContext(ThemeContext);
+
+  return (
+    <div>
+      <div style={{
+        display: "flex", alignItems: "center",
+        padding: "8px 18px 11px",
+        borderBottom: `0.5px solid rgba(${tokens.ink},0.15)`,
+      }}>
+        <span style={{ fontSize: 14, fontWeight: 600, flex: 1, color: `rgba(${tokens.ink},0.9)` }}>
+          現在の台風情報
+        </span>
+      </div>
+
+      {loadError ? (
+        <div style={{ padding: "24px 18px", fontSize: 13, color: `rgba(${tokens.ink},0.5)`, textAlign: "center" }}>
+          台風情報の取得に失敗しました。しばらくしてから再度お試しください。
+        </div>
+      ) : typhoons.length === 0 ? (
+        <div style={{ padding: "24px 18px", fontSize: 13, color: `rgba(${tokens.ink},0.5)`, textAlign: "center" }}>
+          現在、発生中の台風はありません。
+        </div>
+      ) : (
+        typhoons.map((t, i) => (
+          <div key={t.id}>
+            {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.1)`, marginLeft: 18 }}/>}
+            <PressableButton
+              onClick={() => onSelectTyphoon?.(t)}
+              style={{
+                width: "100%", display: "flex", alignItems: "center",
+                padding: "11px 18px", gap: 10, textAlign: "left",
+              }}
+            >
+              <span style={{
+                fontSize: 14, fontWeight: 600, flex: 1,
+                color: t.weakened ? "#9AA0A6" : "#0A84FF",
+              }}>
+                {t.name}
+              </span>
+              <span style={{ fontSize: 13, color: `rgba(${tokens.ink},0.7)`, whiteSpace: "nowrap" }}>
+                {t.pressure}hPa / {t.maxWind}m/s
+              </span>
+            </PressableButton>
+          </div>
+        ))
+      )}
+    </div>
   );
 }
 
@@ -17057,6 +17692,28 @@ export default function App() {
     setNowcastPreloadFrames(payload ? payload.preloadFrames : []);
     setNowcastKnownValidtimes(payload ? payload.knownValidtimes : []);
   }, []);
+  // 台風情報がON中の現在のgeojson。BottomDock側から伝わってくる。OFFの間はnull。
+  const [typhoonGeojson, setTyphoonGeojson] = useState(null);
+  const handleTyphoonChange = useCallback((geojson) => {
+    setTyphoonGeojson(geojson);
+  }, []);
+  // 台風の中心点/予報円をタップした時のproperties。詳細カードUIは今後実装予定のため、
+  // 現時点ではstateに保持するだけで表示には使っていない。
+  const [selectedTyphoonInfo, setSelectedTyphoonInfo] = useState(null);
+  const handleSelectTyphoonCenter = useCallback((properties) => {
+    setSelectedTyphoonInfo(properties || null);
+  }, []);
+  // 台風一覧の項目をタップした時、地図をその台風の中心へflyToするためのリクエスト。
+  // {lon, lat, nonce} | null。nonceは同じ地点を連続でタップしても毎回flyToが
+  // 起きるようにするための単純カウンタ。
+  const [typhoonFlyToRequest, setTyphoonFlyToRequest] = useState(null);
+  const handleSelectTyphoon = useCallback((typhoon) => {
+    if (!typhoon) return;
+    setSelectedTyphoonInfo(typhoon);
+    if (typhoon.lon != null && typhoon.lat != null) {
+      setTyphoonFlyToRequest({ lon: typhoon.lon, lat: typhoon.lat, nonce: Date.now() });
+    }
+  }, []);
   // 現在進行形で有効な(解除されていない)津波情報があるかどうか。潮位観測点
   // マスタの取得トリガー・自動表示の判定の両方で使う軽量な判定。
   const hasActiveTsunami = effectiveTsunamis.some(t => !t.cancelled);
@@ -18087,6 +18744,10 @@ export default function App() {
           nowcastPreloadFrames={nowcastPreloadFrames}
           nowcastKnownValidtimes={nowcastKnownValidtimes}
           nowcastColorSchemeId={nowcastColorScheme}
+          typhoonVisible={activeNav === "weather" && !!typhoonGeojson}
+          typhoonGeojson={typhoonGeojson}
+          onSelectTyphoonCenter={handleSelectTyphoonCenter}
+          typhoonFlyToRequest={typhoonFlyToRequest}
           stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
           tideStationPoints={
@@ -18375,6 +19036,8 @@ export default function App() {
                   onTsunamiViewModeChange={setTsunamiViewModeTop}
                   onCurrentLocationChange={setCurrentLocationPoint}
                   onNowcastChange={handleNowcastChange}
+                  onTyphoonChange={handleTyphoonChange}
+                  onSelectTyphoon={handleSelectTyphoon}
                   tideStations={tideStationsWithGrade}
                   tideStationsStatus={tideStationsStatus}
                   selectedTideStationCode={selectedTideStationCode}
@@ -18472,6 +19135,8 @@ export default function App() {
               onTsunamiViewModeChange={setTsunamiViewModeTop}
               onCurrentLocationChange={setCurrentLocationPoint}
                   onNowcastChange={handleNowcastChange}
+                  onTyphoonChange={handleTyphoonChange}
+                  onSelectTyphoon={handleSelectTyphoon}
               tideStations={tideStationsWithGrade}
               tideStationsStatus={tideStationsStatus}
               selectedTideStationCode={selectedTideStationCode}
