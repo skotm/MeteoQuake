@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.0f";
+const APP_VERSION = "1.6.1";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -6519,7 +6519,12 @@ async function bakeWeatherIconOutline(url, mode, longSidePx, displaySize) {
       // 何pxに見えるか」で一定になる。太めが見やすいとのことなので、
       // 表示CSSピクセル換算で約2px相当を狙う。
       const bakeToDisplayScale = longSidePx / Math.max(displaySize, 1);
-      const OUTLINE_THICKNESS_CSS_PX = 1; // 太めが目立ちすぎたため、表示上で約1px相当まで細くした
+      // 「雨で暴風を伴う」のように、細い斜線(風・雨を表す動線)が何本も並ぶ
+      // アイコンだと、縁取りのにじみ(半径+フェザー)がその線と線の間の
+      // わずかな隙間まで橋渡ししてつぶしてしまい、全体が白く潰れたような
+      // 見た目になる不具合があった。太さを表示上0.6px相当まで細くすることで、
+      // 隙間を橋渡ししにくくしている。
+      const OUTLINE_THICKNESS_CSS_PX = 0.6;
       const radius = Math.max(1, Math.round(bakeToDisplayScale * OUTLINE_THICKNESS_CSS_PX));
 
       // 以前は「±radius四方の正方形の中にcoveredが1つでもあれば膨張」という
@@ -6562,7 +6567,7 @@ async function bakeWeatherIconOutline(url, mode, longSidePx, displaySize) {
         }
       }
 
-      const FEATHER = Math.max(1, bakeToDisplayScale * 0.6); // 表示上でおよそ0.6px幅のフェザリング(細めの縁でも輪郭自体が消えないよう控えめに)
+      const FEATHER = Math.max(1, bakeToDisplayScale * 0.4); // 縁の太さを絞ったのに合わせ、フェザー幅も控えめに
       const ringAlpha = new Uint8ClampedArray(n);
       for (let i = 0; i < n; i++) {
         if (covered[i]) continue;
