@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.0e";
+const APP_VERSION = "1.6.0f";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -6191,6 +6191,23 @@ function forecastDataUrl(officeCode) {
   return `https://www.jma.go.jp/bosai/forecast/data/forecast/${officeCode}.json`;
 }
 
+// area.json上の行政区分(office)としては存在するのに、forecast.json自体は
+// 気象庁側に用意されておらず、実際には別のofficeのデータで代用されている
+// コードがいくつかある(気象庁の天気予報ページ自身もこの読み替えを内部で
+// 行っている)。判明しているもの:
+//   460040(奄美地方)      → 460100(鹿児島県) のforecast.jsonを使う
+//   014030(十勝地方)      → 014100            のforecast.jsonを使う
+// 該当する地域(class10Code)自体は代用先のforecast.json内にareaの1つとして
+// ちゃんと含まれているため、officeCodeだけこちらに差し替えてfetchし、
+// class10Code/amedasCodeでの絞り込みはそのまま行えばよい。
+const FORECAST_OFFICE_CODE_REDIRECTS = {
+  "014030": "014100",
+  "460040": "460100",
+};
+function resolveForecastFetchOfficeCode(officeCode) {
+  return FORECAST_OFFICE_CODE_REDIRECTS[officeCode] || officeCode;
+}
+
 // amedastable.jsonの緯度経度は[度, 分]の配列で入っているため、10進度に変換する。
 function amedasDegMinToDecimal(pair) {
   if (!Array.isArray(pair) || pair.length < 2) return null;
@@ -6795,7 +6812,7 @@ async function fetchCurrentLocationForecast(lat, lon) {
 }
 
 async function fetchForecastForResolvedLocation(resolved) {
-  const res = await fetch(forecastDataUrl(resolved.officeCode));
+  const res = await fetch(forecastDataUrl(resolveForecastFetchOfficeCode(resolved.officeCode)));
   if (!res.ok) throw new Error(`天気予報の取得に失敗(HTTP ${res.status})`);
   const json = await res.json();
   const forecast = extractTodayForecast(json, resolved.class10Code, resolved.amedasCode);
