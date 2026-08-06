@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.1";
+const APP_VERSION = "1.6.1a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -6416,229 +6416,42 @@ function weatherTelop(code) {
 }
 
 /* ─────────────────────────────────────────────────────
-   天気アイコンの縁取り(canvas焼き込み版)
+   天気アイコン表示用の共通コンポーネント。
 
-   以前は weather-icon-outline-dark/light という多段のSVGフィルタ
-   (feComponentTransferでアルファを2値化→feMorphologyで膨張→
-   feComposite/feMergeで合成)を、JMAの外部SVGを読み込んだ<img>に
-   直接 filter: url(...) として適用していた。
-   しかしこの「外部SVG画像 + 複数プリミティブのCSSフィルタ」という
-   組み合わせは、特にSafari/iOSでフィルタのラスタライズ範囲が正しく
-   計算されず、アイコンの一部(右側や上側など)だけフィルタが反映されず
-   透けて見えたり縁取りが途切れたりする既知の不具合を引き起こすことが
-   ある(GPU合成レイヤー境界やdevicePixelRatioが絡むため再現条件が
-   絞りにくい)。
-
-   そこで、ライブのCSSフィルタに頼るのをやめ、アイコン読み込み時に
-   canvas上でピクセル単位の膨張処理を行って縁取りを一度だけ焼き込み、
-   結果をdata URLとして通常の<img>で表示する方式に変更した。
-   これにより実行時のフィルタ描画そのものが不要になり、上記の不具合
-   クラスを構造的に回避できる。CORS等でcanvasの読み出しに失敗した
-   場合(taint)は、縁取りなしの元画像URLへ静かにフォールバックする
-   ため、最悪の場合でも「一部が欠けて見える」状態にはならない。 */
-// SVGのルート要素にwidth/heightが明示されていない場合、viewBoxから補って
-// 埋め込む。これをやらないと、new Image()でSVGを読み込んだ際にブラウザが
-// 本来の縦横比を取得できず、CSS既定の代替サイズ(300×150、横長)にフォール
-// バックすることがあり、その状態で正方形canvasに描画すると意図せず縦に
-// 引き伸ばされてしまう(実際に発生した不具合)。
-function ensureSvgHasExplicitSize(svgText) {
-  const tagMatch = svgText.match(/<svg\b[^>]*>/i);
-  if (!tagMatch) return svgText;
-  const tag = tagMatch[0];
-  if (/\bwidth\s*=/.test(tag) && /\bheight\s*=/.test(tag)) return svgText;
-  const vb = tag.match(/viewBox\s*=\s*["']\s*[\d.\-]+\s+[\d.\-]+\s+([\d.\-]+)\s+([\d.\-]+)\s*["']/i);
-  if (!vb) return svgText;
-  const newTag = tag.replace(/<svg\b/i, `<svg width="${vb[1]}" height="${vb[2]}"`);
-  return svgText.slice(0, tagMatch.index) + newTag + svgText.slice(tagMatch.index + tag.length);
-}
-
-function loadImageFromUrl(src) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("image load failed"));
-    img.src = src;
-  });
-}
-
-const weatherIconBakeCache = new Map(); // key: `${url}|${mode}|${longSidePx}` -> Promise<dataURL|null>
-
-// 天気アイコンに縁取りを焼き込む。
-// SVGを直接<img crossOrigin>で読み込むと、(1) JMA側のCORS状況次第で
-// canvasがtaintされて読み出せなかったり、(2) ブラウザが縦横比を正しく
-// 取得できず縦(または横)に伸びて描画されることがあったため、
-//   1. fetchでSVGの生テキストを取得(通常のGETなのでCORSに左右されにくい)
-//   2. viewBoxから縦横比を補って明示
-//   3. Blob URL化して読み込む(blob:はcanvasにとって同一オリジン扱いなので
-//      taintの心配がない)
-// という手順に変更した。どこかで失敗した場合は null を返し、呼び出し側で
-// 縁取りなしの元画像URLに静かにフォールバックする。
-// displaySize: 実際に画面上へ表示するCSSピクセルサイズ。膨張(縁取り)半径を
-// 「表示時に何px相当に見せたいか」から逆算するために必要(後述)。
-async function bakeWeatherIconOutline(url, mode, longSidePx, displaySize) {
-  const key = `${url}|${mode}|${longSidePx}|${displaySize}`;
-  if (weatherIconBakeCache.has(key)) return weatherIconBakeCache.get(key);
-
-  const promise = (async () => {
-    let blobUrl = null;
-    try {
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      const rawSvgText = await res.text();
-      const svgText = ensureSvgHasExplicitSize(rawSvgText);
-      blobUrl = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml" }));
-
-      const img = await loadImageFromUrl(blobUrl);
-      const nw = img.naturalWidth || 100;
-      const nh = img.naturalHeight || 100;
-      const svgToBakeScale = longSidePx / Math.max(nw, nh); // 元SVG座標→焼き込みcanvasの拡大率(キャンバスサイズ決定用)
-      const cw = Math.max(1, Math.round(nw * svgToBakeScale));
-      const ch = Math.max(1, Math.round(nh * svgToBakeScale));
-
-      const canvas = document.createElement("canvas");
-      canvas.width = cw;
-      canvas.height = ch;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, cw, ch); // 縦横比を保ったまま描画(引き伸ばしなし)
-      const src = ctx.getImageData(0, 0, cw, ch);
-      const n = cw * ch;
-
-      // 輪郭を膨張させるための「覆われている」判定は、ごく薄いアンチエイリアス
-      // ノイズだけ除外する低い閾値にする(以前の128という高い閾値だと、羽根状の
-      // 光条など細く薄いパーツがまるごと欠けて見える原因になっていた)。
-      const COVERAGE_THRESHOLD = 12;
-      const covered = new Uint8Array(n);
-      for (let i = 0; i < n; i++) covered[i] = src.data[i * 4 + 3] > COVERAGE_THRESHOLD ? 1 : 0;
-
-      // 膨張半径は「焼き込みcanvasの解像度 ÷ 表示サイズ(=最終的にブラウザが
-      // 何倍に縮小するか)」を基準に決める必要がある。以前はsvgToBakeScale
-      // (元SVG自体の座標系→canvasの拡大率。JMAアイコンごとのviewBoxの数値に
-      // 左右され、表示上の縮小率とは無関係)を誤って使っていたため、アイコンに
-      // よって縁がほぼ消えるほど細くなってしまっていた(このバグの原因)。
-      // 表示縮小率(bakeToDisplayScale)に基づけば、太さは常に「表示上で
-      // 何pxに見えるか」で一定になる。太めが見やすいとのことなので、
-      // 表示CSSピクセル換算で約2px相当を狙う。
-      const bakeToDisplayScale = longSidePx / Math.max(displaySize, 1);
-      // 「雨で暴風を伴う」のように、細い斜線(風・雨を表す動線)が何本も並ぶ
-      // アイコンだと、縁取りのにじみ(半径+フェザー)がその線と線の間の
-      // わずかな隙間まで橋渡ししてつぶしてしまい、全体が白く潰れたような
-      // 見た目になる不具合があった。太さを表示上0.6px相当まで細くすることで、
-      // 隙間を橋渡ししにくくしている。
-      const OUTLINE_THICKNESS_CSS_PX = 0.6;
-      const radius = Math.max(1, Math.round(bakeToDisplayScale * OUTLINE_THICKNESS_CSS_PX));
-
-      // 以前は「±radius四方の正方形の中にcoveredが1つでもあれば膨張」という
-      // 単純な判定だったため、縁の形が正方形カーネルの影響でカクカク・
-      // ギザギザして見えていた。ここではchamfer距離変換(3x3近傍を2パスで
-      // 走査する近似ユークリッド距離)で「最寄りの覆われたピクセルまでの
-      // 距離」を滑らかに求め、半径ちょうどで急に切るのではなく境界付近だけ
-      // アルファをなだらかに変化させる(フェザリング)ことで、縁を丸く
-      // なめらかに見せる。
-      const INF = 1e9;
-      const dist = new Float32Array(n);
-      for (let i = 0; i < n; i++) dist[i] = covered[i] ? 0 : INF;
-      const D1 = 1, D2 = Math.SQRT2;
-      for (let y = 0; y < ch; y++) { // 順方向パス(左上→右下)
-        for (let x = 0; x < cw; x++) {
-          const idx = y * cw + x;
-          let d = dist[idx];
-          if (x > 0) d = Math.min(d, dist[idx - 1] + D1);
-          if (y > 0) {
-            const up = idx - cw;
-            d = Math.min(d, dist[up] + D1);
-            if (x > 0) d = Math.min(d, dist[up - 1] + D2);
-            if (x < cw - 1) d = Math.min(d, dist[up + 1] + D2);
-          }
-          dist[idx] = d;
-        }
-      }
-      for (let y = ch - 1; y >= 0; y--) { // 逆方向パス(右下→左上)
-        for (let x = cw - 1; x >= 0; x--) {
-          const idx = y * cw + x;
-          let d = dist[idx];
-          if (x < cw - 1) d = Math.min(d, dist[idx + 1] + D1);
-          if (y < ch - 1) {
-            const down = idx + cw;
-            d = Math.min(d, dist[down] + D1);
-            if (x < cw - 1) d = Math.min(d, dist[down + 1] + D2);
-            if (x > 0) d = Math.min(d, dist[down - 1] + D2);
-          }
-          dist[idx] = d;
-        }
-      }
-
-      const FEATHER = Math.max(1, bakeToDisplayScale * 0.4); // 縁の太さを絞ったのに合わせ、フェザー幅も控えめに
-      const ringAlpha = new Uint8ClampedArray(n);
-      for (let i = 0; i < n; i++) {
-        if (covered[i]) continue;
-        const t = (radius + FEATHER - dist[i]) / FEATHER; // radius以内=1、radius+FEATHER以遠=0、間はなだらか
-        ringAlpha[i] = Math.max(0, Math.min(1, t)) * 255;
-      }
-
-      const out = ctx.createImageData(cw, ch);
-      for (let i = 0; i < n; i++) {
-        const o = i * 4;
-        const a = src.data[o + 3];
-        if (a > 0) {
-          // 元画像にごくわずかでも不透明度があるピクセルはそのまま描画する
-          // (2値化して切り捨てない。これにより薄いグラデーション部分や
-          // 細い接続部分が消えて見える「欠け」を防ぐ)。
-          out.data[o] = src.data[o];
-          out.data[o + 1] = src.data[o + 1];
-          out.data[o + 2] = src.data[o + 2];
-          out.data[o + 3] = a;
-        } else if (ringAlpha[i] > 0) {
-          if (mode === "light") {
-            out.data[o] = 0; out.data[o + 1] = 0; out.data[o + 2] = 0; out.data[o + 3] = ringAlpha[i];
-          } else {
-            out.data[o] = 255; out.data[o + 1] = 255; out.data[o + 2] = 255; out.data[o + 3] = ringAlpha[i];
-          }
-        }
-        // それ以外(輪郭の外側)は透明のまま(初期値0)。
-      }
-      ctx.putImageData(out, 0, 0);
-      return canvas.toDataURL("image/png");
-    } catch (e) {
-      return null; // fetch失敗・パース失敗等。元画像にフォールバック。
-    } finally {
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-    }
-  })();
-
-  weatherIconBakeCache.set(key, promise);
-  return promise;
-}
-
-// 天気アイコン表示用の共通コンポーネント。旧: <img src={weatherIconUrl(code)}
-// style={{filter: weatherIconOutlineFilter}}/> の置き換え。
+   以前はcanvasで縁取り(輪郭線)を焼き込む処理をしていたが、JMAのアイコンに
+   よっては細い斜線が何本も並ぶ構造のものがあり、縁取りのにじみがその隙間を
+   橋渡ししてつぶれた見た目になる不具合が解決しなかった。
+   縁取り処理そのものをやめ、代わりにアイコンの背後に半透明の明るいグレーの
+   円を敷くだけのシンプルな方式に変更した。これなら元のSVGを一切加工しない
+   ため、アイコン自体が欠けたり潰れたりすることは原理的に起こらない。
+   アイコンの大きさ(width/height)は変えず、背景円だけをその内側に敷く。 */
 function WeatherIcon({ code, size = 68, alt = "", style }) {
-  const { mode } = useContext(ThemeContext);
   const url = weatherIconUrl(code);
-  // 表示サイズの4倍で焼き込み、縮小表示してギザつきを抑える(縁取りの
-  // 太さはbakeWeatherIconOutline内でこの倍率に応じて自動調整される)。
-  const longSidePx = Math.max(Math.round(size * 4), 160);
-  const [dataUrl, setDataUrl] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setDataUrl(null);
-    bakeWeatherIconOutline(url, mode, longSidePx, size).then((d) => {
-      if (!cancelled) setDataUrl(d);
-    });
-    return () => { cancelled = true; };
-  }, [url, mode, longSidePx]);
-
-  // objectFit: "contain" は保険。焼き込みは常に元の縦横比を保って行われる
-  // ため通常は引き伸ばされないが、万一縦横比が正方形からずれるアイコンが
-  // あっても、表示側で潰れたり伸びたりしないようにしておく。
+  // 背景円はアイコンよりわずかに小さくして、円の縁がアイコンの絵の外に
+  // はみ出て見えないようにする。
+  const circleSize = Math.round(size * 0.86);
   return (
-    <img
-      src={dataUrl || url}
-      alt={alt}
-      width={size}
-      height={size}
-      style={{ objectFit: "contain", ...style }}
-    />
+    <div
+      style={{
+        position: "relative", width: size, height: size,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        flexShrink: 0,
+      }}
+    >
+      <div
+        style={{
+          position: "absolute", width: circleSize, height: circleSize,
+          borderRadius: "50%", background: "rgba(220,220,225,0.55)",
+        }}
+      />
+      <img
+        src={url}
+        alt={alt}
+        width={size}
+        height={size}
+        style={{ position: "relative", ...style }}
+      />
+    </div>
   );
 }
 // 地域時系列予報(VPFD)は天気をweatherCodesではなく「くもり」「雨」のような短い
