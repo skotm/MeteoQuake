@@ -1,4 +1,4 @@
-# MeteoQuake
+# MeteoQuake 
 
 地震・津波情報、気象情報を閲覧することができます。
 
