@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.6b";
+const APP_VERSION = "1.6.6c";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -12187,9 +12187,9 @@ function TyphoonDetailCard({ info }) {
   const intensityBadgeColor = getTyphoonIntensityBadgeColor(info.intensity);
 
   return (
-    <div style={{ margin: "2px 14px 4px" }}>
+    <div style={{ margin: "0 14px 2px" }}>
       {/* 見出し: 名称の下に「バッジ(左)+発表時刻(右)」を1行にまとめる */}
-      <div style={{ padding: "2px 4px 6px" }}>
+      <div style={{ padding: "0 4px 4px" }}>
         <div style={{
           fontSize: 17, fontWeight: 800, color: tokens.text, lineHeight: 1.15,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
@@ -12199,7 +12199,7 @@ function TyphoonDetailCard({ info }) {
         {/* バッジの有無(0〜2個)に関わらず、この行の高さは常に一定にする。
             そうしないと、選ぶ台風/予報時点によってバッジの数が変わるたびに
             下のガラスパネルの位置が上下に押し出されてしまうため。 */}
-        <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 5, minHeight: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4, minHeight: 18 }}>
           {scaleBadgeColor && (
             <span style={{
               fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 7,
@@ -12224,11 +12224,11 @@ function TyphoonDetailCard({ info }) {
       </div>
 
       {/* バッジより下の詳細情報(中心気圧〜移動方向まで)を、まとめて1枚のガラスで囲む */}
-      <Glass radius={16} style={{ padding: "8px 12px" }}>
+      <Glass radius={16} style={{ padding: "6px 12px" }}>
         {/* 中心気圧・最大風速 — ひときわ大きい数字で強調する */}
         <div style={{
           display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 8,
-          paddingBottom: 4, marginBottom: 3,
+          paddingBottom: 3, marginBottom: 3,
           borderBottom: `0.5px solid rgba(${tokens.ink},0.12)`,
         }}>
           {primaryStats.map(stat => (
@@ -12244,10 +12244,19 @@ function TyphoonDetailCard({ info }) {
           ))}
         </div>
 
-        {/* その他の項目 — 縦に2段組にならないよう、常に1行(最大4列)に収める */}
+        {/* その他の項目 — 常に1行(最大4列)に収め、項目同士の間に縦の仕切り線を入れる。
+            ただし上の横の仕切り線とは接続しない(セル自体の上端には線を引かず、
+            隣同士を区切る縦線だけを立てる)ようにしている。 */}
         <div style={{ display: "grid", gridTemplateColumns: `repeat(${secondaryStats.length}, 1fr)`, columnGap: 6 }}>
-          {secondaryStats.map(stat => (
-            <div key={stat.label} style={{ textAlign: "center" }}>
+          {secondaryStats.map((stat, i) => (
+            <div
+              key={stat.label}
+              style={{
+                textAlign: "center",
+                borderLeft: i > 0 ? `0.5px solid rgba(${tokens.ink},0.12)` : "none",
+                paddingLeft: i > 0 ? 6 : 0,
+              }}
+            >
               <div style={{ fontSize: 9.5, fontWeight: 700, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>
                 {stat.label}
               </div>
