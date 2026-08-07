@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.5e";
+const APP_VERSION = "1.6.6";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1251,6 +1251,17 @@ async function fetchTyphoonData(forecastIntervalHours = 12) {
       const speedKmh = specNow.speed?.["km/h"] || null;
       const timeLabel = `${formatTyphoonForecastTimeLabel(current.validtime?.JST || current.validtime?.UTC)} 実況`;
 
+      // 暴風警戒域(輪郭線)の元データを先に確定させ、暴風域の塗りも同じ円弧を使う
+      const stormWarningSource = points.slice().reverse().find(item => item.stormWarningArea?.arc?.length);
+      const currentStormArc = current.stormWarningArea?.arc?.[0] || stormWarningSource?.stormWarningArea?.arc?.[0];
+      const stormAreaCenter = parseJMACoord(currentStormArc?.[0]) || centerPos;
+      const stormRadiusKm = getJMATyphoonRadiusKm(currentStormArc?.[1]);
+
+      // 強風域(15m/s以上の風が吹く範囲)。台風一覧タップ時、この範囲が画面に収まる
+      // ズーム倍率でflyToするために、暴風域より先に半径・中心を確定させておく。
+      const galeCenter = parseJMACoord(current.galeWarningArea?.center) || centerPos;
+      const galeRadiusKm = getJMATyphoonRadiusKm(current.galeWarningArea?.radius);
+
       features.push(turf.point(centerPos, {
         type: "center",
         id: tc.tropicalCyclone,
@@ -1263,20 +1274,18 @@ async function fetchTyphoonData(forecastIntervalHours = 12) {
         category: formatTyphoonCategoryLabel(currentCategory, tc.category),
         weakened, pressure, maxWind, maxGust, scale, intensity, speed, courseText, speedKmh, timeLabel,
         lon: centerPos[0], lat: centerPos[1],
+        // 一覧タップ時のflyTo先で、地図に強風域(無ければ暴風域、それも無ければ台風の中心のみ)が
+        // 収まるズーム倍率を計算するために使う。
+        areaRadiusKm: galeRadiusKm || stormRadiusKm || null,
+        areaLon: (galeRadiusKm ? galeCenter[0] : stormRadiusKm ? stormAreaCenter[0] : centerPos[0]),
+        areaLat: (galeRadiusKm ? galeCenter[1] : stormRadiusKm ? stormAreaCenter[1] : centerPos[1]),
       });
 
-      // 暴風警戒域(輪郭線)の元データを先に確定させ、暴風域の塗りも同じ円弧を使う
-      const stormWarningSource = points.slice().reverse().find(item => item.stormWarningArea?.arc?.length);
-      const currentStormArc = current.stormWarningArea?.arc?.[0] || stormWarningSource?.stormWarningArea?.arc?.[0];
-      const stormAreaCenter = parseJMACoord(currentStormArc?.[0]) || centerPos;
-      const stormRadiusKm = getJMATyphoonRadiusKm(currentStormArc?.[1]);
       if (stormRadiusKm) {
         features.push(turf.circle(stormAreaCenter, stormRadiusKm, { steps: 64, units: "kilometers", properties: { type: "stormArea" } }));
       }
 
-      const galeRadiusKm = getJMATyphoonRadiusKm(current.galeWarningArea?.radius);
       if (galeRadiusKm) {
-        const galeCenter = parseJMACoord(current.galeWarningArea?.center) || centerPos;
         features.push(turf.circle(galeCenter, galeRadiusKm, { steps: 64, units: "kilometers", properties: { type: "windArea" } }));
       }
 
@@ -2644,11 +2653,31 @@ function MapCanvas({
     });
   }, [status, typhoonVisible]);
 
-  // 台風一覧の項目をタップした時、その台風の中心へflyToする。
+  // 台風一覧の項目をタップした時、その台風の強風域(無ければ暴風域)が画面に
+  // 収まるズーム倍率でflyToする。半径データが無い(弱い熱帯低気圧等で強風域・
+  // 暴風域のどちらも出ていない)場合だけ、中心点への通常のflyToにフォールバックする。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready" || !typhoonFlyToRequest) return;
-    map.flyTo({ center: [typhoonFlyToRequest.lon, typhoonFlyToRequest.lat], zoom: 6 });
+    const { lon, lat, areaLon, areaLat, areaRadiusKm } = typhoonFlyToRequest;
+    if (areaRadiusKm) {
+      // 中心+半径(km)から単純な矩形バウンディングボックスを作る。
+      // 緯度1度 ≈ 111.32km、経度1度 ≈ 111.32km×cos(緯度) で近似する。
+      const latDelta = areaRadiusKm / 111.32;
+      const lonDelta = areaRadiusKm / (111.32 * Math.max(0.1, Math.cos(areaLat * Math.PI / 180)));
+      map.fitBounds(
+        [[areaLon - lonDelta, areaLat - latDelta], [areaLon + lonDelta, areaLat + latDelta]],
+        {
+          padding: isWide
+            ? { top: 40, bottom: 40, left: 460, right: 40 }
+            : { top: 80, bottom: 220, left: 40, right: 40 },
+          maxZoom: 9,
+          duration: 800,
+        }
+      );
+    } else {
+      map.flyTo({ center: [lon, lat], zoom: 6, duration: 800 });
+    }
   }, [status, typhoonFlyToRequest]);
 
   // 緊急地震速報: areas[]に予測震度がある場合、その地域を細分区域.json上で
@@ -18029,15 +18058,22 @@ export default function App() {
   const handleClearSelectedTyphoon = useCallback(() => {
     setSelectedTyphoonInfo(null);
   }, []);
-  // 台風一覧の項目をタップした時、地図をその台風の中心へflyToするためのリクエスト。
-  // {lon, lat, nonce} | null。nonceは同じ地点を連続でタップしても毎回flyToが
-  // 起きるようにするための単純カウンタ。
+  // 台風一覧の項目をタップした時、地図をその台風の強風域(無ければ暴風域、それも
+  // 無ければ中心のみ)が画面に収まるズーム倍率でflyToするためのリクエスト。
+  // {lon, lat, areaRadiusKm, areaLon, areaLat, nonce} | null。nonceは同じ地点を
+  // 連続でタップしても毎回flyToが起きるようにするための単純カウンタ。
   const [typhoonFlyToRequest, setTyphoonFlyToRequest] = useState(null);
   const handleSelectTyphoon = useCallback((typhoon) => {
     if (!typhoon) return;
     setSelectedTyphoonInfo(typhoon);
     if (typhoon.lon != null && typhoon.lat != null) {
-      setTyphoonFlyToRequest({ lon: typhoon.lon, lat: typhoon.lat, nonce: Date.now() });
+      setTyphoonFlyToRequest({
+        lon: typhoon.lon, lat: typhoon.lat,
+        areaRadiusKm: typhoon.areaRadiusKm ?? null,
+        areaLon: typhoon.areaLon ?? typhoon.lon,
+        areaLat: typhoon.areaLat ?? typhoon.lat,
+        nonce: Date.now(),
+      });
     }
   }, []);
   // 現在進行形で有効な(解除されていない)津波情報があるかどうか。潮位観測点
