@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.5b";
+const APP_VERSION = "1.6.5c";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -12122,6 +12122,20 @@ function WeatherMenuFloating({ open, onToggle, growUp = true, nowcastEnabled = f
 // デザインは、ユーザーが参考として共有した「大きな数字+英字サブラベル」風の
 // 台風情報表示を下敷きにしつつ、フローティングパネルの限られた高さに収まるよう
 // 余白は最小限に詰めている。
+// 「大きさ」バッジの色。大型=黄、超大型=赤。それ以外(該当なし)はnull。
+function getTyphoonScaleBadgeColor(scale) {
+  if (scale === "超大型") return { bg: "#C0392B", fg: "#fff" };
+  if (scale === "大型") return { bg: "#E3B62B", fg: "#2B2200" };
+  return null;
+}
+// 「強さ」バッジの色。強い=黄、非常に強い=赤、猛烈な=紫。それ以外はnull。
+function getTyphoonIntensityBadgeColor(intensity) {
+  if (intensity === "猛烈な") return { bg: "#8E44AD", fg: "#fff" };
+  if (intensity === "非常に強い") return { bg: "#C0392B", fg: "#fff" };
+  if (intensity === "強い") return { bg: "#E3B62B", fg: "#2B2200" };
+  return null;
+}
+
 function TyphoonDetailCard({ info }) {
   const { tokens } = useContext(ThemeContext);
   const isForecast = info.forecastTime != null;
@@ -12140,6 +12154,9 @@ function TyphoonDetailCard({ info }) {
     secondaryStats.push({ label: "予報円の半径", value: info.radiusKm, unit: "km" });
   }
 
+  const scaleBadgeColor = getTyphoonScaleBadgeColor(info.scale);
+  const intensityBadgeColor = getTyphoonIntensityBadgeColor(info.intensity);
+
   return (
     <div style={{ margin: "2px 14px 4px" }}>
       {/* 見出し: 名称・発表時刻・大きさ/強さバッジ */}
@@ -12153,26 +12170,27 @@ function TyphoonDetailCard({ info }) {
         <div style={{ fontSize: 11.5, fontWeight: 500, color: `rgba(${tokens.ink},0.5)`, marginTop: 1 }}>
           {timeLabel}
         </div>
-        {(info.scale !== "-" || info.intensity !== "-") && (
-          <div style={{ display: "flex", gap: 5, marginTop: 6, flexWrap: "wrap" }}>
-            {info.scale && info.scale !== "-" && (
-              <span style={{
-                fontSize: 11.5, fontWeight: 800, padding: "2px 9px", borderRadius: 8,
-                background: "#C0392B", color: "#fff",
-              }}>
-                {info.scale}
-              </span>
-            )}
-            {info.intensity && info.intensity !== "-" && (
-              <span style={{
-                fontSize: 11.5, fontWeight: 800, padding: "2px 9px", borderRadius: 8,
-                background: "#E3B62B", color: "#2B2200",
-              }}>
-                {info.intensity}
-              </span>
-            )}
-          </div>
-        )}
+        {/* バッジの有無(0〜2個)に関わらず、この行の高さは常に一定にする。
+            そうしないと、選ぶ台風/予報時点によってバッジの数が変わるたびに
+            下の強調ボックスの位置が上下に押し出されてしまうため。 */}
+        <div style={{ display: "flex", gap: 5, marginTop: 6, minHeight: 22, alignItems: "center", flexWrap: "wrap" }}>
+          {scaleBadgeColor && (
+            <span style={{
+              fontSize: 11.5, fontWeight: 800, padding: "2px 9px", borderRadius: 8,
+              background: scaleBadgeColor.bg, color: scaleBadgeColor.fg,
+            }}>
+              {info.scale}
+            </span>
+          )}
+          {intensityBadgeColor && (
+            <span style={{
+              fontSize: 11.5, fontWeight: 800, padding: "2px 9px", borderRadius: 8,
+              background: intensityBadgeColor.bg, color: intensityBadgeColor.fg,
+            }}>
+              {info.intensity}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* 中心気圧・最大風速 — ひときわ大きい数字で強調するボックス */}
