@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.4";
+const APP_VERSION = "1.6.5";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1323,6 +1323,7 @@ async function fetchTyphoonData(forecastIntervalHours = 12) {
             category: formatTyphoonCategoryLabel(forecastCategory, tc.category),
             weakened: isWeakenedTyphoonClass(forecastCategory),
             forecastTime: forecastLabel,
+            radiusKm: Math.round(radiusKm),
             labelPoint,
             pressure: forecastSpec.pressure || "不明",
             maxWind: forecastSpec.maximumWind?.sustained?.["m/s"] || "不明",
@@ -9303,6 +9304,8 @@ function BottomDock({
   onNowcastChange, // 雨雲レーダーがON中の現在の時刻コマをApp側(地図の雨雲レイヤー表示用)に伝える
   onTyphoonChange, // 台風情報がON中の現在のgeojsonをApp側(地図の台風レイヤー表示用)に伝える
   onSelectTyphoon, // 台風一覧の項目をタップした時に呼ぶ(App側で地図をflyTo)
+  selectedTyphoonInfo, // 時刻チップ/台風一覧の項目をタップして選択中の台風詳細情報。App側で保持
+  onClearSelectedTyphoon, // 台風詳細の選択解除(戻るボタン・フローティングを閉じた時)に呼ぶ
 }) {
   const { tokens, mode } = useContext(ThemeContext);
   const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
@@ -9897,6 +9900,11 @@ function BottomDock({
     }
     onSelectTsunami(null);
   }
+  // 台風タブ版の「戻る」— 詳細カードから一覧表示に戻す。フローティング自体は
+  // 閉じない(閉じた時の選択解除は別のuseEffectで扱う)。
+  function handleBackFromTyphoon() {
+    onClearSelectedTyphoon?.();
+  }
   const backFromTsunamiLabel = showingCausingQuakeFor != null
     ? "予報区一覧に戻る"
     : (tsunamiViewMode === "tidegauge" && selectedTideStationCode != null)
@@ -10305,6 +10313,30 @@ function BottomDock({
     }
     prevEewDetailOpenRef.current = eewDetailOpen;
   }, [eewDetailOpen]);
+
+  // 台風の時刻チップ(地図上)/台風一覧の項目をタップして詳細を選択した瞬間、
+  // フローティングの高さを自動で「中中」にする(EEWの詳細を開いた時と同じ考え方)。
+  // 同じ選択が続いている間(内容の再取得等でオブジェクトの参照だけ変わった場合)は
+  // 高さを勝手に変えないよう、id+forecastTimeで作ったキーの変化だけを見る。
+  const typhoonDetailKey = selectedTyphoonInfo
+    ? `${selectedTyphoonInfo.id || ""}|${selectedTyphoonInfo.forecastTime || ""}`
+    : null;
+  const prevTyphoonDetailKeyRef = useRef(typhoonDetailKey);
+  useEffect(() => {
+    if (typhoonDetailKey && typhoonDetailKey !== prevTyphoonDetailKeyRef.current) {
+      killScrollMomentum();
+      setSnapIndex(2);
+      openedByTapRef.current = true;
+    }
+    prevTyphoonDetailKeyRef.current = typhoonDetailKey;
+  }, [typhoonDetailKey]);
+
+  // フローティングが完全に閉じられたら(snapIndex===0)、台風の詳細選択も解除する。
+  useEffect(() => {
+    if (snapIndex === 0 && selectedTyphoonInfo != null) {
+      onClearSelectedTyphoon?.();
+    }
+  }, [snapIndex, selectedTyphoonInfo, onClearSelectedTyphoon]);
 
   // FAB(!ボタン)を押すたびに増える信号。eewDetailOpenが既にtrueのまま(例: 手元で
   // フローティングだけ閉じていた状態で、もう一度!ボタンを押して確認し直したい時)
@@ -10888,7 +10920,11 @@ function BottomDock({
             top: wideAnchorRect.top + 16,
             zIndex: 50,
           }}>
-            <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={false} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)} typhoonEnabled={typhoonEnabled} onToggleTyphoon={() => setTyphoonEnabled(v => !v)}/>
+            {selectedTyphoonInfo ? (
+              <BackToListButton onClick={handleBackFromTyphoon} label="台風一覧に戻る"/>
+            ) : (
+              <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={false} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)} typhoonEnabled={typhoonEnabled} onToggleTyphoon={() => setTyphoonEnabled(v => !v)}/>
+            )}
           </div>
           {/* 雨雲レーダーの時刻スライダー(横画面) — 縦画面の時と同じく、展開メニューが
               閉じている間だけ表示する。縦画面ではボタンのすぐ上に置いているが、
@@ -10933,7 +10969,11 @@ function BottomDock({
               onChangeFrameIndex={setNowcastFrameIndex}
             />
           )}
-          <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={true} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)} typhoonEnabled={typhoonEnabled} onToggleTyphoon={() => setTyphoonEnabled(v => !v)}/>
+          {selectedTyphoonInfo ? (
+            <BackToListButton onClick={handleBackFromTyphoon} label="台風一覧に戻る"/>
+          ) : (
+            <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={true} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)} typhoonEnabled={typhoonEnabled} onToggleTyphoon={() => setTyphoonEnabled(v => !v)}/>
+          )}
         </div>
         )
       )}
@@ -11340,11 +11380,15 @@ function BottomDock({
               <>
                 {active === "weather" ? (
                   typhoonEnabled ? (
-                    <TyphoonListPanel
-                      typhoons={typhoonList}
-                      loadError={typhoonLoadError}
-                      onSelectTyphoon={onSelectTyphoon}
-                    />
+                    selectedTyphoonInfo ? (
+                      <TyphoonDetailCard info={selectedTyphoonInfo}/>
+                    ) : (
+                      <TyphoonListPanel
+                        typhoons={typhoonList}
+                        loadError={typhoonLoadError}
+                        onSelectTyphoon={onSelectTyphoon}
+                      />
+                    )
                   ) : (
                   <WeatherLocationPanel
                     geoState={geoState}
@@ -12061,6 +12105,71 @@ function WeatherMenuFloating({ open, onToggle, growUp = true, nowcastEnabled = f
    タップすると地図がその台風の中心へflyToする(参考実装のupdateRanking()の
    台風分岐を踏襲)。
    ───────────────────────────────────────────────────── */
+// 台風の詳細カード。時刻チップ(予報円)をタップした時と、台風一覧の項目を
+// タップした時の両方で使う。infoにforecastTimeが入っていれば「その予報時点」の
+// 情報、入っていなければ「現在」の情報として見出しを出し分ける。
+// フィールド名(name/category/weakened/pressure/maxWind/maxGust/scale/intensity/speed)は
+// fetchTyphoonData側で両パターンとも揃えてあるので、カードの中身は共通にできる。
+function TyphoonDetailCard({ info }) {
+  const { tokens } = useContext(ThemeContext);
+  const isForecast = info.forecastTime != null;
+  const color = info.weakened ? "#9AA0A6" : "#0A84FF";
+
+  const rows = [
+    { label: "中心気圧", value: (info.pressure && info.pressure !== "不明") ? `${info.pressure}hPa` : "不明" },
+    { label: "最大風速", value: (info.maxWind && info.maxWind !== "不明") ? `${info.maxWind}m/s` : "不明" },
+    { label: "最大瞬間風速", value: (info.maxGust && info.maxGust !== "不明") ? `${info.maxGust}m/s` : "不明" },
+    { label: "大きさ", value: (info.scale && info.scale !== "-") ? info.scale : "-" },
+    { label: "強さ", value: (info.intensity && info.intensity !== "-") ? info.intensity : "-" },
+    { label: "進行方向・速度", value: info.speed || "-" },
+  ];
+  if (isForecast && info.radiusKm) {
+    rows.push({ label: "予報円の半径", value: `${info.radiusKm}km` });
+  }
+
+  return (
+    <div
+      style={{
+        margin: "2px 14px 4px",
+        borderRadius: 16,
+        padding: "10px 16px 12px",
+        background: `linear-gradient(135deg, ${color}22, ${color}0E)`,
+        boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
+        animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+        <span style={{
+          fontSize: 16, fontWeight: 800, color: tokens.text, flex: 1, minWidth: 0,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          {info.name}
+        </span>
+        <span style={{
+          fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+          background: `rgba(${tokens.ink},0.1)`, color: `rgba(${tokens.ink},0.65)`,
+          whiteSpace: "nowrap", flexShrink: 0,
+        }}>
+          {info.category}
+        </span>
+      </div>
+
+      <div style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.55)`, marginBottom: 10 }}>
+        {isForecast ? `予報: ${info.forecastTime}時点` : "現在の情報"}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", rowGap: 10, columnGap: 14 }}>
+        {rows.map(row => (
+          <div key={row.label} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontSize: 10.5, color: `rgba(${tokens.ink},0.5)` }}>{row.label}</span>
+            <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: tokens.text }}>{row.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TyphoonListPanel({ typhoons = [], loadError = false, onSelectTyphoon }) {
   const { tokens } = useContext(ThemeContext);
 
@@ -17841,11 +17950,16 @@ export default function App() {
   const handleTyphoonChange = useCallback((geojson) => {
     setTyphoonGeojson(geojson);
   }, []);
-  // 台風の中心点/予報円をタップした時のproperties。詳細カードUIは今後実装予定のため、
-  // 現時点ではstateに保持するだけで表示には使っていない。
+  // 台風の中心点/予報円をタップした時のproperties。BottomDock側のTyphoonDetailCardで
+  // 表示する(時刻チップ=予報円タップ、台風一覧タップの両方でここに入る)。
   const [selectedTyphoonInfo, setSelectedTyphoonInfo] = useState(null);
   const handleSelectTyphoonCenter = useCallback((properties) => {
     setSelectedTyphoonInfo(properties || null);
+  }, []);
+  // 台風詳細の選択解除。「戻る」ボタン、およびフローティングを閉じた時にBottomDock側
+  // から呼ばれる。
+  const handleClearSelectedTyphoon = useCallback(() => {
+    setSelectedTyphoonInfo(null);
   }, []);
   // 台風一覧の項目をタップした時、地図をその台風の中心へflyToするためのリクエスト。
   // {lon, lat, nonce} | null。nonceは同じ地点を連続でタップしても毎回flyToが
@@ -19182,6 +19296,8 @@ export default function App() {
                   onNowcastChange={handleNowcastChange}
                   onTyphoonChange={handleTyphoonChange}
                   onSelectTyphoon={handleSelectTyphoon}
+                  selectedTyphoonInfo={selectedTyphoonInfo}
+                  onClearSelectedTyphoon={handleClearSelectedTyphoon}
                   tideStations={tideStationsWithGrade}
                   tideStationsStatus={tideStationsStatus}
                   selectedTideStationCode={selectedTideStationCode}
@@ -19281,6 +19397,8 @@ export default function App() {
                   onNowcastChange={handleNowcastChange}
                   onTyphoonChange={handleTyphoonChange}
                   onSelectTyphoon={handleSelectTyphoon}
+                  selectedTyphoonInfo={selectedTyphoonInfo}
+                  onClearSelectedTyphoon={handleClearSelectedTyphoon}
               tideStations={tideStationsWithGrade}
               tideStationsStatus={tideStationsStatus}
               selectedTideStationCode={selectedTideStationCode}
