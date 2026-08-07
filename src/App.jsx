@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.3e";
+const APP_VERSION = "1.6.3f";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -2453,10 +2453,11 @@ function MapCanvas({
             id: "layer-typhoon-center", type: "circle", source: "typhoon",
             layout: { visibility: "none" }, filter: ["==", "type", "center"],
             paint: {
-              "circle-radius": 8,
-              // 熱帯低気圧・温帯低気圧に変化している場合はグレーで区別する
-              "circle-color": ["case", ["==", ["get", "weakened"], true], "#9AA0A6", "#FF2800"],
-              "circle-stroke-width": 2, "circle-stroke-color": "#FFFFFF",
+              "circle-radius": 6,
+              // 暴風域(赤)と紛らわしいため、現在位置の点はただの白丸にする。
+              // 熱帯低気圧・温帯低気圧に変化している場合のみグレーで区別する。
+              "circle-color": ["case", ["==", ["get", "weakened"], true], "#9AA0A6", "#FFFFFF"],
+              "circle-stroke-width": 2, "circle-stroke-color": "#1c1c1e",
             },
           });
           map.on("mouseenter", "layer-typhoon-center", () => {
