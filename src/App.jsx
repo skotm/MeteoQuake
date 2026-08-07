@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.6a";
+const APP_VERSION = "1.6.6b";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -12228,13 +12228,13 @@ function TyphoonDetailCard({ info }) {
         {/* 中心気圧・最大風速 — ひときわ大きい数字で強調する */}
         <div style={{
           display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 8,
-          paddingBottom: 6, marginBottom: 6,
+          paddingBottom: 4, marginBottom: 3,
           borderBottom: `0.5px solid rgba(${tokens.ink},0.12)`,
         }}>
           {primaryStats.map(stat => (
-            <div key={stat.label}>
+            <div key={stat.label} style={{ textAlign: "center" }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>{stat.label}</div>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 3 }}>
                 <span className="mono" style={{ fontSize: 24, fontWeight: 800, color: tokens.text, lineHeight: 1.15 }}>
                   {stat.value}
                 </span>
@@ -12247,11 +12247,11 @@ function TyphoonDetailCard({ info }) {
         {/* その他の項目 — 縦に2段組にならないよう、常に1行(最大4列)に収める */}
         <div style={{ display: "grid", gridTemplateColumns: `repeat(${secondaryStats.length}, 1fr)`, columnGap: 6 }}>
           {secondaryStats.map(stat => (
-            <div key={stat.label}>
+            <div key={stat.label} style={{ textAlign: "center" }}>
               <div style={{ fontSize: 9.5, fontWeight: 700, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>
                 {stat.label}
               </div>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 2 }}>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 2 }}>
                 <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: tokens.text, whiteSpace: "nowrap" }}>
                   {stat.value}
                 </span>
