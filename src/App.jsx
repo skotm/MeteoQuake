@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.6d";
+const APP_VERSION = "1.6.6e";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1356,6 +1356,12 @@ async function fetchTyphoonData(forecastIntervalHours = 12) {
       console.info(
         `台風予報円デバッグ[${tc.tropicalCyclone}]: 間引き後の予報点=${thinnedPoints.length}件 / 実際に円を作れた数=${forecastCircles.length}件`
       );
+      // 台風一覧の詳細カードの下に「予報を時系列で並べたリスト」を出すため、
+      // 円のジオメトリを持たないプレーンな配列としても保持しておく。
+      // 中身(id/name/category/weakened/forecastTime/timeLabel/pressure/maxWind/…)は
+      // 時刻チップタップ時にselectedTyphoonInfoへ渡している形とそのまま揃えてあるので、
+      // このリストの項目をタップした時もTyphoonDetailCardをそのまま使い回せる。
+      list[list.length - 1].forecasts = forecastCircles.map(c => ({ ...c.properties }));
 
       if (forecastCircles.length > 0) {
         let previousCircle = turf.circle(centerPos, 1, { steps: 64, units: "kilometers" });
@@ -9343,6 +9349,7 @@ function BottomDock({
   onSelectTyphoon, // 台風一覧の項目をタップした時に呼ぶ(App側で地図をflyTo)
   selectedTyphoonInfo, // 時刻チップ/台風一覧の項目をタップして選択中の台風詳細情報。App側で保持
   onClearSelectedTyphoon, // 台風詳細の選択解除(戻るボタン・フローティングを閉じた時)に呼ぶ
+  onSelectTyphoonDetail, // 詳細カード内の予報タイムラインで別の時刻をタップした時に呼ぶ
 }) {
   const { tokens, mode } = useContext(ThemeContext);
   const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
@@ -10353,14 +10360,15 @@ function BottomDock({
 
   // 台風の時刻チップ(地図上)/台風一覧の項目をタップして詳細を選択した瞬間、
   // フローティングの高さを自動で「中中」にする(EEWの詳細を開いた時と同じ考え方)。
-  // 同じ選択が続いている間(内容の再取得等でオブジェクトの参照だけ変わった場合)は
-  // 高さを勝手に変えないよう、id+forecastTimeで作ったキーの変化だけを見る。
+  // ただし、詳細カード内の予報タイムラインで時刻を切り替える操作(後述)は
+  // 「選択が変わる」という点では同じだが、その都度パネルの高さを戻されると
+  // 閲覧の邪魔になるため、「未選択→選択」に変わった瞬間だけを対象にする。
   const typhoonDetailKey = selectedTyphoonInfo
     ? `${selectedTyphoonInfo.id || ""}|${selectedTyphoonInfo.forecastTime || ""}`
     : null;
   const prevTyphoonDetailKeyRef = useRef(typhoonDetailKey);
   useEffect(() => {
-    if (typhoonDetailKey && typhoonDetailKey !== prevTyphoonDetailKeyRef.current) {
+    if (typhoonDetailKey && !prevTyphoonDetailKeyRef.current) {
       killScrollMomentum();
       setSnapIndex(2);
       openedByTapRef.current = true;
@@ -11418,7 +11426,11 @@ function BottomDock({
                 {active === "weather" ? (
                   typhoonEnabled ? (
                     selectedTyphoonInfo ? (
-                      <TyphoonDetailCard info={selectedTyphoonInfo}/>
+                      <TyphoonDetailCard
+                        info={selectedTyphoonInfo}
+                        typhoons={typhoonList}
+                        onSelectTyphoonDetail={onSelectTyphoonDetail}
+                      />
                     ) : (
                       <TyphoonListPanel
                         typhoons={typhoonList}
@@ -12165,10 +12177,20 @@ function getTyphoonIntensityBadgeColor(intensity) {
   return null;
 }
 
-function TyphoonDetailCard({ info }) {
+function TyphoonDetailCard({ info, typhoons = [], onSelectTyphoonDetail }) {
   const { tokens } = useContext(ThemeContext);
   const isForecast = info.forecastTime != null;
   const timeLabel = info.timeLabel || (isForecast ? `${info.forecastTime} 予報` : "現在");
+
+  // 予報タイムライン: 「現在」+ この台風の予報点(間引き後、時系列順)。
+  // infoが予報時点を見ている時は、同じ台風のtyphoons側の現在情報(=id一致)を
+  // 探して先頭に足す。infoが「現在」そのものの時は、info自身が既にforecastsを
+  // 持っているのでそれをそのまま使う。
+  const parentTyphoon = info.forecastTime != null
+    ? typhoons.find(t => t.id === info.id)
+    : info;
+  const timelineForecasts = parentTyphoon?.forecasts || [];
+  const timelineItems = parentTyphoon ? [parentTyphoon, ...timelineForecasts] : [];
 
   const primaryStats = [
     { label: "中心気圧", value: (info.pressure && info.pressure !== "不明") ? info.pressure : "―", unit: "hPa" },
@@ -12272,6 +12294,51 @@ function TyphoonDetailCard({ info }) {
           ))}
         </div>
       </Glass>
+
+      {/* 予報タイムライン — 「現在」+ この台風の予報点を時系列で並べる。
+          タップすると、上の詳細カードの中身がその時刻の予報に切り替わる。
+          タイムライン自体は選択中の時刻に関わらず同じ並び("現在"は常に先頭)を
+          保つので、行き来しながら見比べられる。 */}
+      {timelineItems.length > 1 && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ padding: "6px 4px 4px", fontSize: 11.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}>
+            予報の推移
+          </div>
+          <Glass radius={16} style={{ padding: "2px 4px" }}>
+            {timelineItems.map((item, i) => {
+              const itemIsForecast = item.forecastTime != null;
+              const itemLabel = itemIsForecast ? item.forecastTime : "現在";
+              const isSelected = isForecast
+                ? (itemIsForecast && item.forecastTime === info.forecastTime)
+                : !itemIsForecast;
+              return (
+                <div key={itemIsForecast ? `${item.id}-${item.forecastTime}` : `${item.id}-current`}>
+                  {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.1)`, marginLeft: 14 }}/>}
+                  <PressableButton
+                    onClick={() => onSelectTyphoonDetail?.({ ...item, forecasts: timelineForecasts })}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center",
+                      padding: "9px 14px", gap: 10, textAlign: "left",
+                      background: isSelected ? `rgba(${tokens.ink},0.07)` : "transparent",
+                      borderRadius: 12,
+                    }}
+                  >
+                    <span style={{
+                      fontSize: 13, fontWeight: isSelected ? 800 : 600, flex: 1,
+                      color: isSelected ? tokens.text : `rgba(${tokens.ink},0.75)`,
+                    }}>
+                      {itemLabel}
+                    </span>
+                    <span className="mono" style={{ fontSize: 12.5, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>
+                      {item.pressure}hPa / {item.maxWind}m/s
+                    </span>
+                  </PressableButton>
+                </div>
+              );
+            })}
+          </Glass>
+        </div>
+      )}
     </div>
   );
 }
@@ -19411,6 +19478,7 @@ export default function App() {
                   onSelectTyphoon={handleSelectTyphoon}
                   selectedTyphoonInfo={selectedTyphoonInfo}
                   onClearSelectedTyphoon={handleClearSelectedTyphoon}
+                  onSelectTyphoonDetail={handleSelectTyphoonCenter}
                   tideStations={tideStationsWithGrade}
                   tideStationsStatus={tideStationsStatus}
                   selectedTideStationCode={selectedTideStationCode}
@@ -19512,6 +19580,7 @@ export default function App() {
                   onSelectTyphoon={handleSelectTyphoon}
                   selectedTyphoonInfo={selectedTyphoonInfo}
                   onClearSelectedTyphoon={handleClearSelectedTyphoon}
+                  onSelectTyphoonDetail={handleSelectTyphoonCenter}
               tideStations={tideStationsWithGrade}
               tideStationsStatus={tideStationsStatus}
               selectedTideStationCode={selectedTideStationCode}
