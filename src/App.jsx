@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.5a";
+const APP_VERSION = "1.6.5b";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1245,18 +1245,23 @@ async function fetchTyphoonData(forecastIntervalHours = 12) {
       const scale = specNow.scale || "-";
       const intensity = specNow.intensity || "-";
       const speed = specNow.speed?.["km/h"] ? `${specNow.course || ""} ${specNow.speed["km/h"]}km/h`.trim() : (specNow.course || "-");
+      // 移動速度・移動方向を別々の値としても持っておく(詳細カードで
+      // 「移動速度」「移動方向」を別項目として大きく表示するため)。
+      const courseText = specNow.course || "-";
+      const speedKmh = specNow.speed?.["km/h"] || null;
+      const timeLabel = `${formatTyphoonForecastTimeLabel(current.validtime?.JST || current.validtime?.UTC)} 実況`;
 
       features.push(turf.point(centerPos, {
         type: "center",
         id: tc.tropicalCyclone,
         name: displayName,
         category: formatTyphoonCategoryLabel(currentCategory, tc.category),
-        weakened, pressure, maxWind, maxGust, scale, intensity, speed,
+        weakened, pressure, maxWind, maxGust, scale, intensity, speed, courseText, speedKmh,
       }));
       list.push({
         id: tc.tropicalCyclone, name: displayName,
         category: formatTyphoonCategoryLabel(currentCategory, tc.category),
-        weakened, pressure, maxWind, maxGust, scale, intensity, speed,
+        weakened, pressure, maxWind, maxGust, scale, intensity, speed, courseText, speedKmh, timeLabel,
         lon: centerPos[0], lat: centerPos[1],
       });
 
@@ -1323,6 +1328,7 @@ async function fetchTyphoonData(forecastIntervalHours = 12) {
             category: formatTyphoonCategoryLabel(forecastCategory, tc.category),
             weakened: isWeakenedTyphoonClass(forecastCategory),
             forecastTime: forecastLabel,
+            timeLabel: `${forecastLabel} 予報`,
             radiusKm: Math.round(radiusKm),
             labelPoint,
             pressure: forecastSpec.pressure || "不明",
@@ -1331,6 +1337,8 @@ async function fetchTyphoonData(forecastIntervalHours = 12) {
             scale: forecastSpec.scale || "-",
             intensity: forecastSpec.intensity || "-",
             speed: forecastSpec.speed?.["km/h"] ? `${forecastSpec.course || ""} ${forecastSpec.speed["km/h"]}km/h`.trim() : (forecastSpec.course || "-"),
+            courseText: forecastSpec.course || "-",
+            speedKmh: forecastSpec.speed?.["km/h"] || null,
           },
         });
         forecastCircles.push(circle);
@@ -12108,61 +12116,100 @@ function WeatherMenuFloating({ open, onToggle, growUp = true, nowcastEnabled = f
 // 台風の詳細カード。時刻チップ(予報円)をタップした時と、台風一覧の項目を
 // タップした時の両方で使う。infoにforecastTimeが入っていれば「その予報時点」の
 // 情報、入っていなければ「現在」の情報として見出しを出し分ける。
-// フィールド名(name/category/weakened/pressure/maxWind/maxGust/scale/intensity/speed)は
-// fetchTyphoonData側で両パターンとも揃えてあるので、カードの中身は共通にできる。
+// フィールド名(name/category/weakened/pressure/maxWind/maxGust/scale/intensity/
+// speed/courseText/speedKmh/timeLabel)はfetchTyphoonData側で両パターンとも
+// 揃えてあるので、カードの中身は共通にできる。
+// デザインは、ユーザーが参考として共有した「大きな数字+英字サブラベル」風の
+// 台風情報表示を下敷きにしつつ、フローティングパネルの限られた高さに収まるよう
+// 余白は最小限に詰めている。
 function TyphoonDetailCard({ info }) {
   const { tokens } = useContext(ThemeContext);
   const isForecast = info.forecastTime != null;
-  const color = info.weakened ? "#9AA0A6" : "#0A84FF";
+  const timeLabel = info.timeLabel || (isForecast ? `${info.forecastTime} 予報` : "現在");
 
-  const rows = [
-    { label: "中心気圧", value: (info.pressure && info.pressure !== "不明") ? `${info.pressure}hPa` : "不明" },
-    { label: "最大風速", value: (info.maxWind && info.maxWind !== "不明") ? `${info.maxWind}m/s` : "不明" },
-    { label: "最大瞬間風速", value: (info.maxGust && info.maxGust !== "不明") ? `${info.maxGust}m/s` : "不明" },
-    { label: "大きさ", value: (info.scale && info.scale !== "-") ? info.scale : "-" },
-    { label: "強さ", value: (info.intensity && info.intensity !== "-") ? info.intensity : "-" },
-    { label: "進行方向・速度", value: info.speed || "-" },
+  const primaryStats = [
+    { label: "中心気圧", value: (info.pressure && info.pressure !== "不明") ? info.pressure : "―", unit: "hPa" },
+    { label: "最大風速", value: (info.maxWind && info.maxWind !== "不明") ? info.maxWind : "―", unit: "m/s" },
+  ];
+  const secondaryStats = [
+    { label: "最大瞬間風速", value: (info.maxGust && info.maxGust !== "不明") ? info.maxGust : "―", unit: "m/s" },
+    { label: "移動速度", value: info.speedKmh != null ? info.speedKmh : "―", unit: info.speedKmh != null ? "km/h" : "" },
+    { label: "移動方向", value: (info.courseText && info.courseText !== "-") ? info.courseText : "ほぼ停滞", unit: "" },
   ];
   if (isForecast && info.radiusKm) {
-    rows.push({ label: "予報円の半径", value: `${info.radiusKm}km` });
+    secondaryStats.push({ label: "予報円の半径", value: info.radiusKm, unit: "km" });
   }
 
   return (
-    <div
-      style={{
-        margin: "2px 14px 4px",
-        borderRadius: 14,
-        padding: "8px 14px 10px",
-        background: `linear-gradient(135deg, ${color}22, ${color}0E)`,
-        boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
-        animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 6 }}>
-        <span style={{
-          fontSize: 15, fontWeight: 800, color: tokens.text, minWidth: 0,
+    <div style={{ margin: "2px 14px 4px" }}>
+      {/* 見出し: 名称・発表時刻・大きさ/強さバッジ */}
+      <div style={{ padding: "2px 4px 8px" }}>
+        <div style={{
+          fontSize: 18, fontWeight: 800, color: tokens.text, lineHeight: 1.2,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>
           {info.name}
-        </span>
-        <span style={{
-          fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999,
-          background: `rgba(${tokens.ink},0.1)`, color: `rgba(${tokens.ink},0.65)`,
-          whiteSpace: "nowrap", flexShrink: 0,
-        }}>
-          {info.category}
-        </span>
-        <span style={{ flex: 1, minWidth: 4 }}/>
-        <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap", flexShrink: 0 }}>
-          {isForecast ? `予報:${info.forecastTime}` : "現在"}
-        </span>
+        </div>
+        <div style={{ fontSize: 11.5, fontWeight: 500, color: `rgba(${tokens.ink},0.5)`, marginTop: 1 }}>
+          {timeLabel}
+        </div>
+        {(info.scale !== "-" || info.intensity !== "-") && (
+          <div style={{ display: "flex", gap: 5, marginTop: 6, flexWrap: "wrap" }}>
+            {info.scale && info.scale !== "-" && (
+              <span style={{
+                fontSize: 11.5, fontWeight: 800, padding: "2px 9px", borderRadius: 8,
+                background: "#C0392B", color: "#fff",
+              }}>
+                {info.scale}
+              </span>
+            )}
+            {info.intensity && info.intensity !== "-" && (
+              <span style={{
+                fontSize: 11.5, fontWeight: 800, padding: "2px 9px", borderRadius: 8,
+                background: "#E3B62B", color: "#2B2200",
+              }}>
+                {info.intensity}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", rowGap: 6, columnGap: 8 }}>
-        {rows.map(row => (
-          <div key={row.label} style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-            <span style={{ fontSize: 9.5, color: `rgba(${tokens.ink},0.5)`, whiteSpace: "nowrap" }}>{row.label}</span>
-            <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: tokens.text, whiteSpace: "nowrap" }}>{row.value}</span>
+      {/* 中心気圧・最大風速 — ひときわ大きい数字で強調するボックス */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 8,
+        padding: "8px 12px", borderRadius: 14,
+        background: `rgba(${tokens.ink},0.06)`,
+        marginBottom: 6,
+      }}>
+        {primaryStats.map(stat => (
+          <div key={stat.label}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>{stat.label}</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
+              <span className="mono" style={{ fontSize: 27, fontWeight: 800, color: tokens.text, lineHeight: 1.15 }}>
+                {stat.value}
+              </span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>{stat.unit}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* その他の項目 — 少し小さめの数字で2列に並べる */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", rowGap: 8, columnGap: 8, padding: "0 4px" }}>
+        {secondaryStats.map(stat => (
+          <div key={stat.label}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>
+              {stat.label}
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 2 }}>
+              <span className="mono" style={{ fontSize: 17, fontWeight: 700, color: tokens.text, whiteSpace: "nowrap" }}>
+                {stat.value}
+              </span>
+              {stat.unit && (
+                <span style={{ fontSize: 10.5, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>{stat.unit}</span>
+              )}
+            </div>
           </div>
         ))}
       </div>
