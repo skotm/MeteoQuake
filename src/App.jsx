@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.6c";
+const APP_VERSION = "1.6.6d";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -12224,7 +12224,7 @@ function TyphoonDetailCard({ info }) {
       </div>
 
       {/* バッジより下の詳細情報(中心気圧〜移動方向まで)を、まとめて1枚のガラスで囲む */}
-      <Glass radius={16} style={{ padding: "6px 12px" }}>
+      <Glass radius={16} style={{ padding: "6px 12px 4px" }}>
         {/* 中心気圧・最大風速 — ひときわ大きい数字で強調する */}
         <div style={{
           display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 8,
@@ -12235,10 +12235,10 @@ function TyphoonDetailCard({ info }) {
             <div key={stat.label} style={{ textAlign: "center" }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>{stat.label}</div>
               <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 3 }}>
-                <span className="mono" style={{ fontSize: 24, fontWeight: 800, color: tokens.text, lineHeight: 1.15 }}>
+                <span className="mono" style={{ fontSize: 28, fontWeight: 800, color: tokens.text, lineHeight: 1.15 }}>
                   {stat.value}
                 </span>
-                <span style={{ fontSize: 11.5, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>{stat.unit}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>{stat.unit}</span>
               </div>
             </div>
           ))}
