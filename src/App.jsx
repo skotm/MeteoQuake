@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.5c";
+const APP_VERSION = "1.6.5e";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -12159,7 +12159,7 @@ function TyphoonDetailCard({ info }) {
 
   return (
     <div style={{ margin: "2px 14px 4px" }}>
-      {/* 見出し: 名称・発表時刻・大きさ/強さバッジ */}
+      {/* 見出し: 名称の下に「バッジ(左)+発表時刻(右)」を1行にまとめる */}
       <div style={{ padding: "2px 4px 8px" }}>
         <div style={{
           fontSize: 18, fontWeight: 800, color: tokens.text, lineHeight: 1.2,
@@ -12167,13 +12167,10 @@ function TyphoonDetailCard({ info }) {
         }}>
           {info.name}
         </div>
-        <div style={{ fontSize: 11.5, fontWeight: 500, color: `rgba(${tokens.ink},0.5)`, marginTop: 1 }}>
-          {timeLabel}
-        </div>
         {/* バッジの有無(0〜2個)に関わらず、この行の高さは常に一定にする。
             そうしないと、選ぶ台風/予報時点によってバッジの数が変わるたびに
-            下の強調ボックスの位置が上下に押し出されてしまうため。 */}
-        <div style={{ display: "flex", gap: 5, marginTop: 6, minHeight: 22, alignItems: "center", flexWrap: "wrap" }}>
+            下のガラスパネルの位置が上下に押し出されてしまうため。 */}
+        <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 6, minHeight: 22 }}>
           {scaleBadgeColor && (
             <span style={{
               fontSize: 11.5, fontWeight: 800, padding: "2px 9px", borderRadius: 8,
@@ -12190,47 +12187,53 @@ function TyphoonDetailCard({ info }) {
               {info.intensity}
             </span>
           )}
+          <span style={{ flex: 1, minWidth: 4 }}/>
+          <span style={{ fontSize: 11.5, fontWeight: 500, color: `rgba(${tokens.ink},0.5)`, whiteSpace: "nowrap" }}>
+            {timeLabel}
+          </span>
         </div>
       </div>
 
-      {/* 中心気圧・最大風速 — ひときわ大きい数字で強調するボックス */}
-      <div style={{
-        display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 8,
-        padding: "8px 12px", borderRadius: 14,
-        background: `rgba(${tokens.ink},0.06)`,
-        marginBottom: 6,
-      }}>
-        {primaryStats.map(stat => (
-          <div key={stat.label}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>{stat.label}</div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
-              <span className="mono" style={{ fontSize: 27, fontWeight: 800, color: tokens.text, lineHeight: 1.15 }}>
-                {stat.value}
-              </span>
-              <span style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>{stat.unit}</span>
+      {/* バッジより下の詳細情報(中心気圧〜移動方向まで)を、まとめて1枚のガラスで囲む */}
+      <Glass radius={16} style={{ padding: "10px 12px" }}>
+        {/* 中心気圧・最大風速 — ひときわ大きい数字で強調する */}
+        <div style={{
+          display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 8,
+          paddingBottom: 8, marginBottom: 8,
+          borderBottom: `0.5px solid rgba(${tokens.ink},0.12)`,
+        }}>
+          {primaryStats.map(stat => (
+            <div key={stat.label}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>{stat.label}</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
+                <span className="mono" style={{ fontSize: 27, fontWeight: 800, color: tokens.text, lineHeight: 1.15 }}>
+                  {stat.value}
+                </span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>{stat.unit}</span>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
 
-      {/* その他の項目 — 少し小さめの数字で2列に並べる */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", rowGap: 8, columnGap: 8, padding: "0 4px" }}>
-        {secondaryStats.map(stat => (
-          <div key={stat.label}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>
-              {stat.label}
+        {/* その他の項目 — 少し小さめの数字で2列に並べる */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", rowGap: 8, columnGap: 8 }}>
+          {secondaryStats.map(stat => (
+            <div key={stat.label}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>
+                {stat.label}
+              </div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 2 }}>
+                <span className="mono" style={{ fontSize: 17, fontWeight: 700, color: tokens.text, whiteSpace: "nowrap" }}>
+                  {stat.value}
+                </span>
+                {stat.unit && (
+                  <span style={{ fontSize: 10.5, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>{stat.unit}</span>
+                )}
+              </div>
             </div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 2 }}>
-              <span className="mono" style={{ fontSize: 17, fontWeight: 700, color: tokens.text, whiteSpace: "nowrap" }}>
-                {stat.value}
-              </span>
-              {stat.unit && (
-                <span style={{ fontSize: 10.5, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>{stat.unit}</span>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      </Glass>
     </div>
   );
 }
