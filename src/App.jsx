@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.5";
+const APP_VERSION = "1.6.5a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -12131,38 +12131,38 @@ function TyphoonDetailCard({ info }) {
     <div
       style={{
         margin: "2px 14px 4px",
-        borderRadius: 16,
-        padding: "10px 16px 12px",
+        borderRadius: 14,
+        padding: "8px 14px 10px",
         background: `linear-gradient(135deg, ${color}22, ${color}0E)`,
         boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 6 }}>
         <span style={{
-          fontSize: 16, fontWeight: 800, color: tokens.text, flex: 1, minWidth: 0,
+          fontSize: 15, fontWeight: 800, color: tokens.text, minWidth: 0,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>
           {info.name}
         </span>
         <span style={{
-          fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+          fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999,
           background: `rgba(${tokens.ink},0.1)`, color: `rgba(${tokens.ink},0.65)`,
           whiteSpace: "nowrap", flexShrink: 0,
         }}>
           {info.category}
         </span>
+        <span style={{ flex: 1, minWidth: 4 }}/>
+        <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap", flexShrink: 0 }}>
+          {isForecast ? `予報:${info.forecastTime}` : "現在"}
+        </span>
       </div>
 
-      <div style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.55)`, marginBottom: 10 }}>
-        {isForecast ? `予報: ${info.forecastTime}時点` : "現在の情報"}
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", rowGap: 10, columnGap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", rowGap: 6, columnGap: 8 }}>
         {rows.map(row => (
-          <div key={row.label} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <span style={{ fontSize: 10.5, color: `rgba(${tokens.ink},0.5)` }}>{row.label}</span>
-            <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: tokens.text }}>{row.value}</span>
+          <div key={row.label} style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+            <span style={{ fontSize: 9.5, color: `rgba(${tokens.ink},0.5)`, whiteSpace: "nowrap" }}>{row.label}</span>
+            <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: tokens.text, whiteSpace: "nowrap" }}>{row.value}</span>
           </div>
         ))}
       </div>
