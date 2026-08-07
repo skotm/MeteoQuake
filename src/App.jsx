@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.3f";
+const APP_VERSION = "1.6.4";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1140,67 +1140,43 @@ function pickThinnedForecastPoints(points, intervalHours) {
   return picked;
 }
 
-function getTyphoonPointDistanceSq(a, b) {
-  const dx = a[0] - b[0];
-  const dy = a[1] - b[1];
-  return dx * dx + dy * dy;
-}
-
-function makeStormWarningArcSegment(turf, arc) {
-  const center = parseJMACoord(arc?.[0]);
-  const radiusKm = getJMATyphoonRadiusKm(arc?.[1]);
-  const angles = arc?.[2];
-  if (!center || !radiusKm || !Array.isArray(angles)) return null;
-
-  let start = Number(angles[0]);
-  let end = Number(angles[1]);
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-  if (end < start) end += 360;
-
-  const span = Math.max(1, end - start);
-  const steps = Math.max(8, Math.ceil(span / 5));
-  const centerPoint = turf.point(center);
-  const coordinates = [];
-  for (let i = 0; i <= steps; i++) {
-    const bearing = start + (span * i / steps);
-    coordinates.push(turf.destination(centerPoint, radiusKm, bearing, { units: "kilometers" }).geometry.coordinates);
-  }
-  return coordinates;
-}
-
+// 暴風警戒域(stormWarningArea)のポリゴンを作る。
+// 気象庁データのarc([中心,半径,角度範囲]の組)を角度どおりに弧として描き、
+// 隣接する弧・直線(line)を「一番近い端点同士をつなぐ」貪欲法でリング状に
+// つなぐ実装だったが、弧の向き(時計/反時計、劣弧/優弧)の判定が実データの
+// 規則と合わずに自己交差し、画面いっぱいに伸びる細い三角形のような
+// 破綻した形になる不具合があった。
+// 同じファイル内でforecastArea(予報円の遷移)を作る際に使っている
+// 「連続する円のconvex hullを合成していく」方式は角度に依存せず壊れないため、
+// 暴風警戒域もarcの角度情報は使わず、中心・半径だけを取り出して単純な円を作り、
+// それらを順にconvex hullで結んで帯状のポリゴンを作る方式に統一する。
 function buildStormWarningAreaFeature(turf, stormWarningArea) {
-  const segments = [];
-  (stormWarningArea?.arc || []).forEach(arc => {
-    const segment = makeStormWarningArcSegment(turf, arc);
-    if (segment && segment.length >= 2) segments.push(segment);
-  });
-  (stormWarningArea?.line || []).forEach(line => {
-    const start = parseJMACoord(line?.[0]);
-    const end = parseJMACoord(line?.[1]);
-    if (start && end) segments.push([start, end]);
-  });
-  if (segments.length === 0) return null;
+  const circles = (stormWarningArea?.arc || [])
+    .map(arc => {
+      const center = parseJMACoord(arc?.[0]);
+      const radiusKm = getJMATyphoonRadiusKm(arc?.[1]);
+      if (!center || !radiusKm) return null;
+      return turf.circle(center, radiusKm, { steps: 64, units: "kilometers" });
+    })
+    .filter(Boolean);
+  if (circles.length === 0) return null;
 
-  const unused = segments.slice(1);
-  const ring = segments[0].slice();
-  while (unused.length > 0) {
-    const tail = ring[ring.length - 1];
-    let bestIndex = 0;
-    let bestReverse = false;
-    let bestDistance = Infinity;
-    unused.forEach((segment, index) => {
-      const startDistance = getTyphoonPointDistanceSq(tail, segment[0]);
-      const endDistance = getTyphoonPointDistanceSq(tail, segment[segment.length - 1]);
-      if (startDistance < bestDistance) { bestIndex = index; bestReverse = false; bestDistance = startDistance; }
-      if (endDistance < bestDistance) { bestIndex = index; bestReverse = true; bestDistance = endDistance; }
-    });
-    const next = unused.splice(bestIndex, 1)[0];
-    const ordered = bestReverse ? next.slice().reverse() : next;
-    ring.push(...ordered.slice(1));
+  if (circles.length === 1) {
+    const only = circles[0];
+    only.properties = { type: "stormWarningArea" };
+    return only;
   }
-  if (getTyphoonPointDistanceSq(ring[0], ring[ring.length - 1]) > 0) ring.push(ring[0]);
 
-  return turf.polygon([ring], { type: "stormWarningArea" });
+  let previous = circles[0];
+  let result = null;
+  for (let i = 1; i < circles.length; i++) {
+    const segment = turf.convex(turf.explode(turf.featureCollection([previous, circles[i]])));
+    if (segment) result = result ? (turf.union(result, segment) || result) : segment;
+    previous = circles[i];
+  }
+  if (!result) return null;
+  result.properties = { type: "stormWarningArea" };
+  return result;
 }
 
 function formatTyphoonForecastTimeLabel(time) {
