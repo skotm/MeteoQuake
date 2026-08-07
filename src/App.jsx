@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.3d";
+const APP_VERSION = "1.6.3e";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -606,26 +606,34 @@ function GlobalStyles({ tokens = THEME_TOKENS.dark }) {
 
       .mono { font-variant-numeric: tabular-nums; }
 
-      /* 台風の予報円の横に出す時刻ラベル(maplibregl.Marker) */
+      /* 台風の予報円の横に出す時刻ラベル(maplibregl.Marker)。
+         デザインは参考実装(index.html)の.forecast-time-marker/.fc-class-badgeに合わせている。 */
       .typhoon-forecast-time-marker {
-        display: flex; align-items: center; gap: 4px;
-        padding: 3px 7px;
-        font-size: 11px; font-weight: 600; white-space: nowrap;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.55);
         color: #fff;
-        background: rgba(28,28,30,0.72);
-        border: 1px solid rgba(255,255,255,0.25);
-        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 700;
+        line-height: 1.25;
+        white-space: nowrap;
+        text-shadow: 0 1px 2px #000;
         pointer-events: auto;
         cursor: pointer;
-        -webkit-backdrop-filter: blur(6px);
-        backdrop-filter: blur(6px);
       }
       .typhoon-forecast-class-badge {
-        padding: 1px 5px;
-        font-size: 9px; font-weight: 700;
-        color: #1c1c1e;
-        background: #9AA0A6;
-        border-radius: 5px;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 999px;
+        background: rgba(154, 160, 166, 0.95);
+        color: #1a1a1a;
+        text-shadow: none;
+        white-space: nowrap;
       }
 
       @media (prefers-reduced-motion: reduce) {
