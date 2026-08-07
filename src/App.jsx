@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.6e";
+const APP_VERSION = "1.6.7";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1117,6 +1117,32 @@ function getForecastCircleRadiusKm(item) {
   }
   return null;
 }
+
+// forecast.json上の1予報点(item)から、名称・階級・気圧・風速・大きさ・強さ・
+// 移動方向速度など、詳細カード/予報タイムラインの表示に必要なフィールドをまとめて
+// 作る。半径やジオメトリ(円・ラベル位置)は呼び出し側の用途(地図の予報円か、
+// 一覧の予報タイムラインか)によって必要なものが違うため、ここには含めない。
+function buildTyphoonForecastPointInfo(item, { tc, specifications, currentCategory, typhoonNo, name }) {
+  const forecastLabel = formatTyphoonForecastTimeLabel(item.validtime?.JST || item.validtime?.UTC);
+  const forecastSpec = specifications.find(spec => spec.advancedHours === item.advancedHours) || {};
+  const forecastCategory = forecastSpec.category || currentCategory;
+  return {
+    id: tc.tropicalCyclone,
+    name: getTyphoonDisplayName(forecastCategory, typhoonNo, name),
+    category: formatTyphoonCategoryLabel(forecastCategory, tc.category),
+    weakened: isWeakenedTyphoonClass(forecastCategory),
+    forecastTime: forecastLabel,
+    timeLabel: `${forecastLabel} 予報`,
+    pressure: forecastSpec.pressure || "不明",
+    maxWind: forecastSpec.maximumWind?.sustained?.["m/s"] || "不明",
+    maxGust: forecastSpec.maximumWind?.gust?.["m/s"] || "不明",
+    scale: forecastSpec.scale || "-",
+    intensity: forecastSpec.intensity || "-",
+    speed: forecastSpec.speed?.["km/h"] ? `${forecastSpec.course || ""} ${forecastSpec.speed["km/h"]}km/h`.trim() : (forecastSpec.course || "-"),
+    courseText: forecastSpec.course || "-",
+    speedKmh: forecastSpec.speed?.["km/h"] || null,
+  };
+}
 // 予報点を「現在(advancedHours=0)から少なくともintervalHours時間離れているものだけ、
 // 直前に採用した点からもintervalHours時間以上離れているものだけ」を貪欲に拾う形で間引く。
 // 気象庁のadvancedHoursは発表時刻のズレにより必ずしも3,6,12,24の倍数の
@@ -1324,31 +1350,11 @@ async function fetchTyphoonData(forecastIntervalHours = 12) {
           return;
         }
 
-        const forecastLabel = formatTyphoonForecastTimeLabel(item.validtime?.JST || item.validtime?.UTC);
-        const forecastSpec = specifications.find(spec => spec.advancedHours === item.advancedHours) || {};
-        const forecastCategory = forecastSpec.category || currentCategory;
+        const info = buildTyphoonForecastPointInfo(item, { tc, specifications, currentCategory, typhoonNo, name });
         const labelPoint = turf.destination(turf.point(fPos), radiusKm + 35, 45, { units: "kilometers" }).geometry.coordinates;
         const circle = turf.circle(fPos, radiusKm, {
           steps: 64, units: "kilometers",
-          properties: {
-            type: "forecastCircle",
-            id: tc.tropicalCyclone,
-            name: getTyphoonDisplayName(forecastCategory, typhoonNo, name),
-            category: formatTyphoonCategoryLabel(forecastCategory, tc.category),
-            weakened: isWeakenedTyphoonClass(forecastCategory),
-            forecastTime: forecastLabel,
-            timeLabel: `${forecastLabel} 予報`,
-            radiusKm: Math.round(radiusKm),
-            labelPoint,
-            pressure: forecastSpec.pressure || "不明",
-            maxWind: forecastSpec.maximumWind?.sustained?.["m/s"] || "不明",
-            maxGust: forecastSpec.maximumWind?.gust?.["m/s"] || "不明",
-            scale: forecastSpec.scale || "-",
-            intensity: forecastSpec.intensity || "-",
-            speed: forecastSpec.speed?.["km/h"] ? `${forecastSpec.course || ""} ${forecastSpec.speed["km/h"]}km/h`.trim() : (forecastSpec.course || "-"),
-            courseText: forecastSpec.course || "-",
-            speedKmh: forecastSpec.speed?.["km/h"] || null,
-          },
+          properties: { type: "forecastCircle", ...info, radiusKm: Math.round(radiusKm), labelPoint },
         });
         forecastCircles.push(circle);
         features.push(circle);
@@ -1358,10 +1364,16 @@ async function fetchTyphoonData(forecastIntervalHours = 12) {
       );
       // 台風一覧の詳細カードの下に「予報を時系列で並べたリスト」を出すため、
       // 円のジオメトリを持たないプレーンな配列としても保持しておく。
-      // 中身(id/name/category/weakened/forecastTime/timeLabel/pressure/maxWind/…)は
-      // 時刻チップタップ時にselectedTyphoonInfoへ渡している形とそのまま揃えてあるので、
-      // このリストの項目をタップした時もTyphoonDetailCardをそのまま使い回せる。
-      list[list.length - 1].forecasts = forecastCircles.map(c => ({ ...c.properties }));
+      // 地図の予報円は表示間隔設定で間引くが、このリストは間引かず、
+      // advancedHours>0の予報点を全件載せる(半径が無くても一覧には出せるので
+      // getForecastCircleRadiusKmが失敗する点も除外しない)。
+      list[list.length - 1].forecasts = points
+        .filter(item => item.advancedHours > 0)
+        .map(item => {
+          const info = buildTyphoonForecastPointInfo(item, { tc, specifications, currentCategory, typhoonNo, name });
+          const radiusKm = getForecastCircleRadiusKm(item);
+          return { ...info, radiusKm: radiusKm ? Math.round(radiusKm) : null };
+        });
 
       if (forecastCircles.length > 0) {
         let previousCircle = turf.circle(centerPos, 1, { steps: 64, units: "kilometers" });
@@ -12311,6 +12323,8 @@ function TyphoonDetailCard({ info, typhoons = [], onSelectTyphoonDetail }) {
               const isSelected = isForecast
                 ? (itemIsForecast && item.forecastTime === info.forecastTime)
                 : !itemIsForecast;
+              const itemScaleColor = getTyphoonScaleBadgeColor(item.scale);
+              const itemIntensityColor = getTyphoonIntensityBadgeColor(item.intensity);
               return (
                 <div key={itemIsForecast ? `${item.id}-${item.forecastTime}` : `${item.id}-current`}>
                   {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.1)`, marginLeft: 14 }}/>}
@@ -12318,17 +12332,39 @@ function TyphoonDetailCard({ info, typhoons = [], onSelectTyphoonDetail }) {
                     onClick={() => onSelectTyphoonDetail?.({ ...item, forecasts: timelineForecasts })}
                     style={{
                       width: "100%", display: "flex", alignItems: "center",
-                      padding: "9px 14px", gap: 10, textAlign: "left",
+                      padding: "9px 14px", gap: 8, textAlign: "left",
                       background: isSelected ? `rgba(${tokens.ink},0.07)` : "transparent",
                       borderRadius: 12,
                     }}
                   >
                     <span style={{
-                      fontSize: 13, fontWeight: isSelected ? 800 : 600, flex: 1,
+                      fontSize: 13, fontWeight: isSelected ? 800 : 600, flexShrink: 0,
                       color: isSelected ? tokens.text : `rgba(${tokens.ink},0.75)`,
                     }}>
                       {itemLabel}
                     </span>
+                    {/* 勢力(強さ)・サイズ(大きさ)の情報がある予報点だけ、小さめのバッジを添える */}
+                    {(itemScaleColor || itemIntensityColor) && (
+                      <span style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+                        {itemScaleColor && (
+                          <span style={{
+                            fontSize: 9.5, fontWeight: 800, padding: "1px 6px", borderRadius: 6,
+                            background: itemScaleColor.bg, color: itemScaleColor.fg, whiteSpace: "nowrap",
+                          }}>
+                            {item.scale}
+                          </span>
+                        )}
+                        {itemIntensityColor && (
+                          <span style={{
+                            fontSize: 9.5, fontWeight: 800, padding: "1px 6px", borderRadius: 6,
+                            background: itemIntensityColor.bg, color: itemIntensityColor.fg, whiteSpace: "nowrap",
+                          }}>
+                            {item.intensity}
+                          </span>
+                        )}
+                      </span>
+                    )}
+                    <span style={{ flex: 1 }}/>
                     <span className="mono" style={{ fontSize: 12.5, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>
                       {item.pressure}hPa / {item.maxWind}m/s
                     </span>
