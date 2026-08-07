@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.3c";
+const APP_VERSION = "1.6.3d";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1109,6 +1109,29 @@ function getForecastCircleRadiusKm(item) {
   }
   return null;
 }
+// 予報点を「現在(advancedHours=0)から少なくともintervalHours時間離れているものだけ、
+// 直前に採用した点からもintervalHours時間以上離れているものだけ」を貪欲に拾う形で間引く。
+// 気象庁のadvancedHoursは発表時刻のズレにより必ずしも3,6,12,24の倍数の
+// キレイなグリッドに並ばない(例: 1,4,7,10,...のように1時間オフセットしていたり、
+// 12,24,45,69,...のように不規則だったりする)。そのため「advancedHours % interval」で
+// 判定すると、オフセットとの相性次第で予報点が1つも一致せず、予報円が
+// まるごと消えてしまうことがあった。この関数はオフセットに関係なく必ず動く。
+function pickThinnedForecastPoints(points, intervalHours) {
+  const sorted = points
+    .filter(item => item.advancedHours > 0)
+    .slice()
+    .sort((a, b) => a.advancedHours - b.advancedHours);
+  const picked = [];
+  let lastHours = 0; // 現在時刻(advancedHours=0)を基準に数える
+  for (const item of sorted) {
+    if (item.advancedHours - lastHours >= intervalHours) {
+      picked.push(item);
+      lastHours = item.advancedHours;
+    }
+  }
+  return picked;
+}
+
 function getTyphoonPointDistanceSq(a, b) {
   const dx = a[0] - b[0];
   const dy = a[1] - b[1];
@@ -1281,19 +1304,15 @@ async function fetchTyphoonData(forecastIntervalHours = 12) {
       if (stormWarningArea) features.push(stormWarningArea);
 
       const forecastCircles = [];
-      let intervalMatchedCount = 0;
+      const thinnedPoints = pickThinnedForecastPoints(points, forecastIntervalHours);
       // 間引き設定(interval)が原因なのか、半径の取得自体が失敗しているのかを
       // 実機ログだけで切り分けられるよう、対象台風ごとに1回だけ生の予報点一覧を出す。
       console.info(
         `台風予報円デバッグ[${tc.tropicalCyclone}]: forecastIntervalHours=${forecastIntervalHours}`,
-        `advancedHours一覧=${points.map(p => p.advancedHours).join(",")}`
+        `advancedHours一覧=${points.map(p => p.advancedHours).join(",")}`,
+        `間引き後=${thinnedPoints.map(p => p.advancedHours).join(",")}`
       );
-      points.forEach(item => {
-        if (item.advancedHours === 0) return;
-        // 「現在からN時間ごと」だけを表示する間引き。台風接近時に気象庁が
-        // 3時間おきの予報を追加しても、この倍数の時点だけ予報円を出す。
-        if (item.advancedHours % forecastIntervalHours !== 0) return;
-        intervalMatchedCount += 1;
+      thinnedPoints.forEach(item => {
         const fPos = parseJMACoord(item.center);
         const radiusKm = getForecastCircleRadiusKm(item);
         if (!fPos || !radiusKm) {
@@ -1333,7 +1352,7 @@ async function fetchTyphoonData(forecastIntervalHours = 12) {
         features.push(circle);
       });
       console.info(
-        `台風予報円デバッグ[${tc.tropicalCyclone}]: 間隔条件を満たした予報点=${intervalMatchedCount}件 / 実際に円を作れた数=${forecastCircles.length}件`
+        `台風予報円デバッグ[${tc.tropicalCyclone}]: 間引き後の予報点=${thinnedPoints.length}件 / 実際に円を作れた数=${forecastCircles.length}件`
       );
 
       if (forecastCircles.length > 0) {
