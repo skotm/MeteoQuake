@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.7";
+const APP_VERSION = "1.6.8";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -9961,6 +9961,14 @@ function BottomDock({
   function handleBackFromTyphoon() {
     onClearSelectedTyphoon?.();
   }
+  // 詳細カード内の予報タイムラインをタップした時。縦画面では、タイムライン自体が
+  // カードの下(スクロールした先)にあることが多いため、選択を切り替えると同時に
+  // パネルを一番上までスクロールし、更新された詳細カードがすぐ見えるようにする。
+  // 横画面(isWide)はレイアウトが異なり、この配慮は不要なので対象外にする。
+  function handleSelectTyphoonDetail(itemInfo) {
+    if (!isWide && scrollRef.current) scrollRef.current.scrollTop = 0;
+    onSelectTyphoonDetail?.(itemInfo);
+  }
   const backFromTsunamiLabel = showingCausingQuakeFor != null
     ? "予報区一覧に戻る"
     : (tsunamiViewMode === "tidegauge" && selectedTideStationCode != null)
@@ -11441,7 +11449,7 @@ function BottomDock({
                       <TyphoonDetailCard
                         info={selectedTyphoonInfo}
                         typhoons={typhoonList}
-                        onSelectTyphoonDetail={onSelectTyphoonDetail}
+                        onSelectTyphoonDetail={handleSelectTyphoonDetail}
                       />
                     ) : (
                       <TyphoonListPanel
