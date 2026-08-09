@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.7.0c";
+const APP_VERSION = "1.7.0d";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -3237,6 +3237,11 @@ function MapCanvas({
         if (!l.id.startsWith("nowcast-layer-")) return;
         const key = l.id.slice("nowcast-layer-".length);
         if (!key.startsWith(`${nowcastColorSchemeId}-`)) return;
+        // styleは冒頭で一度だけ取得したスナップショットなので、直前のremoveLayerで
+        // 既に消されたレイヤーがまだ載っていることがある。setPaintPropertyは
+        // 存在しないレイヤーに対して呼ぶと例外を投げるため、実際に地図上に
+        // まだ存在するか(map.getLayer)を確認してから呼ぶ。
+        if (!map.getLayer(l.id)) return;
         map.setPaintProperty(l.id, "raster-opacity", key === currentKey ? 0.75 : 0);
       });
     }
@@ -3340,6 +3345,11 @@ function MapCanvas({
       (style.layers || []).forEach(l => {
         if (!l.id.startsWith("precip-layer-")) return;
         const key = l.id.slice("precip-layer-".length);
+        // styleは冒頭で一度だけ取得したスナップショットなので、直前のremoveLayerで
+        // 既に消されたレイヤーがまだ載っていることがある(モードを切り替えた時など)。
+        // setPaintPropertyは存在しないレイヤーに対して呼ぶと例外を投げるため、
+        // 実際に地図上にまだ存在するか(map.getLayer)を確認してから呼ぶ。
+        if (!map.getLayer(l.id)) return;
         map.setPaintProperty(l.id, "raster-opacity", key === currentKey ? 0.75 : 0);
       });
     }
