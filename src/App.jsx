@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.8";
+const APP_VERSION = "1.6.8a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -9825,13 +9825,14 @@ function BottomDock({
   }, [weatherLocationActive, weatherForecastState.status, weatherForecastState.data?.class10Code]);
 
   /* ─────────────────────────────────────────────────────
-     地点登録 — 五十音順の絞り込み選択(あかさたなはまやらわ→あいうえお→
-     一覧)。市区町村の一覧・境界はwarning_areas.json(1,821市区町村)から
-     読み込み、選んだ市区町村の代表点(ポリゴン頂点の単純平均)を登録地点の
-     緯度経度として使う。
+     地点登録 — まず都道府県を選び、その都道府県内で五十音順の絞り込み選択
+     (あかさたなはまやらわ→あいうえお→一覧)を行う。市区町村の一覧・境界は
+     warning_areas.json(1,821市区町村)から読み込み、選んだ市区町村の代表点
+     (ポリゴン頂点の単純平均)を登録地点の緯度経度として使う。
      ───────────────────────────────────────────────────── */
   const [kanaPickerOpen, setKanaPickerOpen] = useState(false);
-  const [kanaPickerStep, setKanaPickerStep] = useState("rows"); // "rows" | "columns" | "list"
+  const [kanaPickerStep, setKanaPickerStep] = useState("prefectures"); // "prefectures" | "rows" | "columns" | "list"
+  const [kanaPickerPref, setKanaPickerPref] = useState(null);
   const [kanaPickerRow, setKanaPickerRow] = useState(null);
   const [kanaPickerCol, setKanaPickerCol] = useState(null);
   const [municipalityList, setMunicipalityList] = useState(null); // null=未読込
@@ -9848,13 +9849,17 @@ function BottomDock({
     return () => { cancelled = true; };
   }, [kanaPickerOpen, municipalityList, municipalityListError]);
 
+  // 選んだ都道府県の中だけで五十音グルーピングする。都道府県未選択(prefecturesの
+  // 段階)の間はnullのままでよい(その段階ではgroupedを使わないため)。
   const kanaGroupedMunicipalities = useMemo(() => {
-    if (!municipalityList) return null;
-    return groupMunicipalitiesByKana(municipalityList);
-  }, [municipalityList]);
+    if (!municipalityList || !kanaPickerPref) return null;
+    const inPref = municipalityList.filter(m => derivePrefFromEewAreaName(m.regionname) === kanaPickerPref);
+    return groupMunicipalitiesByKana(inPref);
+  }, [municipalityList, kanaPickerPref]);
 
   const openKanaPicker = useCallback(() => {
-    setKanaPickerStep("rows");
+    setKanaPickerStep("prefectures");
+    setKanaPickerPref(null);
     setKanaPickerRow(null);
     setKanaPickerCol(null);
     setKanaPickerOpen(true);
@@ -11475,11 +11480,14 @@ function BottomDock({
                     onCloseKanaPicker={closeKanaPicker}
                     kanaPickerStep={kanaPickerStep}
                     onChangeKanaPickerStep={setKanaPickerStep}
+                    kanaPickerPref={kanaPickerPref}
+                    onChangeKanaPickerPref={setKanaPickerPref}
                     kanaPickerRow={kanaPickerRow}
                     onChangeKanaPickerRow={setKanaPickerRow}
                     kanaPickerCol={kanaPickerCol}
                     onChangeKanaPickerCol={setKanaPickerCol}
                     kanaGroupedMunicipalities={kanaGroupedMunicipalities}
+                    municipalityListReady={!!municipalityList}
                     municipalityListError={municipalityListError}
                     onSelectMunicipality={(m) => {
                       setRegisteredWeatherPoint({ name: m.regionname, lat: m.lat, lon: m.lon, regioncode: m.regioncode });
@@ -12449,8 +12457,10 @@ function WeatherLocationPanel({
   activeWeatherPoint, forecastState, timeSeriesState, registeredWeatherPoint, currentMunicipalityName,
   weatherSourceMode, onChangeWeatherSourceMode,
   kanaPickerOpen, onOpenKanaPicker, onCloseKanaPicker,
-  kanaPickerStep, onChangeKanaPickerStep, kanaPickerRow, onChangeKanaPickerRow, kanaPickerCol, onChangeKanaPickerCol,
-  kanaGroupedMunicipalities, municipalityListError, onSelectMunicipality,
+  kanaPickerStep, onChangeKanaPickerStep,
+  kanaPickerPref, onChangeKanaPickerPref,
+  kanaPickerRow, onChangeKanaPickerRow, kanaPickerCol, onChangeKanaPickerCol,
+  kanaGroupedMunicipalities, municipalityListReady, municipalityListError, onSelectMunicipality,
 }) {
   const { tokens } = useContext(ThemeContext);
   const isStandalonePwa = useIsStandalonePwa();
@@ -12464,9 +12474,11 @@ function WeatherLocationPanel({
     return (
       <KanaMunicipalityPicker
         step={kanaPickerStep} onChangeStep={onChangeKanaPickerStep}
+        pref={kanaPickerPref} onChangePref={onChangeKanaPickerPref}
         row={kanaPickerRow} onChangeRow={onChangeKanaPickerRow}
         col={kanaPickerCol} onChangeCol={onChangeKanaPickerCol}
         grouped={kanaGroupedMunicipalities}
+        dataReady={municipalityListReady}
         loadError={municipalityListError}
         onSelect={onSelectMunicipality}
         onClose={onCloseKanaPicker}
@@ -12819,13 +12831,14 @@ function WeatherLocationPanel({
 }
 
 /* ─────────────────────────────────────────────────────
-   KANA MUNICIPALITY PICKER — 地点登録の五十音順選択。
-   「あかさたなはまやらわ」(行)→選んだ行の段(例:あいうえお)→
-   該当する市区町村の一覧、の3ステップで絞り込む。テキスト入力は行わない。
+   KANA MUNICIPALITY PICKER — 地点登録の絞り込み選択。
+   都道府県(北→南の固定順)→「あかさたなはまやらわ」(行)→選んだ行の段
+   (例:あいうえお)→該当する市区町村の一覧、の4ステップで絞り込む。
+   テキスト入力は行わない。
    ───────────────────────────────────────────────────── */
 function KanaMunicipalityPicker({
-  step, onChangeStep, row, onChangeRow, col, onChangeCol,
-  grouped, loadError, onSelect, onClose,
+  step, onChangeStep, pref, onChangePref, row, onChangeRow, col, onChangeCol,
+  grouped, dataReady, loadError, onSelect, onClose,
 }) {
   const { tokens } = useContext(ThemeContext);
 
@@ -12848,7 +12861,9 @@ function KanaMunicipalityPicker({
     </div>
   );
 
-  if (!grouped) {
+  // 市区町村一覧そのものの読み込み中/失敗は、どのステップにいても共通で出す
+  // (都道府県だけ選んで次に進めない状態を避けるため)。
+  if (!dataReady) {
     return (
       <div>
         {header("地点を登録", null)}
@@ -12859,10 +12874,31 @@ function KanaMunicipalityPicker({
     );
   }
 
+  if (step === "prefectures") {
+    return (
+      <div style={{ paddingBottom: 8 }}>
+        {header("地点を登録", null)}
+        <div style={{ display: "flex", flexDirection: "column", maxHeight: 420, overflowY: "auto", padding: "0 18px" }}>
+          {PREF_ORDER.map((p, i) => (
+            <div key={p}>
+              {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.1)` }}/>}
+              <PressableButton
+                onClick={() => { onChangePref(p); onChangeStep("rows"); }}
+                style={{ textAlign: "left", fontSize: 14, color: `rgba(${tokens.ink},0.85)`, padding: "10px 2px", width: "100%" }}
+              >
+                {p}
+              </PressableButton>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   if (step === "rows") {
     return (
       <div style={{ paddingBottom: 14 }}>
-        {header("地点を登録", null)}
+        {header(pref || "地点を登録", () => onChangeStep("prefectures"))}
         <div style={{
           display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8,
           padding: "4px 18px 8px",
@@ -12896,7 +12932,7 @@ function KanaMunicipalityPicker({
           padding: "4px 18px 8px",
         }}>
           {rowDef.columns.map(c => {
-            const count = grouped[row]?.[c]?.length || 0;
+            const count = grouped?.[row]?.[c]?.length || 0;
             return (
               <PressableButton
                 key={c}
@@ -12918,7 +12954,7 @@ function KanaMunicipalityPicker({
   }
 
   // step === "list"
-  const list = grouped[row]?.[col] || [];
+  const list = grouped?.[row]?.[col] || [];
   return (
     <div style={{ paddingBottom: 8 }}>
       {header(`「${col}」から選ぶ`, () => onChangeStep("columns"))}
