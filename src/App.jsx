@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.9";
+const APP_VERSION = "1.7.0";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1052,30 +1052,35 @@ function nowcastNearestIndexToNow(frames) {
    配色は雨雲レーダーと共通(NOWCAST_COLOR_SCHEMES/remapImageDataColors を
    そのまま使う)。
 
-   ⚠️ 1時間分(解析雨量そのもの)のタイルURL構造は複数の一次情報で確認済みだが、
-   3時間・24時間分の要素名(パス末尾の"rasrf"に相当する部分)、および
-   時刻一覧(targetTimes.json)のファイル名・実際の中身の形は未確認。
-   実機で404や想定外のデータが出た場合はconsole.warnに実際のURL・レスポンスを
-   出すようにしてあるので、そこから正しい値を特定して直す想定。
+   実際にtargetTimes.jsonを取得して確認済み(2026-08-08時点):
+   - 要素名は"rasrf"(1時間)/"rasrf03h"(3時間)/"rasrf24h"(24時間)で正しかった。
+   - 同じjsonの中に、この降水量とは無関係な要素(sjfcstmap・slmcs等)を含む
+     エントリも大量に混ざっているため、目的のelementを含むエントリだけを
+     拾う必要がある。
+   - 各エントリにmemberフィールド("none"だったり"immed"だったりする)があり、
+     タイルURL中の"none"の部分は固定ではなく、このmemberをそのまま使う必要が
+     ある(直近の即時値・予報コマはmember="immed"になっており、"none"固定
+     だとそこだけ404していた)。
    ───────────────────────────────────────────────────── */
 const PRECIP_DATA_BASE = "https://www.jma.go.jp/bosai/jmatile/data/rasrf";
 const PRECIP_MODE_CONFIG = {
   precip1h:  { element: "rasrf",     label: "1時間降水量" },
-  precip3h:  { element: "rasrf03h",  label: "3時間降水量" },  // 要検証
-  precip24h: { element: "rasrf24h",  label: "24時間降水量" }, // 要検証
+  precip3h:  { element: "rasrf03h",  label: "3時間降水量" },
+  precip24h: { element: "rasrf24h",  label: "24時間降水量" },
 };
-function precipTileUrl(mode, basetime, validtime, z, x, y) {
+function precipTileUrl(mode, member, basetime, validtime, z, x, y) {
   const element = PRECIP_MODE_CONFIG[mode]?.element || "rasrf";
-  return `${PRECIP_DATA_BASE}/${basetime}/none/${validtime}/surf/${element}/${z}/${x}/${y}.png`;
+  return `${PRECIP_DATA_BASE}/${basetime}/${member}/${validtime}/surf/${element}/${z}/${x}/${y}.png`;
 }
-function precipProtocolUrl(mode, schemeId, basetime, validtime) {
-  return `jmaprecip://${mode}/${schemeId}/${basetime}/${validtime}/{z}/{x}/{y}`;
+function precipProtocolUrl(mode, schemeId, member, basetime, validtime) {
+  return `jmaprecip://${mode}/${schemeId}/${member}/${basetime}/${validtime}/{z}/{x}/{y}`;
 }
 
-// modeの時刻一覧を取得する。[{ basetime, validtime }, ...] を時系列昇順で返す。
+// modeの時刻一覧を取得する。[{ basetime, validtime, member }, ...] を時系列昇順で返す。
 async function loadPrecipFrames(mode) {
   const label = PRECIP_MODE_CONFIG[mode]?.label || mode;
-  const url = `${PRECIP_DATA_BASE}/targetTimes.json`; // 要検証(nowcastのN1/N2のように分かれている可能性もある)
+  const element = PRECIP_MODE_CONFIG[mode]?.element || "rasrf";
+  const url = `${PRECIP_DATA_BASE}/targetTimes.json`;
   let raw;
   try {
     const res = await fetch(url, { cache: "no-store" });
@@ -1089,12 +1094,13 @@ async function loadPrecipFrames(mode) {
     console.warn(`降水量[${label}]: 時刻一覧が空、または想定外の形式です url=${url}`, raw);
     return [];
   }
-  // 降順・昇順どちらで来るか未確認のため、validtimeの文字列比較で昇順に
-  // 整列してから使う(YYYYMMDDHHMMSS形式なので文字列比較=時系列比較になる)。
-  return [...raw]
-    .filter(t => t && t.basetime && t.validtime)
+  // このjsonには降水量以外の要素(sjfcstmap・slmcs等)のエントリも混ざっているため、
+  // elementsに目的の要素名を含むものだけを拾う。validtimeの文字列比較で昇順に
+  // 整列する(YYYYMMDDHHMMSS形式なので文字列比較=時系列比較になる)。
+  return raw
+    .filter(t => t && t.basetime && t.validtime && Array.isArray(t.elements) && t.elements.includes(element))
     .sort((a, b) => String(a.validtime).localeCompare(String(b.validtime)))
-    .map(t => ({ basetime: t.basetime, validtime: t.validtime }));
+    .map(t => ({ basetime: t.basetime, validtime: t.validtime, member: t.member || "none" }));
 }
 
 function formatPrecipFrameLabel(frame) {
@@ -1560,9 +1566,9 @@ function registerPrecipProtocol(maplibregl) {
   if (precipProtocolRegistered) return;
   precipProtocolRegistered = true;
   maplibregl.addProtocol("jmaprecip", async (params, abortController) => {
-    const m = params.url.match(/^jmaprecip:\/\/([a-z0-9]+)\/([a-z]+)\/(\d+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)$/);
+    const m = params.url.match(/^jmaprecip:\/\/([a-z0-9]+)\/([a-z]+)\/([a-z]+)\/(\d+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)$/);
     if (!m) return { data: null };
-    const [, mode, schemeId, basetime, validtime, zStr, xStr, yStr] = m;
+    const [, mode, schemeId, member, basetime, validtime, zStr, xStr, yStr] = m;
     let z = Number(zStr), x = Number(xStr), y = Number(yStr);
     const palette = NOWCAST_COLOR_SCHEMES[schemeId]?.palette || null;
 
@@ -1575,7 +1581,7 @@ function registerPrecipProtocol(maplibregl) {
       x = Math.floor(x / 2);
       y = Math.floor(y / 2);
     }
-    const url = precipTileUrl(mode, basetime, validtime, z, x, y);
+    const url = precipTileUrl(mode, member, basetime, validtime, z, x, y);
     if (precipFailedTileUrls.has(url)) return { data: null };
 
     let res;
@@ -1588,10 +1594,7 @@ function registerPrecipProtocol(maplibregl) {
     if (!res.ok) {
       if (res.status === 404) {
         precipFailedTileUrls.add(url);
-        // 3時間・24時間分は要素名(URL構造)が未確認のため、404になった場合に
-        // 実際のURLをログへ出す。設定タブ「詳細設定」→「ログ」で確認できるので、
-        // ここから正しい要素名を特定して直せる。
-        console.warn(`降水量[${mode}]タイル 404(要素名の推測が外れている可能性があります): ${url}`);
+        console.warn(`降水量[${mode}]タイル 404: ${url}`);
       }
       return { data: null };
     }
@@ -3317,7 +3320,7 @@ function MapCanvas({
     if (!map.getSource(srcId)) {
       map.addSource(srcId, {
         type: "raster",
-        tiles: [precipProtocolUrl(precipMode, nowcastColorSchemeId, precipFrame.basetime, precipFrame.validtime)],
+        tiles: [precipProtocolUrl(precipMode, nowcastColorSchemeId, precipFrame.member, precipFrame.basetime, precipFrame.validtime)],
         tileSize: 256,
         minzoom: 4,
         maxzoom: 10,
