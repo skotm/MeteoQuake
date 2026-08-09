@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.9";
+const APP_VERSION = "1.6.9a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -9564,6 +9564,15 @@ function BottomDock({
   }, [nowcastEnabled, currentNowcastFrame?.basetime, currentNowcastFrame?.validtime, nowcastPreloadKey, nowcastFrames, onNowcastChange]);
 
   /* ─────────────────────────────────────────────────────
+     1時間・3時間・24時間降水量。まずは気象タブのメニューにボタンを追加する
+     段階で、ON/OFFの状態を持つだけ(データの取得・地図への描画は未実装。
+     後続の対応でここに雨雲レーダーや台風情報と同じ形の取得ロジックを足す)。
+     ───────────────────────────────────────────────────── */
+  const [precip1hEnabled, setPrecip1hEnabled] = useState(false);
+  const [precip3hEnabled, setPrecip3hEnabled] = useState(false);
+  const [precip24hEnabled, setPrecip24hEnabled] = useState(false);
+
+  /* ─────────────────────────────────────────────────────
      台風情報。ONにするたびに気象庁 台風情報API(bosai/typhoon)を取得し直し、
      ON中は毎時0分10秒(気象庁の発表タイミングに合わせた台風スケジューラーと
      同じ考え方)に自動更新して追従させる。ONの間だけApp側(地図の台風レイヤー
@@ -10002,6 +10011,22 @@ function BottomDock({
     }
     onSelectTsunami(null);
   }
+  // 気象メニューの項目トグル共通ハンドラ。項目が増えるたびに個別のprops/分岐を
+  // 増やさなくて済むよう、idで振り分ける形にしている。
+  function handleToggleWeatherMenuItem(id) {
+    if (id === "precip1h") setPrecip1hEnabled(v => !v);
+    else if (id === "precip3h") setPrecip3hEnabled(v => !v);
+    else if (id === "precip24h") setPrecip24hEnabled(v => !v);
+    else if (id === "typhoonInfo") setTyphoonEnabled(v => !v);
+    else if (id === "rainRadar") setNowcastEnabled(v => !v);
+  }
+  const weatherMenuItemStates = {
+    precip1h: precip1hEnabled,
+    precip3h: precip3hEnabled,
+    precip24h: precip24hEnabled,
+    typhoonInfo: typhoonEnabled,
+    rainRadar: nowcastEnabled,
+  };
   // 台風タブ版の「戻る」— 詳細カードから一覧表示に戻す。フローティング自体は
   // 閉じない(閉じた時の選択解除は別のuseEffectで扱う)。
   function handleBackFromTyphoon() {
@@ -11034,7 +11059,7 @@ function BottomDock({
             {selectedTyphoonInfo ? (
               <BackToListButton onClick={handleBackFromTyphoon} label="台風一覧に戻る"/>
             ) : (
-              <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={false} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)} typhoonEnabled={typhoonEnabled} onToggleTyphoon={() => setTyphoonEnabled(v => !v)} hasActiveTyphoons={hasActiveTyphoons}/>
+              <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={false} itemStates={weatherMenuItemStates} onToggleItem={handleToggleWeatherMenuItem} hasActiveTyphoons={hasActiveTyphoons}/>
             )}
           </div>
           {/* 雨雲レーダーの時刻スライダー(横画面) — 縦画面の時と同じく、展開メニューが
@@ -11083,7 +11108,7 @@ function BottomDock({
           {selectedTyphoonInfo ? (
             <BackToListButton onClick={handleBackFromTyphoon} label="台風一覧に戻る"/>
           ) : (
-            <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={true} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)} typhoonEnabled={typhoonEnabled} onToggleTyphoon={() => setTyphoonEnabled(v => !v)} hasActiveTyphoons={hasActiveTyphoons}/>
+            <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={true} itemStates={weatherMenuItemStates} onToggleItem={handleToggleWeatherMenuItem} hasActiveTyphoons={hasActiveTyphoons}/>
           )}
         </div>
         )
@@ -12102,6 +12127,9 @@ function StationMarkerToggleButton({ visible, onClick }) {
    ボタンだと分かるようにしている(文字は中央揃え)。
    ───────────────────────────────────────────────────── */
 const WEATHER_MENU_ITEMS = [
+  { id: "precip1h", label: "1時間降水量" },
+  { id: "precip3h", label: "3時間降水量" },
+  { id: "precip24h", label: "24時間降水量" },
   { id: "typhoonInfo", label: "台風情報" },
   { id: "rainRadar", label: "雨雲レーダー" },
 ];
@@ -12115,8 +12143,7 @@ const WEATHER_MENU_ITEMS_PAD = 8;         // 項目ブロックの上下左右�
 const WEATHER_MENU_WIDTH = 172;
 
 function WeatherMenuFloating({
-  open, onToggle, growUp = true, nowcastEnabled = false, onToggleNowcast,
-  typhoonEnabled = false, onToggleTyphoon, hasActiveTyphoons = null,
+  open, onToggle, growUp = true, itemStates = {}, onToggleItem, hasActiveTyphoons = null,
 }) {
   const { tokens } = useContext(ThemeContext);
   const [pressed, setPressed] = useState(false);
@@ -12190,15 +12217,12 @@ function WeatherMenuFloating({
             width: "100%", padding: `0 ${WEATHER_MENU_ITEMS_PAD}px ${WEATHER_MENU_ITEMS_PAD}px`,
           }}>
             {items.map((item) => {
-              const isRainRadar = item.id === "rainRadar";
-              const isTyphoonInfo = item.id === "typhoonInfo";
-              const active = (isRainRadar && nowcastEnabled) || (isTyphoonInfo && typhoonEnabled);
+              const active = !!itemStates[item.id];
               return (
                 <PressableButton
                   key={item.id}
                   onClick={() => {
-                    if (isRainRadar) onToggleNowcast?.();
-                    if (isTyphoonInfo) onToggleTyphoon?.();
+                    onToggleItem?.(item.id);
                     onToggle(); // 選択したらメニュー自体は閉じる
                   }}
                   style={{
