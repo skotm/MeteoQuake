@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.9a";
+const APP_VERSION = "1.6.9";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1029,6 +1029,83 @@ function formatNowcastFrameLabel(frame) {
   return frame.kind === "obs" ? `${time} 実況` : `${time} 予測`;
 }
 
+// フレーム一覧の中から、現在時刻(Date.now())に一番近いものを探す。
+// 雨雲レーダーのN1/N2のように「実況/予測」がファイルで分かれておらず、
+// 1本のtargetTimes.jsonに実況・予報が混ざっている(と思われる)降水量では、
+// これを「現在」の代わりに使う(一覧の再取得時に選択を維持するかどうかの
+// 判定にも使う)。
+function nowcastNearestIndexToNow(frames) {
+  if (!frames || frames.length === 0) return null;
+  const now = Date.now();
+  let bestIdx = 0, bestDist = Infinity;
+  frames.forEach((f, i) => {
+    const ms = nowcastValidtimeToMs(f.validtime);
+    if (ms == null) return;
+    const dist = Math.abs(ms - now);
+    if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+  });
+  return bestIdx;
+}
+
+/* ─────────────────────────────────────────────────────
+   1時間・3時間・24時間降水量(気象庁「今後の雨」降水短時間予報)。
+   配色は雨雲レーダーと共通(NOWCAST_COLOR_SCHEMES/remapImageDataColors を
+   そのまま使う)。
+
+   ⚠️ 1時間分(解析雨量そのもの)のタイルURL構造は複数の一次情報で確認済みだが、
+   3時間・24時間分の要素名(パス末尾の"rasrf"に相当する部分)、および
+   時刻一覧(targetTimes.json)のファイル名・実際の中身の形は未確認。
+   実機で404や想定外のデータが出た場合はconsole.warnに実際のURL・レスポンスを
+   出すようにしてあるので、そこから正しい値を特定して直す想定。
+   ───────────────────────────────────────────────────── */
+const PRECIP_DATA_BASE = "https://www.jma.go.jp/bosai/jmatile/data/rasrf";
+const PRECIP_MODE_CONFIG = {
+  precip1h:  { element: "rasrf",     label: "1時間降水量" },
+  precip3h:  { element: "rasrf03h",  label: "3時間降水量" },  // 要検証
+  precip24h: { element: "rasrf24h",  label: "24時間降水量" }, // 要検証
+};
+function precipTileUrl(mode, basetime, validtime, z, x, y) {
+  const element = PRECIP_MODE_CONFIG[mode]?.element || "rasrf";
+  return `${PRECIP_DATA_BASE}/${basetime}/none/${validtime}/surf/${element}/${z}/${x}/${y}.png`;
+}
+function precipProtocolUrl(mode, schemeId, basetime, validtime) {
+  return `jmaprecip://${mode}/${schemeId}/${basetime}/${validtime}/{z}/{x}/{y}`;
+}
+
+// modeの時刻一覧を取得する。[{ basetime, validtime }, ...] を時系列昇順で返す。
+async function loadPrecipFrames(mode) {
+  const label = PRECIP_MODE_CONFIG[mode]?.label || mode;
+  const url = `${PRECIP_DATA_BASE}/targetTimes.json`; // 要検証(nowcastのN1/N2のように分かれている可能性もある)
+  let raw;
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    raw = await res.json();
+  } catch (err) {
+    console.warn(`降水量[${label}]: 時刻一覧の取得に失敗 url=${url}`, err);
+    throw err;
+  }
+  if (!Array.isArray(raw) || raw.length === 0) {
+    console.warn(`降水量[${label}]: 時刻一覧が空、または想定外の形式です url=${url}`, raw);
+    return [];
+  }
+  // 降順・昇順どちらで来るか未確認のため、validtimeの文字列比較で昇順に
+  // 整列してから使う(YYYYMMDDHHMMSS形式なので文字列比較=時系列比較になる)。
+  return [...raw]
+    .filter(t => t && t.basetime && t.validtime)
+    .sort((a, b) => String(a.validtime).localeCompare(String(b.validtime)))
+    .map(t => ({ basetime: t.basetime, validtime: t.validtime }));
+}
+
+function formatPrecipFrameLabel(frame) {
+  if (!frame) return "";
+  const time = parseNowcastValidTime(frame.validtime);
+  if (!time) return "";
+  const ms = nowcastValidtimeToMs(frame.validtime);
+  const isForecast = ms != null && ms > Date.now();
+  return isForecast ? `${time} 予報` : `${time} 実況`;
+}
+
 /* ─────────────────────────────────────────────────────
    台風情報 — 気象庁 台風情報API(bosai/typhoon)の取得と空間処理。
    turf.jsで暴風域・強風域の円、暴風警戒域(輪郭線から結合したポリゴン)、
@@ -1474,6 +1551,75 @@ function registerNowcastProtocol(maplibregl) {
   });
 }
 
+// 404だったタイルURLの記録(降水量用。雨雲レーダーと別集合にして、
+// 診断メッセージが混ざらないようにする)。
+const precipFailedTileUrls = new Set();
+
+let precipProtocolRegistered = false;
+function registerPrecipProtocol(maplibregl) {
+  if (precipProtocolRegistered) return;
+  precipProtocolRegistered = true;
+  maplibregl.addProtocol("jmaprecip", async (params, abortController) => {
+    const m = params.url.match(/^jmaprecip:\/\/([a-z0-9]+)\/([a-z]+)\/(\d+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)$/);
+    if (!m) return { data: null };
+    const [, mode, schemeId, basetime, validtime, zStr, xStr, yStr] = m;
+    let z = Number(zStr), x = Number(xStr), y = Number(yStr);
+    const palette = NOWCAST_COLOR_SCHEMES[schemeId]?.palette || null;
+
+    // 奇数ズームは1段階粗い偶数ズームのタイルを取得し、該当する象限だけを
+    // 切り出して代用する(雨雲レーダーと同じ方式)。
+    let cropQuadrant = null;
+    if (z % 2 !== 0) {
+      cropQuadrant = { qx: x % 2, qy: y % 2 };
+      z = z - 1;
+      x = Math.floor(x / 2);
+      y = Math.floor(y / 2);
+    }
+    const url = precipTileUrl(mode, basetime, validtime, z, x, y);
+    if (precipFailedTileUrls.has(url)) return { data: null };
+
+    let res;
+    try {
+      res = await fetch(url, { signal: abortController.signal });
+    } catch (err) {
+      if (err.name === "AbortError") throw err;
+      return { data: null };
+    }
+    if (!res.ok) {
+      if (res.status === 404) {
+        precipFailedTileUrls.add(url);
+        // 3時間・24時間分は要素名(URL構造)が未確認のため、404になった場合に
+        // 実際のURLをログへ出す。設定タブ「詳細設定」→「ログ」で確認できるので、
+        // ここから正しい要素名を特定して直せる。
+        console.warn(`降水量[${mode}]タイル 404(要素名の推測が外れている可能性があります): ${url}`);
+      }
+      return { data: null };
+    }
+    const blob = await res.blob();
+
+    if (!cropQuadrant && !palette) {
+      return { data: await blob.arrayBuffer() };
+    }
+
+    const bitmap = await createImageBitmap(blob);
+    const canvas = new OffscreenCanvas(256, 256);
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    if (cropQuadrant) {
+      ctx.drawImage(bitmap, cropQuadrant.qx * 128, cropQuadrant.qy * 128, 128, 128, 0, 0, 256, 256);
+    } else {
+      ctx.drawImage(bitmap, 0, 0, 256, 256);
+    }
+    if (palette) {
+      const imageData = ctx.getImageData(0, 0, 256, 256);
+      remapImageDataColors(imageData, palette);
+      ctx.putImageData(imageData, 0, 0);
+    }
+    const outBlob = await canvas.convertToBlob({ type: "image/png" });
+    return { data: await outBlob.arrayBuffer() };
+  });
+}
+
 /* ─────────────────────────────────────────────────────
    MAPLIBREスタイル生成
    ローカルのworld.json(GeometryCollection)・prefectures.json(FeatureCollection)を
@@ -1716,6 +1862,9 @@ function MapCanvas({
   nowcastKnownValidtimes = [], // 実況+予測の現在の全validtime一覧。この一覧に無くなった
                                 // (=特に予測コマで一覧更新のたびに起きる)キャッシュ済みレイヤーの掃除に使う
   nowcastColorSchemeId = "jma", // 雨雲レーダーの配色スキームID
+  precipVisible = false,        // 1/3/24時間降水量レイヤーを表示するか
+  precipMode = null,            // "precip1h" | "precip3h" | "precip24h" | null
+  precipFrame = null,           // { basetime, validtime } | null。表示中の時刻コマ
   typhoonVisible = false,       // 台風情報レイヤーを表示するか
   typhoonGeojson = null,        // fetchTyphoonData()が返すgeojson({type:"FeatureCollection"})| null
   onSelectTyphoonCenter,        // 台風の中心点/予報円をタップした時にpropertiesを渡すコールバック
@@ -1807,6 +1956,7 @@ function MapCanvas({
       .then(([maplibregl, geo]) => {
         if (cancelled || !containerRef.current) return;
         registerNowcastProtocol(maplibregl);
+        registerPrecipProtocol(maplibregl);
 
         let map;
         try {
@@ -3121,6 +3271,69 @@ function MapCanvas({
     // 早期returnブランチで、マウント解除時の後片付けは地図本体の破棄(map.remove())
     // で行われる。
   }, [nowcastVisible, nowcastFrame?.basetime, nowcastFrame?.validtime, nowcastColorSchemeId, status, nowcastPreloadKey, nowcastKnownValidtimesKey]);
+
+  // 1/3/24時間降水量。雨雲レーダーとは排他(BottomDock側でどちらか一方しか
+  // ONにならない)なので、先読みは行わず表示中のコマ1枚だけをシンプルに
+  // 出し入れする。モード・配色・時刻のいずれかが変わったら、古いレイヤーは
+  // 全部消してから作り直す(先読みキャッシュを気にする必要が無いため単純にできる)。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+
+    const removeAllPrecipLayers = () => {
+      const style = map.getStyle();
+      if (!style) return;
+      (style.layers || []).forEach(l => {
+        if (l.id.startsWith("precip-layer-")) map.removeLayer(l.id);
+      });
+      Object.keys(style.sources || {}).forEach(id => {
+        if (id.startsWith("precip-src-")) map.removeSource(id);
+      });
+    };
+
+    if (!precipVisible || !precipMode || !precipFrame) {
+      removeAllPrecipLayers();
+      return;
+    }
+
+    const key = `${precipMode}-${nowcastColorSchemeId}-${precipFrame.validtime}`;
+    const srcId = `precip-src-${key}`;
+    const layerId = `precip-layer-${key}`;
+
+    const style = map.getStyle();
+    if (style) {
+      (style.layers || []).forEach(l => {
+        if (l.id.startsWith("precip-layer-") && l.id !== layerId) map.removeLayer(l.id);
+      });
+      Object.keys(style.sources || {}).forEach(id => {
+        if (id.startsWith("precip-src-") && id !== srcId) map.removeSource(id);
+      });
+    }
+
+    // 細分区域の震度塗り分けより下に挿入し、震度分布・各種マーカーの上に
+    // かぶらないようにする(雨雲レーダーと同じ考え方)。
+    const beforeId = map.getLayer("areas-intensity-fill") ? "areas-intensity-fill" : undefined;
+
+    if (!map.getSource(srcId)) {
+      map.addSource(srcId, {
+        type: "raster",
+        tiles: [precipProtocolUrl(precipMode, nowcastColorSchemeId, precipFrame.basetime, precipFrame.validtime)],
+        tileSize: 256,
+        minzoom: 4,
+        maxzoom: 10,
+        bounds: NOWCAST_BOUNDS,
+        attribution: "気象庁",
+      });
+    }
+    if (!map.getLayer(layerId)) {
+      map.addLayer({
+        id: layerId,
+        type: "raster",
+        source: srcId,
+        paint: { "raster-opacity": 0.75 },
+      }, beforeId);
+    }
+  }, [precipVisible, precipMode, precipFrame?.basetime, precipFrame?.validtime, nowcastColorSchemeId, status]);
 
   // 推計震度分布(気象庁 estimated_intensity_map)を更新する。
   // 選択中の地震・設定トグルが変わるたびに、画像を取得・ピクセル解析してGeoJSONに変換し、
@@ -9365,6 +9578,7 @@ function BottomDock({
   uiScale = 1,
   onCurrentLocationChange, // 気象タブ「地点」モードでGPS取得できた現在地をApp側(地図の青丸表示用)に伝える
   onNowcastChange, // 雨雲レーダーがON中の現在の時刻コマをApp側(地図の雨雲レイヤー表示用)に伝える
+  onPrecipChange, // 1/3/24時間降水量がON中の現在のモード・時刻コマをApp側(地図の降水量レイヤー表示用)に伝える
   onTyphoonChange, // 台風情報がON中の現在のgeojsonをApp側(地図の台風レイヤー表示用)に伝える
   onSelectTyphoon, // 台風一覧の項目をタップした時に呼ぶ(App側で地図をflyTo)
   selectedTyphoonInfo, // 時刻チップ/台風一覧の項目をタップして選択中の台風詳細情報。App側で保持
@@ -9564,13 +9778,77 @@ function BottomDock({
   }, [nowcastEnabled, currentNowcastFrame?.basetime, currentNowcastFrame?.validtime, nowcastPreloadKey, nowcastFrames, onNowcastChange]);
 
   /* ─────────────────────────────────────────────────────
-     1時間・3時間・24時間降水量。まずは気象タブのメニューにボタンを追加する
-     段階で、ON/OFFの状態を持つだけ(データの取得・地図への描画は未実装。
-     後続の対応でここに雨雲レーダーや台風情報と同じ形の取得ロジックを足す)。
+     1時間・3時間・24時間降水量(今後の雨・降水短時間予報)。
+     precipMode("precip1h"|"precip3h"|"precip24h"|null)はラジオボタン的な
+     排他選択(3つ同時にはONにならない)。雨雲レーダーとも排他で、どちらかを
+     ONにするともう片方は自動でOFFになる(exclusivityはhandleToggleWeatherMenuItem
+     側で処理)。ON中は雨雲レーダーと同じく5分おきに一覧を再取得して追従させる。
      ───────────────────────────────────────────────────── */
-  const [precip1hEnabled, setPrecip1hEnabled] = useState(false);
-  const [precip3hEnabled, setPrecip3hEnabled] = useState(false);
-  const [precip24hEnabled, setPrecip24hEnabled] = useState(false);
+  const [precipMode, setPrecipMode] = useState(null);
+  const [precipFrames, setPrecipFrames] = useState(null); // null=未読込
+  const [precipFrameIndex, setPrecipFrameIndex] = useState(null);
+  const [precipLoadError, setPrecipLoadError] = useState(false);
+  const precipFramesRef = useRef(null);
+  const precipFrameIndexRef = useRef(null);
+  useEffect(() => { precipFramesRef.current = precipFrames; }, [precipFrames]);
+  useEffect(() => { precipFrameIndexRef.current = precipFrameIndex; }, [precipFrameIndex]);
+
+  useEffect(() => {
+    if (!precipMode) {
+      setPrecipFrames(null);
+      setPrecipFrameIndex(null);
+      setPrecipLoadError(false);
+      return;
+    }
+    let cancelled = false;
+    const fetchAndApply = () => {
+      loadPrecipFrames(precipMode)
+        .then((frames) => {
+          if (cancelled) return;
+          setPrecipLoadError(false);
+          // 「現在」に相当するコマが分からない(kindの区別が無い)データなので、
+          // 現在時刻に一番近いコマを暫定的な基準にする。
+          let nextIndex = nowcastNearestIndexToNow(frames);
+
+          const prevFrames = precipFramesRef.current;
+          const prevIndex = precipFrameIndexRef.current;
+          if (prevFrames && prevIndex != null && frames.length > 0) {
+            const prevNearestIndex = nowcastNearestIndexToNow(prevFrames);
+            const wasFollowingLatest = prevIndex === prevNearestIndex;
+            // 過去のコマを手動で選んで見ていた場合は、更新後の一覧に同じ
+            // validtimeのコマがあればそこへ選択を維持する。無くなっていれば
+            // 現在時刻に一番近いコマへ戻す。
+            if (!wasFollowingLatest) {
+              const prevFrame = prevFrames[prevIndex];
+              const sameIdx = prevFrame ? frames.findIndex(f => f.validtime === prevFrame.validtime) : -1;
+              if (sameIdx >= 0) nextIndex = sameIdx;
+            }
+          }
+
+          setPrecipFrames(frames);
+          setPrecipFrameIndex(nextIndex);
+        })
+        .catch((err) => {
+          console.error(`降水量[${precipMode}]の時刻一覧の取得に失敗:`, err);
+          if (!cancelled) setPrecipLoadError(true);
+        });
+    };
+    fetchAndApply();
+    const intervalId = setInterval(fetchAndApply, 5 * 60 * 1000); // 5分おきに追従
+    return () => { cancelled = true; clearInterval(intervalId); };
+  }, [precipMode]);
+
+  const currentPrecipFrame =
+    precipFrames && precipFrameIndex != null ? precipFrames[precipFrameIndex] : null;
+
+  useEffect(() => {
+    onPrecipChange?.(
+      precipMode && currentPrecipFrame
+        ? { mode: precipMode, frame: currentPrecipFrame }
+        : null
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [precipMode, currentPrecipFrame?.basetime, currentPrecipFrame?.validtime, onPrecipChange]);
 
   /* ─────────────────────────────────────────────────────
      台風情報。ONにするたびに気象庁 台風情報API(bosai/typhoon)を取得し直し、
@@ -10013,17 +10291,30 @@ function BottomDock({
   }
   // 気象メニューの項目トグル共通ハンドラ。項目が増えるたびに個別のprops/分岐を
   // 増やさなくて済むよう、idで振り分ける形にしている。
+  // 1/3/24時間降水量はラジオボタン的な排他選択(同じものをもう一度押すとOFF、
+  // 別のものを押すと切り替わる)。さらに雨雲レーダーとも排他にする(地図が
+  // 見にくくなるため、どちらか一方だけが表示される)。
   function handleToggleWeatherMenuItem(id) {
-    if (id === "precip1h") setPrecip1hEnabled(v => !v);
-    else if (id === "precip3h") setPrecip3hEnabled(v => !v);
-    else if (id === "precip24h") setPrecip24hEnabled(v => !v);
-    else if (id === "typhoonInfo") setTyphoonEnabled(v => !v);
-    else if (id === "rainRadar") setNowcastEnabled(v => !v);
+    if (id === "precip1h" || id === "precip3h" || id === "precip24h") {
+      setPrecipMode(prev => {
+        const next = prev === id ? null : id;
+        if (next) setNowcastEnabled(false);
+        return next;
+      });
+    } else if (id === "typhoonInfo") {
+      setTyphoonEnabled(v => !v);
+    } else if (id === "rainRadar") {
+      setNowcastEnabled(prev => {
+        const next = !prev;
+        if (next) setPrecipMode(null);
+        return next;
+      });
+    }
   }
   const weatherMenuItemStates = {
-    precip1h: precip1hEnabled,
-    precip3h: precip3hEnabled,
-    precip24h: precip24hEnabled,
+    precip1h: precipMode === "precip1h",
+    precip3h: precipMode === "precip3h",
+    precip24h: precipMode === "precip24h",
     typhoonInfo: typhoonEnabled,
     rainRadar: nowcastEnabled,
   };
@@ -11080,6 +11371,24 @@ function BottomDock({
               />
             </div>
           )}
+          {/* 1/3/24時間降水量の時刻スライダー(横画面)。雨雲レーダーとは排他なので
+              同時に両方出ることは無いが、念のため同じ条件(展開メニューが閉じている
+              間だけ)で出す。 */}
+          {precipMode && !weatherMenuOpen && (
+            <div style={{
+              position: "fixed",
+              left: wideAnchorRect.right + 12,
+              right: 16,
+              bottom: 16,
+              zIndex: 50,
+            }}>
+              <PrecipTimeSlider
+                frames={precipFrames}
+                frameIndex={precipFrameIndex ?? 0}
+                onChangeFrameIndex={setPrecipFrameIndex}
+              />
+            </div>
+          )}
           </>,
           document.body
         ) : (
@@ -11103,6 +11412,14 @@ function BottomDock({
               frames={nowcastFrames}
               frameIndex={nowcastFrameIndex ?? 0}
               onChangeFrameIndex={setNowcastFrameIndex}
+            />
+          )}
+          {/* 1/3/24時間降水量の時刻スライダー。雨雲レーダーとは排他。 */}
+          {precipMode && !weatherMenuOpen && (
+            <PrecipTimeSlider
+              frames={precipFrames}
+              frameIndex={precipFrameIndex ?? 0}
+              onChangeFrameIndex={setPrecipFrameIndex}
             />
           )}
           {selectedTyphoonInfo ? (
@@ -12042,6 +12359,126 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
           </div>
           <input
             className="nowcast-range"
+            type="range"
+            min={0}
+            max={frames.length - 1}
+            step={1}
+            value={frameIndex}
+            onChange={(e) => onChangeFrameIndex(Number(e.target.value))}
+            style={{ position: "relative", display: "block", width: "100%" }}
+          />
+        </div>
+      </div>
+    </Glass>
+  );
+}
+
+// 1/3/24時間降水量用の時刻スライダー。NowcastTimeSliderとほぼ同じ見た目・
+// 操作感だが、フレームに"kind"(実況/予測)の区別が無い(データ形式が未確認の
+// ため)ので、「現在」の位置は現在時刻に一番近いコマ(nowcastNearestIndexToNow)
+// から求める。
+function PrecipTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
+  const { tokens } = useContext(ThemeContext);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  useEffect(() => {
+    if (!isPlaying || !frames || frames.length < 2) return;
+    const id = setInterval(() => {
+      onChangeFrameIndex(prev => ((prev ?? 0) + 1) % frames.length);
+    }, 700);
+    return () => clearInterval(id);
+  }, [isPlaying, frames, onChangeFrameIndex]);
+
+  useEffect(() => {
+    if (!frames || frames.length === 0) setIsPlaying(false);
+  }, [frames]);
+
+  if (!frames || frames.length === 0) return null;
+  const frame = frames[frameIndex] ?? frames[frames.length - 1];
+  const nowIndex = nowcastNearestIndexToNow(frames) ?? frames.length - 1;
+  const nowFrame = frames[nowIndex];
+  const nowMs = nowFrame ? nowcastValidtimeToMs(nowFrame.validtime) : null;
+
+  return (
+    <Glass
+      radius={14}
+      style={{ flex: 1, minWidth: 0, animation: "appear 0.3s cubic-bezier(.25,1,.5,1)" }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px" }}>
+        <button
+          onClick={() => setIsPlaying(v => !v)}
+          aria-label={isPlaying ? "自動再生を止める" : "自動再生する"}
+          style={{
+            flexShrink: 0, width: 26, height: 26, borderRadius: 999,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            color: tokens.text, background: `rgba(${tokens.ink},0.08)`,
+          }}
+        >
+          {isPlaying ? (
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+              <rect x="5" y="4" width="5" height="16" rx="1.2"/>
+              <rect x="14" y="4" width="5" height="16" rx="1.2"/>
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+              <path d="M6 4.2c0-1 1.1-1.7 2-1.1l12 7.8c.8.5.8 1.7 0 2.2l-12 7.8c-.9.6-2-.1-2-1.1z"/>
+            </svg>
+          )}
+        </button>
+        <span style={{
+          fontSize: 12.5, fontWeight: 700, color: tokens.text, flexShrink: 0,
+          whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums",
+          width: 74, textAlign: "left",
+        }}>
+          {formatPrecipFrameLabel(frame)}
+        </span>
+        <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+          <style>{`
+            .precip-range { -webkit-appearance: none; appearance: none; background: transparent; }
+            .precip-range::-webkit-slider-runnable-track {
+              height: 4px; border-radius: 2px; background: rgba(${tokens.ink},0.16);
+            }
+            .precip-range::-webkit-slider-thumb {
+              -webkit-appearance: none; appearance: none;
+              width: 10px; height: 26px; border-radius: 4px;
+              background: #0A84FF; margin-top: -11px; cursor: pointer;
+            }
+            .precip-range::-moz-range-track {
+              height: 4px; border-radius: 2px; background: rgba(${tokens.ink},0.16);
+            }
+            .precip-range::-moz-range-thumb {
+              width: 10px; height: 26px; border-radius: 4px;
+              background: #0A84FF; border: none; cursor: pointer;
+            }
+          `}</style>
+          <div style={{
+            position: "absolute", left: 5, right: 5, top: "50%",
+            transform: "translateY(-50%)",
+            height: 22, pointerEvents: "none",
+          }}>
+            {frames.map((f, i) => {
+              const pct = frames.length > 1 ? (i / (frames.length - 1)) * 100 : 0;
+              const fMs = nowcastValidtimeToMs(f.validtime);
+              const diffMin = nowMs != null && fMs != null ? Math.round((fMs - nowMs) / 60000) : null;
+              const isHour = diffMin != null && diffMin % 60 === 0;
+              const isNow = i === nowIndex;
+              return (
+                <div
+                  key={i}
+                  style={{
+                    position: "absolute", left: `${pct}%`, top: 0,
+                    transform: "translateX(-50%)",
+                    width: isNow ? 2 : 1,
+                    height: isNow ? 22 : isHour ? 18 : 11,
+                    borderRadius: 1,
+                    background: isNow ? "#0A84FF" : `rgba(${tokens.ink},${isHour ? 0.35 : 0.16})`,
+                  }}
+                />
+              );
+            })}
+          </div>
+          <input
+            className="precip-range"
             type="range"
             min={0}
             max={frames.length - 1}
@@ -18271,6 +18708,14 @@ export default function App() {
     setNowcastPreloadFrames(payload ? payload.preloadFrames : []);
     setNowcastKnownValidtimes(payload ? payload.knownValidtimes : []);
   }, []);
+  // 1/3/24時間降水量がON中の現在のモード・時刻コマ。BottomDock側から伝わってくる。
+  // 雨雲レーダーとは排他なので、オンになるのはどちらか一方だけ。
+  const [precipMode, setPrecipMode] = useState(null);
+  const [precipFrame, setPrecipFrame] = useState(null);
+  const handlePrecipChange = useCallback((payload) => {
+    setPrecipMode(payload ? payload.mode : null);
+    setPrecipFrame(payload ? payload.frame : null);
+  }, []);
   // 台風情報がON中の現在のgeojson。BottomDock側から伝わってくる。OFFの間はnull。
   const [typhoonGeojson, setTyphoonGeojson] = useState(null);
   const handleTyphoonChange = useCallback((geojson) => {
@@ -19335,6 +19780,9 @@ export default function App() {
           nowcastPreloadFrames={nowcastPreloadFrames}
           nowcastKnownValidtimes={nowcastKnownValidtimes}
           nowcastColorSchemeId={nowcastColorScheme}
+          precipVisible={activeNav === "weather" && !!precipFrame}
+          precipMode={precipMode}
+          precipFrame={precipFrame}
           typhoonVisible={activeNav === "weather" && !!typhoonGeojson}
           typhoonGeojson={typhoonGeojson}
           onSelectTyphoonCenter={handleSelectTyphoonCenter}
@@ -19627,6 +20075,7 @@ export default function App() {
                   onTsunamiViewModeChange={setTsunamiViewModeTop}
                   onCurrentLocationChange={setCurrentLocationPoint}
                   onNowcastChange={handleNowcastChange}
+                  onPrecipChange={handlePrecipChange}
                   onTyphoonChange={handleTyphoonChange}
                   onSelectTyphoon={handleSelectTyphoon}
                   selectedTyphoonInfo={selectedTyphoonInfo}
@@ -19729,6 +20178,7 @@ export default function App() {
               onTsunamiViewModeChange={setTsunamiViewModeTop}
               onCurrentLocationChange={setCurrentLocationPoint}
                   onNowcastChange={handleNowcastChange}
+                  onPrecipChange={handlePrecipChange}
                   onTyphoonChange={handleTyphoonChange}
                   onSelectTyphoon={handleSelectTyphoon}
                   selectedTyphoonInfo={selectedTyphoonInfo}
