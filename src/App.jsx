@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.7.0b";
+const APP_VERSION = "1.7.0c";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -12225,7 +12225,16 @@ function NowcastLegend() {
       radius={12}
       style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
     >
-      <div style={{ display: "flex", flexDirection: "column", padding: "8px 8px 0" }}>
+      <div style={{ display: "flex", flexDirection: "column", padding: "6px 8px 0" }}>
+        {/* 単位ラベル。lineHeightを明示的に詰めて、フォントの行送り分の
+            余白が上下に出ないようにする(指定しないと文字サイズの見た目以上に
+            行の高さを取ってしまい、バーとの間に不自然な余白ができるため)。 */}
+        <div style={{
+          fontSize: 10, lineHeight: "11px", fontWeight: 700,
+          color: `rgba(${tokens.ink},0.6)`, marginBottom: 3, whiteSpace: "nowrap",
+        }}>
+          mm/h
+        </div>
         <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
           {colors.map((rgb, i) => (
             // 隙間なく連結した一続きのバーにし、両端だけ丸める
@@ -12294,12 +12303,14 @@ function PrecipLegend({ mode }) {
       radius={12}
       style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
     >
-      <div style={{ display: "flex", flexDirection: "column", padding: "8px 8px 0" }}>
-        {/* 単位ラベル。1/3/24時間のどのモードの凡例か分かるよう、
-            雨雲レーダーには無い見出しを1行だけ追加している。 */}
+      <div style={{ display: "flex", flexDirection: "column", padding: "6px 8px 0" }}>
+        {/* 単位ラベル。1/3/24時間のどのモードの凡例か分かるよう、雨雲レーダーの
+            凡例(NowcastLegend)にはもともと無かった見出しを1行追加している。
+            lineHeightを明示的に詰めて、フォントの行送り分の余白が上下に
+            出ないようにする。 */}
         <div style={{
-          fontSize: 10, fontWeight: 700, color: `rgba(${tokens.ink},0.6)`,
-          marginBottom: 4, whiteSpace: "nowrap",
+          fontSize: 10, lineHeight: "11px", fontWeight: 700,
+          color: `rgba(${tokens.ink},0.6)`, marginBottom: 3, whiteSpace: "nowrap",
         }}>
           {unit}
         </div>
