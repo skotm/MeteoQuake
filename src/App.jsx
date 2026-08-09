@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.7.0a";
+const APP_VERSION = "1.7.0b";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -12262,6 +12262,79 @@ function NowcastLegend() {
 }
 
 /* ─────────────────────────────────────────────────────
+   PRECIP LEGEND — NowcastLegendと全く同じ見た目・仕組み(Glassカード+隙間の
+   詰まった横一列の色バー、配色は選択中のNowcastColorSchemeをそのまま反映)。
+   1/3/24時間降水量はモードごとに目盛りの数値が異なる(気象庁の実際の凡例
+   画像から採取した値)ため、モード名だけ外から渡してもらう。
+   ・1時間: 雨雲レーダーと全く同じ区分(0,1,5,10,20,30,50,80 mm/h)
+   ・3時間: 1,20,40,60,80,100,120,150 mm/3h
+   ・24時間: 1,50,80,100,150,200,250,300 mm/24h
+   ───────────────────────────────────────────────────── */
+const PRECIP_LEGEND_LOWER_BOUNDS = {
+  precip1h:  ["0", "1", "5", "10", "20", "30", "50", "80"],
+  precip3h:  ["1", "20", "40", "60", "80", "100", "120", "150"],
+  precip24h: ["1", "50", "80", "100", "150", "200", "250", "300"],
+};
+const PRECIP_LEGEND_UNIT = {
+  precip1h: "mm/h",
+  precip3h: "mm/3h",
+  precip24h: "mm/24h",
+};
+function PrecipLegend({ mode }) {
+  const { tokens } = useContext(ThemeContext);
+  const schemeId = useContext(NowcastColorSchemeContext);
+  const scheme = NOWCAST_COLOR_SCHEMES[schemeId] || NOWCAST_COLOR_SCHEMES.jma;
+  const colors = scheme.palette || JMA_NOWCAST_SOURCE_PALETTE;
+  const bounds = PRECIP_LEGEND_LOWER_BOUNDS[mode] || PRECIP_LEGEND_LOWER_BOUNDS.precip1h;
+  const unit = PRECIP_LEGEND_UNIT[mode] || "mm";
+  const SWATCH_WIDTH = 22; // NowcastLegendと同じ幅
+
+  return (
+    <Glass
+      radius={12}
+      style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", padding: "8px 8px 0" }}>
+        {/* 単位ラベル。1/3/24時間のどのモードの凡例か分かるよう、
+            雨雲レーダーには無い見出しを1行だけ追加している。 */}
+        <div style={{
+          fontSize: 10, fontWeight: 700, color: `rgba(${tokens.ink},0.6)`,
+          marginBottom: 4, whiteSpace: "nowrap",
+        }}>
+          {unit}
+        </div>
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
+          {colors.map((rgb, i) => (
+            <div
+              key={i}
+              style={{
+                width: SWATCH_WIDTH, height: 9,
+                borderRadius: i === 0 ? "2px 0 0 2px" : i === colors.length - 1 ? "0 2px 2px 0" : 0,
+                background: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`,
+                flexShrink: 0,
+              }}
+            />
+          ))}
+        </div>
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
+          {bounds.map((label, i) => (
+            <div
+              key={i}
+              style={{
+                width: SWATCH_WIDTH, flexShrink: 0, textAlign: "left", paddingLeft: 1,
+                fontSize: 9, lineHeight: "9px", fontWeight: 600, color: `rgba(${tokens.ink},0.55)`,
+              }}
+            >
+              {label}
+            </div>
+          ))}
+        </div>
+      </div>
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    NOWCAST TIME SLIDER — 雨雲レーダーがONで、展開メニュー(WeatherMenuFloating)が
    閉じている間だけ、ボタンバー(下部ナビ行)のすぐ上に浮かべる時刻スライダー。
    実況(過去)+予測(未来60分)を1本のタイムラインとしてドラッグで選べる。
@@ -20029,6 +20102,19 @@ export default function App() {
             zIndex: 30,
           }}>
             <NowcastLegend/>
+          </div>
+        )}
+
+        {/* 1/3/24時間降水量の凡例 — 雨雲レーダーとは排他なので同時には出ないが、
+            同じ位置・同じ構成で出す。 */}
+        {activeNav === "weather" && precipMode && precipFrame && (
+          <div style={{
+            position: "absolute",
+            top: "calc(16px + env(safe-area-inset-top))",
+            right: 16,
+            zIndex: 30,
+          }}>
+            <PrecipLegend mode={precipMode}/>
           </div>
         )}
 
