@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.7.0";
+const APP_VERSION = "1.7.0a";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1867,7 +1867,9 @@ function MapCanvas({
   nowcastColorSchemeId = "jma", // 雨雲レーダーの配色スキームID
   precipVisible = false,        // 1/3/24時間降水量レイヤーを表示するか
   precipMode = null,            // "precip1h" | "precip3h" | "precip24h" | null
-  precipFrame = null,           // { basetime, validtime } | null。表示中の時刻コマ
+  precipFrame = null,           // { basetime, validtime, member } | null。表示中の時刻コマ
+  precipKnownValidtimes = [],   // 現在のモードの全validtime一覧。この一覧に無くなった
+                                 // (5分おきの一覧更新でありうる)キャッシュ済みレイヤーの掃除に使う
   typhoonVisible = false,       // 台風情報レイヤーを表示するか
   typhoonGeojson = null,        // fetchTyphoonData()が返すgeojson({type:"FeatureCollection"})| null
   onSelectTyphoonCenter,        // 台風の中心点/予報円をタップした時にpropertiesを渡すコールバック
@@ -3276,9 +3278,14 @@ function MapCanvas({
   }, [nowcastVisible, nowcastFrame?.basetime, nowcastFrame?.validtime, nowcastColorSchemeId, status, nowcastPreloadKey, nowcastKnownValidtimesKey]);
 
   // 1/3/24時間降水量。雨雲レーダーとは排他(BottomDock側でどちらか一方しか
-  // ONにならない)なので、先読みは行わず表示中のコマ1枚だけをシンプルに
-  // 出し入れする。モード・配色・時刻のいずれかが変わったら、古いレイヤーは
-  // 全部消してから作り直す(先読みキャッシュを気にする必要が無いため単純にできる)。
+  // ONにならない)。
+  // 以前は「コマが変わるたびに他のレイヤーを全部消してから作り直す」実装に
+  // なっており、切り替えるたびに(1)前のコマが即座に消える→(2)新しいタイルを
+  // 取得し終わるまで空白になる、という2段階のチカチカが起きていた。
+  // 雨雲レーダーと同じく「一度読み込んだコマのレイヤーは残しておき、
+  // 表示中のコマだけopacityを上げる」方式に変更し、既に見たことのあるコマへ
+  // 戻る時は通信無しで瞬時に切り替わるようにする。
+  const precipKnownValidtimesKey = precipKnownValidtimes.join(",");
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
@@ -3299,17 +3306,26 @@ function MapCanvas({
       return;
     }
 
-    const key = `${precipMode}-${nowcastColorSchemeId}-${precipFrame.validtime}`;
-    const srcId = `precip-src-${key}`;
-    const layerId = `precip-layer-${key}`;
+    // レイヤーid/sourceidの名前空間にmode+schemeを含めることで、モードや
+    // 配色を切り替えた時は「別物」として扱われ、古いキャッシュとは混ざらない。
+    const keyOf = (mode, validtime) => `${mode}-${nowcastColorSchemeId}-${validtime}`;
+    const knownValidtimeSet = new Set(precipKnownValidtimes);
 
+    // 掃除するのは、(1)モード・配色が変わって別物になったもの、
+    // (2)一覧の再取得でもう存在しなくなったコマ、の2種類だけ。
     const style = map.getStyle();
     if (style) {
       (style.layers || []).forEach(l => {
-        if (l.id.startsWith("precip-layer-") && l.id !== layerId) map.removeLayer(l.id);
+        if (!l.id.startsWith("precip-layer-")) return;
+        const [mode, scheme, validtime] = l.id.slice("precip-layer-".length).split("-");
+        const stale = mode !== precipMode || scheme !== nowcastColorSchemeId || !knownValidtimeSet.has(validtime);
+        if (stale) map.removeLayer(l.id);
       });
-      Object.keys(style.sources || {}).forEach(id => {
-        if (id.startsWith("precip-src-") && id !== srcId) map.removeSource(id);
+      Object.keys(style.sources || {}).forEach(srcId => {
+        if (!srcId.startsWith("precip-src-")) return;
+        const [mode, scheme, validtime] = srcId.slice("precip-src-".length).split("-");
+        const stale = mode !== precipMode || scheme !== nowcastColorSchemeId || !knownValidtimeSet.has(validtime);
+        if (stale) map.removeSource(srcId);
       });
     }
 
@@ -3317,6 +3333,20 @@ function MapCanvas({
     // かぶらないようにする(雨雲レーダーと同じ考え方)。
     const beforeId = map.getLayer("areas-intensity-fill") ? "areas-intensity-fill" : undefined;
 
+    // 既にキャッシュ済みのレイヤーは、現在のコマだけ不透明にし、それ以外は
+    // 透明に戻す(既存レイヤーのopacityを直接切り替えるだけなので瞬時)。
+    const currentKey = keyOf(precipMode, precipFrame.validtime);
+    if (style) {
+      (style.layers || []).forEach(l => {
+        if (!l.id.startsWith("precip-layer-")) return;
+        const key = l.id.slice("precip-layer-".length);
+        map.setPaintProperty(l.id, "raster-opacity", key === currentKey ? 0.75 : 0);
+      });
+    }
+
+    // 現在のコマがまだキャッシュに無ければ、新たにsource/layerを追加する。
+    const srcId = `precip-src-${currentKey}`;
+    const layerId = `precip-layer-${currentKey}`;
     if (!map.getSource(srcId)) {
       map.addSource(srcId, {
         type: "raster",
@@ -3336,7 +3366,11 @@ function MapCanvas({
         paint: { "raster-opacity": 0.75 },
       }, beforeId);
     }
-  }, [precipVisible, precipMode, precipFrame?.basetime, precipFrame?.validtime, nowcastColorSchemeId, status]);
+    // このeffectは既存レイヤーのopacity書き換え・不足分の追加だけで完結しており、
+    // コマが変わるたびに全部作り直す必要は無いので、ここではクリーンアップ関数を
+    // 返さない(雨雲レーダーと同じ考え方)。OFF時の後片付けは上の早期returnで、
+    // マウント解除時の後片付けは地図本体の破棄(map.remove())で行われる。
+  }, [precipVisible, precipMode, precipFrame?.basetime, precipFrame?.validtime, nowcastColorSchemeId, status, precipKnownValidtimesKey]);
 
   // 推計震度分布(気象庁 estimated_intensity_map)を更新する。
   // 選択中の地震・設定トグルが変わるたびに、画像を取得・ピクセル解析してGeoJSONに変換し、
@@ -9847,11 +9881,11 @@ function BottomDock({
   useEffect(() => {
     onPrecipChange?.(
       precipMode && currentPrecipFrame
-        ? { mode: precipMode, frame: currentPrecipFrame }
+        ? { mode: precipMode, frame: currentPrecipFrame, knownValidtimes: precipFrames.map(f => f.validtime) }
         : null
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [precipMode, currentPrecipFrame?.basetime, currentPrecipFrame?.validtime, onPrecipChange]);
+  }, [precipMode, currentPrecipFrame?.basetime, currentPrecipFrame?.validtime, precipFrames, onPrecipChange]);
 
   /* ─────────────────────────────────────────────────────
      台風情報。ONにするたびに気象庁 台風情報API(bosai/typhoon)を取得し直し、
@@ -18715,9 +18749,14 @@ export default function App() {
   // 雨雲レーダーとは排他なので、オンになるのはどちらか一方だけ。
   const [precipMode, setPrecipMode] = useState(null);
   const [precipFrame, setPrecipFrame] = useState(null);
+  // 現在のモードの全validtime一覧(5分おきの一覧更新で変わる)。地図側のキャッシュの
+  // うち、もうどのコマにも該当しなくなったレイヤーの掃除に使う(雨雲レーダーの
+  // nowcastKnownValidtimesと同じ考え方)。
+  const [precipKnownValidtimes, setPrecipKnownValidtimes] = useState([]);
   const handlePrecipChange = useCallback((payload) => {
     setPrecipMode(payload ? payload.mode : null);
     setPrecipFrame(payload ? payload.frame : null);
+    setPrecipKnownValidtimes(payload ? payload.knownValidtimes : []);
   }, []);
   // 台風情報がON中の現在のgeojson。BottomDock側から伝わってくる。OFFの間はnull。
   const [typhoonGeojson, setTyphoonGeojson] = useState(null);
@@ -19786,6 +19825,7 @@ export default function App() {
           precipVisible={activeNav === "weather" && !!precipFrame}
           precipMode={precipMode}
           precipFrame={precipFrame}
+          precipKnownValidtimes={precipKnownValidtimes}
           typhoonVisible={activeNav === "weather" && !!typhoonGeojson}
           typhoonGeojson={typhoonGeojson}
           onSelectTyphoonCenter={handleSelectTyphoonCenter}
