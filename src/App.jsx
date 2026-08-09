@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.8a";
+const APP_VERSION = "1.6.8b";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1221,6 +1221,14 @@ async function fetchTyphoonJsonOrNull(url) {
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) return null;
   return res.json();
+}
+
+// 「台風情報」ボタン自体を、台風が1つも発生していない間は表示しないために使う
+// 軽い問い合わせ。targetTc.json(対象の台風の一覧)だけを見る、件数のみの確認で
+// あり、各台風の詳細(forecast.json/specifications.json)は取りに行かない。
+async function fetchActiveTyphoonExists() {
+  const targetTc = await fetchTyphoonJsonOrNull(`${TYPHOON_DATA_BASE}/targetTc.json`);
+  return Array.isArray(targetTc) && targetTc.length > 0;
 }
 
 // 気象庁「現在活動中の台風」一覧とその予報・実況を取得し、地図表示用GeoJSONと
@@ -9616,6 +9624,37 @@ function BottomDock({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [typhoonEnabled, typhoonGeojson, onTyphoonChange]);
 
+  // 「台風情報」ボタン自体を、台風が1つも発生していない間は表示しないためのフラグ。
+  // typhoonEnabled(トグルON)とは独立に、まずtargetTc.jsonだけの軽い問い合わせで
+  // 「そもそも対象の台風があるか」を確認する(ボタンを出すかどうかの判定自体に、
+  // トグルをONにしないと分からないのでは意味が無いため)。
+  const [hasActiveTyphoons, setHasActiveTyphoons] = useState(null); // null=未確認
+  useEffect(() => {
+    let cancelled = false;
+    let timeoutId = null;
+    const check = () => {
+      fetchActiveTyphoonExists()
+        .then((exists) => { if (!cancelled) setHasActiveTyphoons(exists); })
+        .catch(() => { if (!cancelled) setHasActiveTyphoons(false); });
+    };
+    // 台風データ本体と同じく、毎時0分10秒に次回実行を予約する。
+    const scheduleNext = () => {
+      const now = Date.now();
+      const HOUR_MS = 60 * 60 * 1000;
+      const nextTick = Math.ceil(now / HOUR_MS) * HOUR_MS + 10_000;
+      const wait = Math.max(1000, nextTick - now);
+      timeoutId = setTimeout(() => { check(); scheduleNext(); }, wait);
+    };
+    check();
+    scheduleNext();
+    return () => { cancelled = true; if (timeoutId) clearTimeout(timeoutId); };
+  }, []);
+  // 台風が1つも無くなった時、ONのままだったトグルは自動でOFFに戻す。
+  // (ボタンごとメニューから消えるので、そのままだと操作で戻せなくなるため。)
+  useEffect(() => {
+    if (hasActiveTyphoons === false && typhoonEnabled) setTyphoonEnabled(false);
+  }, [hasActiveTyphoons, typhoonEnabled]);
+
   /* ─────────────────────────────────────────────────────
      気象タブ「地点」モード — 現在地(GPS)または登録地点(1件のみ)の天気予報。
      GPSは「地点」モードを実際に見ている間だけwatchPositionで追跡し、それ以外
@@ -10993,7 +11032,7 @@ function BottomDock({
             {selectedTyphoonInfo ? (
               <BackToListButton onClick={handleBackFromTyphoon} label="台風一覧に戻る"/>
             ) : (
-              <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={false} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)} typhoonEnabled={typhoonEnabled} onToggleTyphoon={() => setTyphoonEnabled(v => !v)}/>
+              <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={false} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)} typhoonEnabled={typhoonEnabled} onToggleTyphoon={() => setTyphoonEnabled(v => !v)} hasActiveTyphoons={hasActiveTyphoons}/>
             )}
           </div>
           {/* 雨雲レーダーの時刻スライダー(横画面) — 縦画面の時と同じく、展開メニューが
@@ -11042,7 +11081,7 @@ function BottomDock({
           {selectedTyphoonInfo ? (
             <BackToListButton onClick={handleBackFromTyphoon} label="台風一覧に戻る"/>
           ) : (
-            <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={true} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)} typhoonEnabled={typhoonEnabled} onToggleTyphoon={() => setTyphoonEnabled(v => !v)}/>
+            <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={true} nowcastEnabled={nowcastEnabled} onToggleNowcast={() => setNowcastEnabled(v => !v)} typhoonEnabled={typhoonEnabled} onToggleTyphoon={() => setTyphoonEnabled(v => !v)} hasActiveTyphoons={hasActiveTyphoons}/>
           )}
         </div>
         )
@@ -12073,13 +12112,21 @@ const WEATHER_MENU_ITEM_GAP = 6;          // 項目同士の間隔
 const WEATHER_MENU_ITEMS_PAD = 8;         // 項目ブロックの上下左右の余白
 const WEATHER_MENU_WIDTH = 172;
 
-function WeatherMenuFloating({ open, onToggle, growUp = true, nowcastEnabled = false, onToggleNowcast, typhoonEnabled = false, onToggleTyphoon }) {
+function WeatherMenuFloating({
+  open, onToggle, growUp = true, nowcastEnabled = false, onToggleNowcast,
+  typhoonEnabled = false, onToggleTyphoon, hasActiveTyphoons = null,
+}) {
   const { tokens } = useContext(ThemeContext);
   const [pressed, setPressed] = useState(false);
 
+  // 台風が1つも発生していない(確認済みでfalse)間は、「台風情報」の項目自体を
+  // メニューから外す。確認できていない(null、初回問い合わせ中)間は、消えたり
+  // 出たりのチラつきを避けるため一旦表示しておく。
+  const items = WEATHER_MENU_ITEMS.filter(item => item.id !== "typhoonInfo" || hasActiveTyphoons !== false);
+
   const itemsBlockHeight =
-    WEATHER_MENU_ITEMS.length * WEATHER_MENU_ITEM_HEIGHT +
-    Math.max(0, WEATHER_MENU_ITEMS.length - 1) * WEATHER_MENU_ITEM_GAP +
+    items.length * WEATHER_MENU_ITEM_HEIGHT +
+    Math.max(0, items.length - 1) * WEATHER_MENU_ITEM_GAP +
     WEATHER_MENU_ITEMS_PAD * 2;
 
   const width  = open ? WEATHER_MENU_WIDTH : WEATHER_MENU_BUTTON_SIZE;
@@ -12140,7 +12187,7 @@ function WeatherMenuFloating({ open, onToggle, growUp = true, nowcastEnabled = f
             display: "flex", flexDirection: "column", gap: WEATHER_MENU_ITEM_GAP,
             width: "100%", padding: `0 ${WEATHER_MENU_ITEMS_PAD}px ${WEATHER_MENU_ITEMS_PAD}px`,
           }}>
-            {WEATHER_MENU_ITEMS.map((item) => {
+            {items.map((item) => {
               const isRainRadar = item.id === "rainRadar";
               const isTyphoonInfo = item.id === "typhoonInfo";
               const active = (isRainRadar && nowcastEnabled) || (isTyphoonInfo && typhoonEnabled);
