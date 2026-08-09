@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.6.8b";
+const APP_VERSION = "1.6.9";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -9531,16 +9531,18 @@ function BottomDock({
   const currentNowcastFrame =
     nowcastFrames && nowcastFrameIndex != null ? nowcastFrames[nowcastFrameIndex] : null;
 
-  // コマ切り替え時に一瞬レーダーが消えないよう、前後NOWCAST_PRELOAD_RADIUSコマぶんを
-  // 地図側で先読みしてもらう(自動再生の間隔0.7秒でも先読みが追いつくよう、少し多め)。
-  const nowcastPreloadFrames = useMemo(() => {
-    if (!nowcastFrames || nowcastFrameIndex == null) return [];
-    const start = Math.max(0, nowcastFrameIndex - NOWCAST_PRELOAD_RADIUS);
-    const end = Math.min(nowcastFrames.length - 1, nowcastFrameIndex + NOWCAST_PRELOAD_RADIUS);
-    const result = [];
-    for (let i = start; i <= end; i++) if (i !== nowcastFrameIndex) result.push(nowcastFrames[i]);
-    return result;
-  }, [nowcastFrames, nowcastFrameIndex]);
+  // 先読みを一旦廃止し、今見ているコマだけを読み込むようにする。
+  // (元の「前後NOWCAST_PRELOAD_RADIUSコマぶん先読み」ロジックはコメントアウトで
+  // 残してあるので、戻す時はここを差し替えるだけでよい。)
+  const nowcastPreloadFrames = useMemo(() => [], []);
+  // const nowcastPreloadFrames = useMemo(() => {
+  //   if (!nowcastFrames || nowcastFrameIndex == null) return [];
+  //   const start = Math.max(0, nowcastFrameIndex - NOWCAST_PRELOAD_RADIUS);
+  //   const end = Math.min(nowcastFrames.length - 1, nowcastFrameIndex + NOWCAST_PRELOAD_RADIUS);
+  //   const result = [];
+  //   for (let i = start; i <= end; i++) if (i !== nowcastFrameIndex) result.push(nowcastFrames[i]);
+  //   return result;
+  // }, [nowcastFrames, nowcastFrameIndex]);
   const nowcastPreloadKey = nowcastPreloadFrames.map(f => f.validtime).join(",");
 
   useEffect(() => {
