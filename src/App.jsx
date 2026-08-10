@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.7.3";
+const APP_VERSION = "1.7.4";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -12698,18 +12698,37 @@ const WDIST_WEATHER_CATEGORIES = [
   { label: "雨または雪", color: "#B48EAD" },
   { label: "雪", color: "#E8EEF5" },
 ];
-// 気温分布用の暫定配色(寒色→暖色のグラデーション)と区分値(℃)。要検証。
+// 気温分布用の配色・区分値(℃)。ユーザー提供のJMA凡例画像から採取した実際の
+// スケール。画像は縦方向(下=寒い/薄紫〜上=暑い/濃い臙脂)なので、横一列の
+// バーに直す際は「左=寒い、右=暑い」の向きにしている(雨雲レーダー・降水量の
+// 凡例と同じ、弱い/低い方を左に置く向き)。
+// 色は画像から目視で採取した近似値。
 const WDIST_TEMP_LEGEND_COLORS = [
-  [98, 44, 140], [43, 84, 191], [55, 148, 214], [90, 199, 201],
-  [140, 214, 110], [230, 214, 60], [235, 140, 40], [214, 55, 55],
+  [216, 214, 227], // 〜-25(パレット画像の一番下、パステル紫)
+  [178, 175, 201], // -25〜-20
+  [147, 143, 175], // -20〜-15
+  [90, 86, 120],   // -15〜-10
+  [20, 40, 110],   // -10〜-5
+  [35, 70, 220],   // -5〜0
+  [70, 130, 230],  // 0〜5
+  [180, 220, 245], // 5〜10
+  [255, 255, 230], // 10〜15
+  [255, 255, 150], // 15〜20
+  [255, 230, 20],  // 20〜25
+  [245, 165, 60],  // 25〜30
+  [235, 80, 40],   // 30〜35
+  [180, 30, 100],  // 35〜40
+  [75, 10, 35],    // 40〜(画像の一番上、濃い臙脂)
 ];
-const WDIST_TEMP_LEGEND_BOUNDS = ["-10", "-5", "0", "5", "10", "15", "20", "25"];
+// 一番左(最も寒い)のバンドは画像でも下限値が示されていないため、先頭だけ
+// 空文字にする(1時間降水量の凡例で先頭"0"を省いたのと同じ扱い)。
+const WDIST_TEMP_LEGEND_BOUNDS = ["", "-25", "-20", "-15", "-10", "-5", "0", "5", "10", "15", "20", "25", "30", "35", "40"];
 
 function WdistLegend({ mode }) {
   const { tokens } = useContext(ThemeContext);
 
   if (mode === "temperature") {
-    const SWATCH_WIDTH = 22; // PrecipLegendと同じ幅
+    const SWATCH_WIDTH = 17; // 15段あるのでPrecipLegendより少し狭くして詰める
     return (
       <Glass
         radius={12}
@@ -12741,13 +12760,15 @@ function WdistLegend({ mode }) {
                 key={i}
                 style={{
                   width: SWATCH_WIDTH, flexShrink: 0, textAlign: "left", paddingLeft: 1,
-                  fontSize: 9, lineHeight: "9px", fontWeight: 600, color: `rgba(${tokens.ink},0.55)`,
+                  fontSize: 8, lineHeight: "9px", fontWeight: 600, color: `rgba(${tokens.ink},0.55)`,
+                  overflow: "visible", whiteSpace: "nowrap",
                 }}
               >
                 {label}
               </div>
             ))}
           </div>
+
         </div>
       </Glass>
     );
