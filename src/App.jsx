@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.7.0d";
+const APP_VERSION = "1.7.0e";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -12701,6 +12701,11 @@ const WEATHER_MENU_ITEMS = [
   { id: "typhoonInfo", label: "台風情報" },
   { id: "rainRadar", label: "雨雲レーダー" },
 ];
+// 2ページ目。今のところ「天気予報分布」ボタンのみを追加する段階で、
+// 機能(トグルの挙動・データ取得)はまだ実装していない。
+const WEATHER_MENU_PAGE2_ITEMS = [
+  { id: "weatherDistribution", label: "天気予報分布" },
+];
 
 const WEATHER_MENU_BUTTON_SIZE = 44;      // 閉じている時のトグルボタン(円)のサイズ
 const WEATHER_MENU_BUTTON_SIZE_OPEN = 34; // 開いている時は少し小さく
@@ -12708,6 +12713,7 @@ const WEATHER_MENU_TOGGLE_RECT_HEIGHT = 22; // 開いている時のトグルボ
 const WEATHER_MENU_ITEM_HEIGHT = 32;      // 各項目の長方形ボタンの高さ
 const WEATHER_MENU_ITEM_GAP = 6;          // 項目同士の間隔
 const WEATHER_MENU_ITEMS_PAD = 8;         // 項目ブロックの上下左右の余白
+const WEATHER_MENU_PAGE_NAV_HEIGHT = 26;  // ページ送り(左右のくの字)の行の高さ
 const WEATHER_MENU_WIDTH = 172;
 
 function WeatherMenuFloating({
@@ -12721,10 +12727,20 @@ function WeatherMenuFloating({
   // 出たりのチラつきを避けるため一旦表示しておく。
   const items = WEATHER_MENU_ITEMS.filter(item => item.id !== "typhoonInfo" || hasActiveTyphoons !== false);
 
+  // ページ送り。1ページ目=既存の項目一式、2ページ目=天気予報分布(ボタンのみ、
+  // 今のところ機能は無い)。メニューを閉じたら次に開いた時は必ず1ページ目に
+  // 戻す。
+  const pages = [items, WEATHER_MENU_PAGE2_ITEMS];
+  const totalPages = pages.length;
+  const [page, setPage] = useState(0);
+  useEffect(() => { if (!open) setPage(0); }, [open]);
+  const pageItems = pages[page] || items;
+
   const itemsBlockHeight =
-    items.length * WEATHER_MENU_ITEM_HEIGHT +
-    Math.max(0, items.length - 1) * WEATHER_MENU_ITEM_GAP +
-    WEATHER_MENU_ITEMS_PAD * 2;
+    pageItems.length * WEATHER_MENU_ITEM_HEIGHT +
+    Math.max(0, pageItems.length - 1) * WEATHER_MENU_ITEM_GAP +
+    WEATHER_MENU_ITEMS_PAD * 2 +
+    (totalPages > 1 ? WEATHER_MENU_PAGE_NAV_HEIGHT : 0);
 
   const width  = open ? WEATHER_MENU_WIDTH : WEATHER_MENU_BUTTON_SIZE;
   const height = open ? WEATHER_MENU_BUTTON_SIZE_OPEN + itemsBlockHeight : WEATHER_MENU_BUTTON_SIZE;
@@ -12779,12 +12795,57 @@ function WeatherMenuFloating({
           </button>
         </div>
 
+        {/* ページ送り(左右のくの字)。雨雲レーダーボタン(1ページ目の最後)と
+            開閉トグルボタンの間に置く(DOM順としてもこの2つの間に挟む形にし、
+            growUp=true(column-reverse)でもgrowUp=false(通常column)でも、
+            見た目上ちょうど間に来るようにしている)。 */}
+        {open && totalPages > 1 && (
+          <div style={{
+            flexShrink: 0, width: "100%", height: WEATHER_MENU_PAGE_NAV_HEIGHT,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+          }}>
+            <PressableButton
+              onClick={() => setPage(p => Math.max(0, p - 1))}
+              disabled={page === 0}
+              aria-label="前のページ"
+              style={{
+                width: 26, height: 22, display: "flex", alignItems: "center", justifyContent: "center",
+                color: page === 0 ? `rgba(${tokens.ink},0.25)` : tokens.text,
+                borderRadius: 8,
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+                   stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 6 9 12 15 18"/>
+              </svg>
+            </PressableButton>
+            <span style={{ fontSize: 10, fontWeight: 600, color: `rgba(${tokens.ink},0.45)`, minWidth: 24, textAlign: "center" }}>
+              {page + 1}/{totalPages}
+            </span>
+            <PressableButton
+              onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+              disabled={page === totalPages - 1}
+              aria-label="次のページ"
+              style={{
+                width: 26, height: 22, display: "flex", alignItems: "center", justifyContent: "center",
+                color: page === totalPages - 1 ? `rgba(${tokens.ink},0.25)` : tokens.text,
+                borderRadius: 8,
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+                   stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="9 6 15 12 9 18"/>
+              </svg>
+            </PressableButton>
+          </div>
+        )}
+
         {open && (
           <div style={{
             display: "flex", flexDirection: "column", gap: WEATHER_MENU_ITEM_GAP,
             width: "100%", padding: `0 ${WEATHER_MENU_ITEMS_PAD}px ${WEATHER_MENU_ITEMS_PAD}px`,
           }}>
-            {items.map((item) => {
+            {pageItems.map((item) => {
               const active = !!itemStates[item.id];
               return (
                 <PressableButton
