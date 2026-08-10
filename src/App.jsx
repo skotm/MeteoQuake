@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.7.1";
+const APP_VERSION = "1.7.2";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1169,6 +1169,19 @@ async function loadWdistFrames() {
   return result
     .sort((a, b) => String(a.validtime).localeCompare(String(b.validtime)))
     .map(t => ({ basetime: t.basetime, validtime: t.validtime, member: t.member || "none" }));
+}
+
+// 天気分布予報のスライダー用ラベル。翌日24時まで予報があるため、雨雲レーダー・
+// 降水量のような「HH:MM」だけだと今日なのか明日なのか分からなくなる。
+// 「10日15時」のように日付+時をそのまま出す。
+function formatWdistFrameLabel(frame) {
+  if (!frame) return "";
+  const ms = nowcastValidtimeToMs(frame.validtime);
+  if (ms == null) return "";
+  const jst = new Date(ms + 9 * 60 * 60 * 1000);
+  const day = jst.getUTCDate();
+  const hour = jst.getUTCHours();
+  return `${day}日${hour}時`;
 }
 
 /* ─────────────────────────────────────────────────────
@@ -11724,6 +11737,7 @@ function BottomDock({
                 frames={wdistFrames}
                 frameIndex={wdistFrameIndex ?? 0}
                 onChangeFrameIndex={setWdistFrameIndex}
+                formatLabel={formatWdistFrameLabel}
               />
             </div>
           )}
@@ -11766,6 +11780,7 @@ function BottomDock({
               frames={wdistFrames}
               frameIndex={wdistFrameIndex ?? 0}
               onChangeFrameIndex={setWdistFrameIndex}
+              formatLabel={formatWdistFrameLabel}
             />
           )}
           {selectedTyphoonInfo ? (
@@ -12852,7 +12867,7 @@ function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
 // 操作感だが、フレームに"kind"(実況/予測)の区別が無い(データ形式が未確認の
 // ため)ので、「現在」の位置は現在時刻に一番近いコマ(nowcastNearestIndexToNow)
 // から求める。
-function PrecipTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
+function PrecipTimeSlider({ frames, frameIndex, onChangeFrameIndex, formatLabel = formatPrecipFrameLabel }) {
   const { tokens } = useContext(ThemeContext);
   const [isPlaying, setIsPlaying] = useState(false);
 
@@ -12903,9 +12918,9 @@ function PrecipTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
         <span style={{
           fontSize: 12.5, fontWeight: 700, color: tokens.text, flexShrink: 0,
           whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums",
-          width: 74, textAlign: "left",
+          width: 84, textAlign: "left",
         }}>
-          {formatPrecipFrameLabel(frame)}
+          {formatLabel(frame)}
         </span>
         <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
           <style>{`
