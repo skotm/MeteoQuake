@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.7.2";
+const APP_VERSION = "1.7.3";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1113,54 +1113,57 @@ function formatPrecipFrameLabel(frame) {
 }
 
 /* ─────────────────────────────────────────────────────
-   天気分布予報(「天気」要素のみ。気温・降水量・降雪量・最高最低気温は対象外)。
-   5kmメッシュで、晴れ/くもり/雨/雨または雪/雪の5分類を3時間ごと・翌日24時まで
-   予報するデータ(毎日5時・11時・17時発表)。
+   天気分布予報。「天気分布」(晴れ/くもり/雨/雨または雪/雪の5分類)と
+   「気温分布」の2種類を実装する(降水量・降雪量・最高最低気温は対象外)。
+   5kmメッシュで、3時間ごと・翌日24時まで予報するデータ(毎日5時・11時・
+   17時発表)。
 
-   ⚠️ 降水量(rasrf)の時と違い、実際のtargetTimes.json・タイルURLはまだ
-   確認できていない。https://www.jma.go.jp/bosai/jmatile/data/wdist/VPFD/
-   :areacode.json(地域時系列予報)というURLの存在は一次情報で確認できたため、
-   同じ"jmatile/data/wdist/"を基点に、rasrfと同じURL構造(basetime/member/
-   validtime/surf/要素名/z/x/y.png、要素名は表示ページのURLハッシュに合わせて
-   "wm")だろうという仮説で実装している。実機で404や想定外のデータが出た
-   場合はconsole.warnに実際のURL・レスポンスを出すようにしてあるので、
-   そこから正しい値を特定して直す想定。
+   ⚠️ 天気分布のタイルURL構造は実機で確認済み(2026年8月時点で正常に表示)。
+   気温分布(要素名"temp")は、ページのURLハッシュ(elements:temp)から
+   類推した未検証の値。実機で404や想定外のデータが出た場合はconsole.warnに
+   実際のURL・レスポンスを出すようにしてあるので、そこから正しい値を
+   特定して直す想定。
    ───────────────────────────────────────────────────── */
 const WDIST_DATA_BASE = "https://www.jma.go.jp/bosai/jmatile/data/wdist";
-const WDIST_ELEMENT = "wm"; // 要検証。ページのURLハッシュ(elements:wm)から推測
-function wdistTileUrl(member, basetime, validtime, z, x, y) {
-  return `${WDIST_DATA_BASE}/${basetime}/${member}/${validtime}/surf/${WDIST_ELEMENT}/${z}/${x}/${y}.png`;
+const WDIST_MODE_CONFIG = {
+  weather:     { element: "wm",   label: "天気分布" },
+  temperature: { element: "temp", label: "気温分布" }, // 要検証
+};
+function wdistTileUrl(mode, member, basetime, validtime, z, x, y) {
+  const element = WDIST_MODE_CONFIG[mode]?.element || "wm";
+  return `${WDIST_DATA_BASE}/${basetime}/${member}/${validtime}/surf/${element}/${z}/${x}/${y}.png`;
 }
-function wdistProtocolUrl(member, basetime, validtime) {
-  return `jmawdist://${member}/${basetime}/${validtime}/{z}/{x}/{y}`;
+function wdistProtocolUrl(mode, member, basetime, validtime) {
+  return `jmawdist://${mode}/${member}/${basetime}/${validtime}/{z}/{x}/{y}`;
 }
 
-// 天気分布予報の時刻一覧を取得する。[{ basetime, validtime, member }, ...] を
-// 時系列昇順で返す。
-async function loadWdistFrames() {
-  const url = `${WDIST_DATA_BASE}/targetTimes.json`; // 要検証
+// modeの時刻一覧を取得する。[{ basetime, validtime, member }, ...] を時系列昇順で返す。
+async function loadWdistFrames(mode) {
+  const label = WDIST_MODE_CONFIG[mode]?.label || mode;
+  const element = WDIST_MODE_CONFIG[mode]?.element || "wm";
+  const url = `${WDIST_DATA_BASE}/targetTimes.json`;
   let raw;
   try {
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     raw = await res.json();
   } catch (err) {
-    console.warn(`天気分布予報: 時刻一覧の取得に失敗 url=${url}`, err);
+    console.warn(`${label}: 時刻一覧の取得に失敗 url=${url}`, err);
     throw err;
   }
   if (!Array.isArray(raw) || raw.length === 0) {
-    console.warn(`天気分布予報: 時刻一覧が空、または想定外の形式です url=${url}`, raw);
+    console.warn(`${label}: 時刻一覧が空、または想定外の形式です url=${url}`, raw);
     return [];
   }
-  // rasrfの時と同じく、このjsonにも天気分布予報以外の要素のエントリが
-  // 混ざっている可能性があるため、elementsにWDIST_ELEMENTを含むものだけを
-  // 拾う。含まれていなかった場合(=elements自体が無い形式だった場合)に
-  // 備えて、elementsが無ければ素通しするフォールバックも用意しておく。
+  // このjsonには天気分布予報以外の要素のエントリが混ざっている可能性がある
+  // ため、elementsに目的の要素名を含むものだけを拾う。含まれていなかった
+  // 場合(=elements自体が無い形式だった場合)に備えて、elementsが無ければ
+  // 素通しするフォールバックも用意しておく。
   const filtered = raw.filter(t => t && t.basetime && t.validtime);
-  const withElement = filtered.filter(t => Array.isArray(t.elements) && t.elements.includes(WDIST_ELEMENT));
+  const withElement = filtered.filter(t => Array.isArray(t.elements) && t.elements.includes(element));
   if (filtered.length > 0 && withElement.length === 0) {
     console.warn(
-      `天気分布予報: elements="${WDIST_ELEMENT}"を含むエントリが1件も無かった。` +
+      `${label}: elements="${element}"を含むエントリが1件も無かった。` +
       `要素名の推測が外れている可能性があります。実際のエントリ例:`,
       filtered[0]
     );
@@ -1703,14 +1706,14 @@ function registerWdistProtocol(maplibregl) {
   if (wdistProtocolRegistered) return;
   wdistProtocolRegistered = true;
   maplibregl.addProtocol("jmawdist", async (params, abortController) => {
-    const m = params.url.match(/^jmawdist:\/\/([a-z]+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)\/(-?\d+)$/);
+    const m = params.url.match(/^jmawdist:\/\/([a-z]+)\/([a-z]+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)\/(-?\d+)$/);
     if (!m) return { data: null };
-    const [, member, basetime, validtime, zStr, xStr, yStr] = m;
+    const [, mode, member, basetime, validtime, zStr, xStr, yStr] = m;
     let z = Number(zStr), x = Number(xStr), y = Number(yStr);
 
     // 奇数ズームは1段階粗い偶数ズームのタイルを取得し、該当する象限だけを
-    // 切り出して代用する(雨雲レーダー・降水量と同じ方式)。天気種別の色分けは
-    // 配色スキームに関係なく固定なので、色の変換(remapImageDataColors)は
+    // 切り出して代用する(雨雲レーダー・降水量と同じ方式)。天気種別・気温の
+    // 色分けは配色スキームに関係なく固定なので、色の変換(remapImageDataColors)は
     // 行わない。
     let cropQuadrant = null;
     if (z % 2 !== 0) {
@@ -1719,7 +1722,7 @@ function registerWdistProtocol(maplibregl) {
       x = Math.floor(x / 2);
       y = Math.floor(y / 2);
     }
-    const url = wdistTileUrl(member, basetime, validtime, z, x, y);
+    const url = wdistTileUrl(mode, member, basetime, validtime, z, x, y);
     if (wdistFailedTileUrls.has(url)) return { data: null };
 
     let res;
@@ -1732,7 +1735,7 @@ function registerWdistProtocol(maplibregl) {
     if (!res.ok) {
       if (res.status === 404) {
         wdistFailedTileUrls.add(url);
-        console.warn(`天気分布予報タイル 404(要素名・URL構造の推測が外れている可能性があります): ${url}`);
+        console.warn(`${WDIST_MODE_CONFIG[mode]?.label || mode}タイル 404(要素名・URL構造の推測が外れている可能性があります): ${url}`);
       }
       return { data: null };
     }
@@ -1997,8 +2000,9 @@ function MapCanvas({
   precipKnownValidtimes = [],   // 現在のモードの全validtime一覧。この一覧に無くなった
                                  // (5分おきの一覧更新でありうる)キャッシュ済みレイヤーの掃除に使う
   wdistVisible = false,         // 天気分布予報レイヤーを表示するか
+  wdistMode = null,             // "weather" | "temperature" | null
   wdistFrame = null,            // { basetime, validtime, member } | null。表示中の時刻コマ
-  wdistKnownValidtimes = [],    // 現在の全validtime一覧。キャッシュ済みレイヤーの掃除に使う
+  wdistKnownValidtimes = [],    // 現在のモードの全validtime一覧。キャッシュ済みレイヤーの掃除に使う
   typhoonVisible = false,       // 台風情報レイヤーを表示するか
   typhoonGeojson = null,        // fetchTyphoonData()が返すgeojson({type:"FeatureCollection"})| null
   onSelectTyphoonCenter,        // 台風の中心点/予報円をタップした時にpropertiesを渡すコールバック
@@ -3512,8 +3516,9 @@ function MapCanvas({
     // マウント解除時の後片付けは地図本体の破棄(map.remove())で行われる。
   }, [precipVisible, precipMode, precipFrame?.basetime, precipFrame?.validtime, nowcastColorSchemeId, status, precipKnownValidtimesKey]);
 
-  // 天気分布予報(天気要素のみ)。雨雲レーダー・降水量とは排他。配色スキームに
-  // 依存しない(色は固定)ので、レイヤーid/sourceidの名前空間にはvalidtimeだけを
+  // 天気分布予報(天気分布・気温分布)。雨雲レーダー・降水量とは排他。
+  // 配色スキームには依存しない(色は固定)が、モード(天気/気温)によって
+  // 中身が全く別物になるため、レイヤーid/sourceidの名前空間にはmode+validtimeを
   // 含める。キャッシュの仕組み(既読みコマは残してopacityだけ切り替える)は
   // 降水量と同じ。
   const wdistKnownValidtimesKey = wdistKnownValidtimes.join(",");
@@ -3532,25 +3537,29 @@ function MapCanvas({
       });
     };
 
-    if (!wdistVisible || !wdistFrame) {
+    if (!wdistVisible || !wdistMode || !wdistFrame) {
       removeAllWdistLayers();
       return;
     }
 
+    const keyOf = (mode, validtime) => `${mode}-${validtime}`;
     const knownValidtimeSet = new Set(wdistKnownValidtimes);
 
-    // 掃除するのは、一覧の再取得でもう存在しなくなったコマだけ。
+    // 掃除するのは、(1)モードが変わって別物になったもの、
+    // (2)一覧の再取得でもう存在しなくなったコマ、の2種類だけ。
     const style = map.getStyle();
     if (style) {
       (style.layers || []).forEach(l => {
         if (!l.id.startsWith("wdist-layer-")) return;
-        const validtime = l.id.slice("wdist-layer-".length);
-        if (!knownValidtimeSet.has(validtime)) map.removeLayer(l.id);
+        const [mode, validtime] = l.id.slice("wdist-layer-".length).split("-");
+        const stale = mode !== wdistMode || !knownValidtimeSet.has(validtime);
+        if (stale) map.removeLayer(l.id);
       });
       Object.keys(style.sources || {}).forEach(srcId => {
         if (!srcId.startsWith("wdist-src-")) return;
-        const validtime = srcId.slice("wdist-src-".length);
-        if (!knownValidtimeSet.has(validtime)) map.removeSource(srcId);
+        const [mode, validtime] = srcId.slice("wdist-src-".length).split("-");
+        const stale = mode !== wdistMode || !knownValidtimeSet.has(validtime);
+        if (stale) map.removeSource(srcId);
       });
     }
 
@@ -3560,7 +3569,7 @@ function MapCanvas({
 
     // 既にキャッシュ済みのレイヤーは、現在のコマだけ不透明にし、それ以外は
     // 透明に戻す。
-    const currentKey = wdistFrame.validtime;
+    const currentKey = keyOf(wdistMode, wdistFrame.validtime);
     if (style) {
       (style.layers || []).forEach(l => {
         if (!l.id.startsWith("wdist-layer-")) return;
@@ -3576,7 +3585,7 @@ function MapCanvas({
     if (!map.getSource(srcId)) {
       map.addSource(srcId, {
         type: "raster",
-        tiles: [wdistProtocolUrl(wdistFrame.member, wdistFrame.basetime, wdistFrame.validtime)],
+        tiles: [wdistProtocolUrl(wdistMode, wdistFrame.member, wdistFrame.basetime, wdistFrame.validtime)],
         tileSize: 256,
         minzoom: 4,
         maxzoom: 10,
@@ -3592,7 +3601,7 @@ function MapCanvas({
         paint: { "raster-opacity": 0.75 },
       }, beforeId);
     }
-  }, [wdistVisible, wdistFrame?.basetime, wdistFrame?.validtime, status, wdistKnownValidtimesKey]);
+  }, [wdistVisible, wdistMode, wdistFrame?.basetime, wdistFrame?.validtime, status, wdistKnownValidtimesKey]);
 
   // 推計震度分布(気象庁 estimated_intensity_map)を更新する。
   // 選択中の地震・設定トグルが変わるたびに、画像を取得・ピクセル解析してGeoJSONに変換し、
@@ -10111,13 +10120,14 @@ function BottomDock({
   }, [precipMode, currentPrecipFrame?.basetime, currentPrecipFrame?.validtime, precipFrames, onPrecipChange]);
 
   /* ─────────────────────────────────────────────────────
-     天気分布予報(天気要素のみ)。雨雲レーダー・1/3/24時間降水量とは全て排他
+     天気分布予報(天気分布・気温分布)。wdistMode("weather"|"temperature"|null)は
+     ラジオボタン的な排他選択で、雨雲レーダー・1/3/24時間降水量とも全て排他
      (exclusivityはhandleToggleWeatherMenuItem側で処理)。データの更新自体は
      1日3回(5時・11時・17時)だが、一覧の取得ロジックは降水量と揃えて
      5分おきの再確認にしている(新しい発表を取りこぼさないようにするための
      ポーリングであり、実際に中身が変わるのは1日3回だけ)。
      ───────────────────────────────────────────────────── */
-  const [wdistEnabled, setWdistEnabled] = useState(false);
+  const [wdistMode, setWdistMode] = useState(null);
   const [wdistFrames, setWdistFrames] = useState(null);
   const [wdistFrameIndex, setWdistFrameIndex] = useState(null);
   const [wdistLoadError, setWdistLoadError] = useState(false);
@@ -10127,7 +10137,7 @@ function BottomDock({
   useEffect(() => { wdistFrameIndexRef.current = wdistFrameIndex; }, [wdistFrameIndex]);
 
   useEffect(() => {
-    if (!wdistEnabled) {
+    if (!wdistMode) {
       setWdistFrames(null);
       setWdistFrameIndex(null);
       setWdistLoadError(false);
@@ -10135,7 +10145,7 @@ function BottomDock({
     }
     let cancelled = false;
     const fetchAndApply = () => {
-      loadWdistFrames()
+      loadWdistFrames(wdistMode)
         .then((frames) => {
           if (cancelled) return;
           setWdistLoadError(false);
@@ -10157,26 +10167,26 @@ function BottomDock({
           setWdistFrameIndex(nextIndex);
         })
         .catch((err) => {
-          console.error("天気分布予報の時刻一覧の取得に失敗:", err);
+          console.error(`天気分布予報[${wdistMode}]の時刻一覧の取得に失敗:`, err);
           if (!cancelled) setWdistLoadError(true);
         });
     };
     fetchAndApply();
     const intervalId = setInterval(fetchAndApply, 5 * 60 * 1000);
     return () => { cancelled = true; clearInterval(intervalId); };
-  }, [wdistEnabled]);
+  }, [wdistMode]);
 
   const currentWdistFrame =
     wdistFrames && wdistFrameIndex != null ? wdistFrames[wdistFrameIndex] : null;
 
   useEffect(() => {
     onWdistChange?.(
-      wdistEnabled && currentWdistFrame
-        ? { frame: currentWdistFrame, knownValidtimes: wdistFrames.map(f => f.validtime) }
+      wdistMode && currentWdistFrame
+        ? { mode: wdistMode, frame: currentWdistFrame, knownValidtimes: wdistFrames.map(f => f.validtime) }
         : null
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wdistEnabled, currentWdistFrame?.basetime, currentWdistFrame?.validtime, wdistFrames, onWdistChange]);
+  }, [wdistMode, currentWdistFrame?.basetime, currentWdistFrame?.validtime, wdistFrames, onWdistChange]);
 
   /* ─────────────────────────────────────────────────────
      台風情報。ONにするたびに気象庁 台風情報API(bosai/typhoon)を取得し直し、
@@ -10619,14 +10629,16 @@ function BottomDock({
   }
   // 気象メニューの項目トグル共通ハンドラ。項目が増えるたびに個別のprops/分岐を
   // 増やさなくて済むよう、idで振り分ける形にしている。
-  // 雨雲レーダー・1/3/24時間降水量・天気分布予報は「地図に重ねる面情報」という
-  // 意味で互いに全て排他にする(常にこのグループの中でどれか1つだけが表示
-  // される)。台風情報だけはこのグループに含めず独立(重ねて表示できる)。
+  // 雨雲レーダー・1/3/24時間降水量・天気分布予報(天気分布/気温分布)は
+  // 「地図に重ねる面情報」という意味で互いに全て排他にする(常にこのグループの
+  // 中でどれか1つだけが表示される)。天気分布/気温分布同士もラジオボタン的な
+  // 排他選択(1/3/24時間降水量と同じ考え方)。台風情報だけはこのグループに
+  // 含めず独立(重ねて表示できる)。
   function handleToggleWeatherMenuItem(id) {
     if (id === "precip1h" || id === "precip3h" || id === "precip24h") {
       setPrecipMode(prev => {
         const next = prev === id ? null : id;
-        if (next) { setNowcastEnabled(false); setWdistEnabled(false); }
+        if (next) { setNowcastEnabled(false); setWdistMode(null); }
         return next;
       });
     } else if (id === "typhoonInfo") {
@@ -10634,12 +10646,13 @@ function BottomDock({
     } else if (id === "rainRadar") {
       setNowcastEnabled(prev => {
         const next = !prev;
-        if (next) { setPrecipMode(null); setWdistEnabled(false); }
+        if (next) { setPrecipMode(null); setWdistMode(null); }
         return next;
       });
-    } else if (id === "weatherDistribution") {
-      setWdistEnabled(prev => {
-        const next = !prev;
+    } else if (id === "weatherDistribution" || id === "temperatureDistribution") {
+      const mode = id === "weatherDistribution" ? "weather" : "temperature";
+      setWdistMode(prev => {
+        const next = prev === mode ? null : mode;
         if (next) { setPrecipMode(null); setNowcastEnabled(false); }
         return next;
       });
@@ -10651,7 +10664,8 @@ function BottomDock({
     precip24h: precipMode === "precip24h",
     typhoonInfo: typhoonEnabled,
     rainRadar: nowcastEnabled,
-    weatherDistribution: wdistEnabled,
+    weatherDistribution: wdistMode === "weather",
+    temperatureDistribution: wdistMode === "temperature",
   };
   // 台風タブ版の「戻る」— 詳細カードから一覧表示に戻す。フローティング自体は
   // 閉じない(閉じた時の選択解除は別のuseEffectで扱う)。
@@ -11725,7 +11739,7 @@ function BottomDock({
             </div>
           )}
           {/* 天気分布予報の時刻スライダー(横画面)。他とは全て排他。 */}
-          {wdistEnabled && !weatherMenuOpen && (
+          {wdistMode && !weatherMenuOpen && (
             <div style={{
               position: "fixed",
               left: wideAnchorRect.right + 12,
@@ -11775,7 +11789,7 @@ function BottomDock({
             />
           )}
           {/* 天気分布予報の時刻スライダー。他とは全て排他。 */}
-          {wdistEnabled && !weatherMenuOpen && (
+          {wdistMode && !weatherMenuOpen && (
             <PrecipTimeSlider
               frames={wdistFrames}
               frameIndex={wdistFrameIndex ?? 0}
@@ -12670,11 +12684,12 @@ function PrecipLegend({ mode }) {
 }
 
 /* ─────────────────────────────────────────────────────
-   WDIST LEGEND — 天気分布予報(天気要素)の凡例。降水量のような連続的な
-   数値スケールではなく、5分類(晴れ/くもり/雨/雨または雪/雪)のカテゴリなので、
-   横一列のバーではなく「色見本+ラベル」を縦に並べる形にしている。
-   ⚠️ 色はJMAの実際のタイル配色を確認できていない暫定値。実機で確認できたら
-   実際の配色に合わせて直す。
+   WDIST LEGEND — 天気分布予報の凡例。天気分布(晴れ/くもり/雨/雨または雪/雪の
+   5分類)は連続的な数値スケールではないカテゴリなので、横一列のバーではなく
+   「色見本+ラベル」を縦に並べる形にしている。気温分布は降水量と同じく
+   連続的な数値なので、PrecipLegendと同じ横一列のバー形式にしている。
+   ⚠️ どちらも色はJMAの実際のタイル配色を確認できていない暫定値。実機で
+   確認できたら実際の配色に合わせて直す。
    ───────────────────────────────────────────────────── */
 const WDIST_WEATHER_CATEGORIES = [
   { label: "晴れ", color: "#F5A623" },
@@ -12683,8 +12698,62 @@ const WDIST_WEATHER_CATEGORIES = [
   { label: "雨または雪", color: "#B48EAD" },
   { label: "雪", color: "#E8EEF5" },
 ];
-function WdistLegend() {
+// 気温分布用の暫定配色(寒色→暖色のグラデーション)と区分値(℃)。要検証。
+const WDIST_TEMP_LEGEND_COLORS = [
+  [98, 44, 140], [43, 84, 191], [55, 148, 214], [90, 199, 201],
+  [140, 214, 110], [230, 214, 60], [235, 140, 40], [214, 55, 55],
+];
+const WDIST_TEMP_LEGEND_BOUNDS = ["-10", "-5", "0", "5", "10", "15", "20", "25"];
+
+function WdistLegend({ mode }) {
   const { tokens } = useContext(ThemeContext);
+
+  if (mode === "temperature") {
+    const SWATCH_WIDTH = 22; // PrecipLegendと同じ幅
+    return (
+      <Glass
+        radius={12}
+        style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", padding: "6px 8px 0" }}>
+          <div style={{
+            fontSize: 10, lineHeight: "11px", fontWeight: 700,
+            color: `rgba(${tokens.ink},0.6)`, marginBottom: 3, whiteSpace: "nowrap",
+          }}>
+            ℃
+          </div>
+          <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
+            {WDIST_TEMP_LEGEND_COLORS.map((rgb, i) => (
+              <div
+                key={i}
+                style={{
+                  width: SWATCH_WIDTH, height: 9,
+                  borderRadius: i === 0 ? "2px 0 0 2px" : i === WDIST_TEMP_LEGEND_COLORS.length - 1 ? "0 2px 2px 0" : 0,
+                  background: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`,
+                  flexShrink: 0,
+                }}
+              />
+            ))}
+          </div>
+          <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
+            {WDIST_TEMP_LEGEND_BOUNDS.map((label, i) => (
+              <div
+                key={i}
+                style={{
+                  width: SWATCH_WIDTH, flexShrink: 0, textAlign: "left", paddingLeft: 1,
+                  fontSize: 9, lineHeight: "9px", fontWeight: 600, color: `rgba(${tokens.ink},0.55)`,
+                }}
+              >
+                {label}
+              </div>
+            ))}
+          </div>
+        </div>
+      </Glass>
+    );
+  }
+
+  // mode === "weather"(デフォルト)
   return (
     <Glass
       radius={12}
@@ -13060,10 +13129,11 @@ const WEATHER_MENU_ITEMS = [
   { id: "typhoonInfo", label: "台風情報" },
   { id: "rainRadar", label: "雨雲レーダー" },
 ];
-// 2ページ目。今のところ「天気予報分布」ボタンのみを追加する段階で、
-// 機能(トグルの挙動・データ取得)はまだ実装していない。
+// 2ページ目。天気分布(天気種別)・気温分布の2つ。気温分布は天気分布の下に
+// 並べる。
 const WEATHER_MENU_PAGE2_ITEMS = [
-  { id: "weatherDistribution", label: "天気予報分布" },
+  { id: "weatherDistribution", label: "天気分布" },
+  { id: "temperatureDistribution", label: "気温分布" },
 ];
 
 const WEATHER_MENU_BUTTON_SIZE = 44;      // 閉じている時のトグルボタン(円)のサイズ
@@ -19277,11 +19347,13 @@ export default function App() {
     setPrecipFrame(payload ? payload.frame : null);
     setPrecipKnownValidtimes(payload ? payload.knownValidtimes : []);
   }, []);
-  // 天気分布予報がON中の現在の時刻コマ。BottomDock側から伝わってくる。
+  // 天気分布予報がON中の現在のモード・時刻コマ。BottomDock側から伝わってくる。
   // 雨雲レーダー・降水量とは排他なので、オンになるのはどれか1つだけ。
+  const [wdistMode, setWdistMode] = useState(null);
   const [wdistFrame, setWdistFrame] = useState(null);
   const [wdistKnownValidtimes, setWdistKnownValidtimes] = useState([]);
   const handleWdistChange = useCallback((payload) => {
+    setWdistMode(payload ? payload.mode : null);
     setWdistFrame(payload ? payload.frame : null);
     setWdistKnownValidtimes(payload ? payload.knownValidtimes : []);
   }, []);
@@ -20354,6 +20426,7 @@ export default function App() {
           precipFrame={precipFrame}
           precipKnownValidtimes={precipKnownValidtimes}
           wdistVisible={activeNav === "weather" && !!wdistFrame}
+          wdistMode={wdistMode}
           wdistFrame={wdistFrame}
           wdistKnownValidtimes={wdistKnownValidtimes}
           typhoonVisible={activeNav === "weather" && !!typhoonGeojson}
@@ -20584,7 +20657,7 @@ export default function App() {
             right: 16,
             zIndex: 30,
           }}>
-            <WdistLegend/>
+            <WdistLegend mode={wdistMode}/>
           </div>
         )}
 
