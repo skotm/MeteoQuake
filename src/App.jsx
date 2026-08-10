@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.7.0e";
+const APP_VERSION = "1.7.0f";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -12728,12 +12728,11 @@ function WeatherMenuFloating({
   const items = WEATHER_MENU_ITEMS.filter(item => item.id !== "typhoonInfo" || hasActiveTyphoons !== false);
 
   // ページ送り。1ページ目=既存の項目一式、2ページ目=天気予報分布(ボタンのみ、
-  // 今のところ機能は無い)。メニューを閉じたら次に開いた時は必ず1ページ目に
-  // 戻す。
+  // 今のところ機能は無い)。メニューを閉じて再度開いた時も、直前に見ていた
+  // ページをそのまま維持する(あえてリセットしない)。
   const pages = [items, WEATHER_MENU_PAGE2_ITEMS];
   const totalPages = pages.length;
   const [page, setPage] = useState(0);
-  useEffect(() => { if (!open) setPage(0); }, [open]);
   const pageItems = pages[page] || items;
 
   const itemsBlockHeight =
@@ -12798,18 +12797,21 @@ function WeatherMenuFloating({
         {/* ページ送り(左右のくの字)。雨雲レーダーボタン(1ページ目の最後)と
             開閉トグルボタンの間に置く(DOM順としてもこの2つの間に挟む形にし、
             growUp=true(column-reverse)でもgrowUp=false(通常column)でも、
-            見た目上ちょうど間に来るようにしている)。 */}
+            見た目上ちょうど間に来るようにしている)。
+            くの字アイコン自体は小さいが、タップ領域は行の左半分・右半分
+            まるごとに広げてあるので、アイコンの外側(空白部分)を押しても
+            ページが切り替わる。 */}
         {open && totalPages > 1 && (
           <div style={{
             flexShrink: 0, width: "100%", height: WEATHER_MENU_PAGE_NAV_HEIGHT,
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            display: "flex", alignItems: "center", justifyContent: "center",
           }}>
             <PressableButton
               onClick={() => setPage(p => Math.max(0, p - 1))}
               disabled={page === 0}
               aria-label="前のページ"
               style={{
-                width: 26, height: 22, display: "flex", alignItems: "center", justifyContent: "center",
+                flex: 1, height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
                 color: page === 0 ? `rgba(${tokens.ink},0.25)` : tokens.text,
                 borderRadius: 8,
               }}
@@ -12819,7 +12821,10 @@ function WeatherMenuFloating({
                 <polyline points="15 6 9 12 15 18"/>
               </svg>
             </PressableButton>
-            <span style={{ fontSize: 10, fontWeight: 600, color: `rgba(${tokens.ink},0.45)`, minWidth: 24, textAlign: "center" }}>
+            <span style={{
+              flexShrink: 0, fontSize: 10, fontWeight: 600, color: `rgba(${tokens.ink},0.45)`,
+              minWidth: 24, textAlign: "center", padding: "0 4px",
+            }}>
               {page + 1}/{totalPages}
             </span>
             <PressableButton
@@ -12827,7 +12832,7 @@ function WeatherMenuFloating({
               disabled={page === totalPages - 1}
               aria-label="次のページ"
               style={{
-                width: 26, height: 22, display: "flex", alignItems: "center", justifyContent: "center",
+                flex: 1, height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
                 color: page === totalPages - 1 ? `rgba(${tokens.ink},0.25)` : tokens.text,
                 borderRadius: 8,
               }}
