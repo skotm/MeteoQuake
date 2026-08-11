@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.7.8";
+const APP_VERSION = "1.7.9";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1811,6 +1811,7 @@ function registerWdistProtocol(maplibregl) {
       res = await fetch(url, { signal: abortController.signal });
     } catch (err) {
       if (err.name === "AbortError") throw err;
+      console.warn(`${source === "suikei" ? "推計気象分布" : "天気分布予報"}タイル fetch失敗: ${url}`, err);
       return { data: null };
     }
     if (!res.ok) {
@@ -1822,9 +1823,22 @@ function registerWdistProtocol(maplibregl) {
       return { data: null };
     }
     const blob = await res.blob();
+    // データが空(0バイト)で返ってきていないか確認する。空だった場合、
+    // 見た目には「実況だけ何も表示されない」ように見えるため、原因調査用に
+    // ログへ残す。
+    if (!blob || blob.size === 0) {
+      console.warn(`${source === "suikei" ? "推計気象分布" : "天気分布予報"}タイル: レスポンスが空(0バイト)でした: ${url}`);
+      return { data: null };
+    }
     if (!cropQuadrant) return { data: await blob.arrayBuffer() };
 
-    const bitmap = await createImageBitmap(blob);
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(blob);
+    } catch (err) {
+      console.warn(`${source === "suikei" ? "推計気象分布" : "天気分布予報"}タイル: 画像デコードに失敗しました: ${url}`, err);
+      return { data: null };
+    }
     const canvas = new OffscreenCanvas(256, 256);
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
