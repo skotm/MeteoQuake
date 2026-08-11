@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.9.2";
+const APP_VERSION = "1.9.4";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -14021,6 +14021,13 @@ function TyphoonListPanel({ typhoons = [], loadError = false, onSelectTyphoon })
    警報・注意報を、市区町村単位でレベル順(特別警報→危険警報→警報→注意報)に
    ソートして一覧表示する。TyphoonListPanelと同じ構成(見出し+区切り線付き行)。
    ───────────────────────────────────────────────────── */
+// 警報種別名(例: "土砂災害危険警報")から末尾のレベル語("特別警報"/"危険警報"/
+// "警報"/"注意報")を取り除いた基礎名("土砂災害")を返す。一覧表示のアイコンは
+// バッジの色でレベルを表すため、文字まで重複させない(要件により省略)。
+function stripWarningLevelSuffix(name) {
+  return (name || "").replace(/(特別警報|危険警報|警報|注意報)$/, "");
+}
+
 function WarningAreaListPanel({ warningLevelMap = {}, warningAreaByRegioncode = {}, onSelectWarningArea }) {
   const { tokens } = useContext(ThemeContext);
 
@@ -14070,7 +14077,7 @@ function WarningAreaListPanel({ warningLevelMap = {}, warningAreaByRegioncode = 
               </span>
               <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 3, flexShrink: 0, maxWidth: "55%" }}>
                 {w.kinds.map(k => (
-                  <WarningKindBadge key={k.code + k.name} level={k.level} label={k.name}/>
+                  <WarningKindBadge key={k.code + k.name} level={k.level} label={stripWarningLevelSuffix(k.name)}/>
                 ))}
               </div>
             </PressableButton>
@@ -14096,18 +14103,14 @@ function WarningAreaDetailCard({ regioncode, warningLevelMap = {}, warningAreaBy
   );
 
   return (
-    <div style={{ margin: "0 14px 2px" }}>
-      <div style={{ padding: "0 4px 8px" }}>
-        <PressableButton
-          onClick={onBack}
-          style={{
-            display: "flex", alignItems: "center", gap: 3,
-            padding: "3px 0 6px", background: "transparent",
-          }}
-        >
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#0A84FF", lineHeight: 1 }}>‹</span>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "#0A84FF" }}>戻る</span>
-        </PressableButton>
+    <div style={{ margin: "0 14px 2px", position: "relative" }}>
+      {/* 戻るボタン — 他タブ(地震・津波・台風)の丸型BackToListButtonをそのまま流用し、
+          フローティング(このカード)の右上に固定配置する。見出しと重なる分は
+          下の見出し側でpaddingRightを確保して避ける。 */}
+      <div style={{ position: "absolute", top: 0, right: 0, zIndex: 2 }}>
+        <BackToListButton onClick={onBack} label="警報一覧に戻る"/>
+      </div>
+      <div style={{ padding: "2px 56px 8px 4px" }}>
         <div style={{
           fontSize: 17, fontWeight: 800, color: tokens.text, lineHeight: 1.15,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
