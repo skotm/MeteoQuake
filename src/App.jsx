@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useContext, createContext, forwardRef, Fragment } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useContext, createContext, forwardRef, Fragment, memo } from "react";
 import { createPortal } from "react-dom";
 
 /* ─────────────────────────────────────────────────────
@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.9.6";
+const APP_VERSION = "1.9.7";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -14102,19 +14102,32 @@ function stripWarningLevelSuffix(name) {
   return (name || "").replace(/(特別警報|危険警報|警報|注意報)$/, "");
 }
 
-function WarningAreaListPanel({ warningLevelMap = {}, warningAreaByRegioncode = {}, onSelectWarningArea }) {
+// BottomDockはドラッグ中のアニメーション等で頻繁に再レンダーされるため、
+// memo化して警報一覧タブが開いていない時・propsが変わっていない時の
+// 無駄な再レンダーを避ける(内部の重い組み立てはuseMemoで別途対策済み)。
+const WarningAreaListPanel = memo(function WarningAreaListPanel({ warningLevelMap = {}, warningAreaByRegioncode = {}, onSelectWarningArea }) {
   const { tokens } = useContext(ThemeContext);
 
   // warningLevelMapのキー(regioncode)に、名称マスタから名前を付けてレベル順に
   // ソートする。名称マスタがまだ読み込めていない(regioncodeに対応するmが無い)
   // 間は、regioncodeをそのままフォールバック表示する。
-  const sorted = Object.entries(warningLevelMap)
-    .map(([regioncode, entry]) => ({
-      regioncode,
-      name: warningAreaByRegioncode[regioncode]?.name || regioncode,
-      ...entry,
-    }))
-    .sort((a, b) => (WARNING_LEVEL_PRIORITY[b.level] ?? 0) - (WARNING_LEVEL_PRIORITY[a.level] ?? 0));
+  // 全国的な警報発表時は件数が数百件規模になることもあるため、この組み立て
+  // (Object.entries+map+sort、行ごとのバッジのsortを含む)はuseMemoで、
+  // warningLevelMap/warningAreaByRegioncodeが実際に変わった時だけ行う
+  // (BottomDockはドラッグ中など頻繁に再レンダーされるため、メモ化していないと
+  // 開閉アニメーションのフレームごとに毎回この組み立てが走ってしまう)。
+  const sorted = useMemo(() => {
+    return Object.entries(warningLevelMap)
+      .map(([regioncode, entry]) => ({
+        regioncode,
+        name: warningAreaByRegioncode[regioncode]?.name || regioncode,
+        level: entry.level,
+        // バッジの並び順(グレードが低い→高い、右端が最高グレードになるよう)も
+        // ここで一度だけ計算しておく。
+        kinds: [...entry.kinds].sort((a, b) => (WARNING_LEVEL_PRIORITY[a.level] ?? 0) - (WARNING_LEVEL_PRIORITY[b.level] ?? 0)),
+      }))
+      .sort((a, b) => (WARNING_LEVEL_PRIORITY[b.level] ?? 0) - (WARNING_LEVEL_PRIORITY[a.level] ?? 0));
+  }, [warningLevelMap, warningAreaByRegioncode]);
 
   return (
     <div>
@@ -14150,11 +14163,9 @@ function WarningAreaListPanel({ warningLevelMap = {}, warningAreaByRegioncode = 
                 {w.name}
               </span>
               <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 3, flexShrink: 0, maxWidth: "55%" }}>
-                {[...w.kinds]
-                  .sort((a, b) => (WARNING_LEVEL_PRIORITY[a.level] ?? 0) - (WARNING_LEVEL_PRIORITY[b.level] ?? 0))
-                  .map(k => (
-                    <WarningKindBadge key={k.code + k.name} level={k.level} label={stripWarningLevelSuffix(k.name)}/>
-                  ))}
+                {w.kinds.map(k => (
+                  <WarningKindBadge key={k.code + k.name} level={k.level} label={stripWarningLevelSuffix(k.name)}/>
+                ))}
               </div>
             </PressableButton>
           </div>
@@ -14162,7 +14173,7 @@ function WarningAreaListPanel({ warningLevelMap = {}, warningAreaByRegioncode = 
       )}
     </div>
   );
-}
+});
 
 /* ─────────────────────────────────────────────────────
    WARNING AREA DETAIL CARD — 警報タブ、選択中の中身。選んだ市区町村で
@@ -19365,13 +19376,15 @@ export default function App() {
     setSelectedWarningArea(regioncode);
   }
   // 一覧の項目をタップした時。選択に加えて、代表座標が分かっていればflyToする。
-  function handleSelectWarningAreaFromList(regioncode) {
+  // useCallbackで参照を安定させ、WarningAreaListPanel(memo化済み)がBottomDockの
+  // 再レンダー(ドラッグ中のアニメーション等)のたびに再レンダーされるのを防ぐ。
+  const handleSelectWarningAreaFromList = useCallback((regioncode) => {
     setSelectedWarningArea(regioncode);
     const area = warningAreaByRegioncode[regioncode];
     if (area && area.lat != null && area.lon != null) {
       setWarningAreaFlyToRequest({ lon: area.lon, lat: area.lat, nonce: Date.now() });
     }
-  }
+  }, [warningAreaByRegioncode]);
   // 詳細カードの「戻る」ボタン。
   function handleBackFromWarningArea() {
     setSelectedWarningArea(null);
