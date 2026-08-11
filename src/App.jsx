@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.9.1";
+const APP_VERSION = "1.9.2";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -2009,6 +2009,9 @@ function MapCanvas({
   typhoonFlyToRequest = null,   // {lon, lat, nonce} | null。台風一覧の項目をタップした時のflyTo先
   warningVisible = false,       // 警報タブ: 警報・注意報レイヤーを表示するか(警報タブがアクティブな間だけtrue)
   warningLevelMap = {},         // 警報タブ: regioncode → {level, kinds} のマップ(App側でポーリング取得)
+  selectedWarningArea = null,   // 警報タブ: タップ/一覧選択中のregioncode | null。選択中のエリアを地図上で強調する
+  onSelectWarningArea,          // 警報タブ: 地図の塗り分けをタップした時に呼ぶコールバック(regioncodeを渡す)
+  warningAreaFlyToRequest = null, // 警報タブ: {lon, lat, nonce} | null。一覧の項目をタップした時のflyTo先
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -2039,6 +2042,11 @@ function MapCanvas({
   onSelectEpicenterPointRef.current = onSelectEpicenterPoint;
   const onSelectTideStationRef = useRef(onSelectTideStation);
   onSelectTideStationRef.current = onSelectTideStation;
+  // 警報タブ: 警報・注意報レイヤーをタップした時のコールバック。他のタップ系
+  // コールバックと同様、map.on("load")内の登録は初回マウント時の1回きりなので
+  // refで最新の関数を参照できるようにしておく。
+  const onSelectWarningAreaRef = useRef(onSelectWarningArea);
+  onSelectWarningAreaRef.current = onSelectWarningArea;
   const tideStationsInteractiveRef = useRef(tideStationsInteractive);
   tideStationsInteractiveRef.current = tideStationsInteractive;
   // 台風の中心点/予報円をタップした時のコールバック。map.on("load")内の登録は
@@ -2433,6 +2441,21 @@ function MapCanvas({
             },
           }, "station-points-symbol");
 
+          // タップ/一覧選択中の警報エリアを強調する専用レイヤー。同じソース
+          // (warning-areas)を使い回し、setFilterで選択中のregioncodeだけに
+          // 絞り込む(下方の専用useEffect参照)。太い白線で塗り分けの上から囲う。
+          map.addLayer({
+            id: "warning-areas-highlight-layer",
+            type: "line",
+            source: "warning-areas",
+            layout: { visibility: "none", "line-cap": "round", "line-join": "round" },
+            filter: ["==", ["get", "regioncode"], "__none__"],
+            paint: {
+              "line-color": "#ffffff",
+              "line-width": 3,
+            },
+          }, "station-points-symbol");
+
           // 震央分布(P2P地震一覧・近傍地震検索・データベース検索の結果を、
           // 震度配色の丸として地図上に重ねて表示する)。
           // 独自のcanvasレイヤーではなくMapLibre標準のcircleレイヤーにすることで、
@@ -2600,6 +2623,16 @@ function MapCanvas({
             setEpicenterTooltip(null);
             onSelectEpicenterPointRef.current?.(e.features[0].properties.id);
           });
+
+          // 警報タブ: 塗り分けられた市区町村をタップした時、regioncodeを親(App)に
+          // 伝える。名称・警報種別は親側でwarningLevelMap/エリア名マスタから
+          // 引くため、ここではregioncodeだけ渡せば十分。
+          map.on("click", "warning-areas-fill-layer", (e) => {
+            if (!e.features || !e.features.length) return;
+            onSelectWarningAreaRef.current?.(e.features[0].properties.regioncode);
+          });
+          map.on("mouseenter", "warning-areas-fill-layer", () => map.getCanvas().style.cursor = "pointer");
+          map.on("mouseleave", "warning-areas-fill-layer", () => map.getCanvas().style.cursor = "");
 
           // 津波テスト配信「地図タップで選択」モード中だけ有効になる、地図全体を対象と
           // したクリック(レイヤー指定なし)。タップ地点から一番近い予報区(海岸線)の
@@ -3245,6 +3278,33 @@ function MapCanvas({
       if (source) source.setData(merged);
     }
   }, [warningVisible, warningLevelMap, status]);
+
+  // 警報タブ: タップ/一覧選択中のエリアを強調するレイヤーの表示切り替え。
+  // 選択が無い間は("__none__"は実在しないregioncodeなので)何も塗られない状態にしておく。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    if (!map.getLayer("warning-areas-highlight-layer")) return;
+
+    map.setLayoutProperty(
+      "warning-areas-highlight-layer",
+      "visibility",
+      warningVisible && selectedWarningArea ? "visible" : "none"
+    );
+    if (selectedWarningArea) {
+      map.setFilter("warning-areas-highlight-layer", ["==", ["get", "regioncode"], selectedWarningArea]);
+    }
+  }, [warningVisible, selectedWarningArea, status]);
+
+  // 警報タブ: 一覧の項目をタップした時、そのエリアの代表座標へflyToする
+  // (台風一覧のflyToと同じ考え方)。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready" || !warningAreaFlyToRequest) return;
+    const { lon, lat } = warningAreaFlyToRequest;
+    if (lon == null || lat == null) return;
+    map.flyTo({ center: [lon, lat], zoom: 10, duration: 800 });
+  }, [status, warningAreaFlyToRequest]);
 
   // 緊急地震速報テスト配信「地図をタップして震源を指定」モード用。ONになったら
   // カーソルをcrosshairにし、震央地名データをこの時点で先読みしておく
@@ -10144,6 +10204,11 @@ function BottomDock({
   selectedTyphoonInfo, // 時刻チップ/台風一覧の項目をタップして選択中の台風詳細情報。App側で保持
   onClearSelectedTyphoon, // 台風詳細の選択解除(戻るボタン・フローティングを閉じた時)に呼ぶ
   onSelectTyphoonDetail, // 詳細カード内の予報タイムラインで別の時刻をタップした時に呼ぶ
+  warningLevelMap = {}, // 警報タブ: regioncode → {level, kinds} のマップ
+  warningAreaByRegioncode = {}, // 警報タブ: regioncode → {name, lat, lon} の名称マスタ
+  selectedWarningArea, // 警報タブ: タップ/一覧選択中のregioncode | null
+  onSelectWarningAreaFromList, // 警報タブ: 一覧の項目をタップした時に呼ぶ(選択+flyTo)
+  onBackFromWarningArea, // 警報タブ: 詳細カードの「戻る」ボタンを押した時に呼ぶ
 }) {
   const { tokens, mode } = useContext(ThemeContext);
   const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
@@ -12545,16 +12610,19 @@ function BottomDock({
                     }}
                   />
                   )
+                ) : selectedWarningArea ? (
+                  <WarningAreaDetailCard
+                    regioncode={selectedWarningArea}
+                    warningLevelMap={warningLevelMap}
+                    warningAreaByRegioncode={warningAreaByRegioncode}
+                    onBack={onBackFromWarningArea}
+                  />
                 ) : (
-                  <div style={{
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    flexDirection: "column", gap: 6,
-                    padding: "48px 18px",
-                  }}>
-                    <span style={{ fontSize: 15, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>
-                      現在開発中です
-                    </span>
-                  </div>
+                  <WarningAreaListPanel
+                    warningLevelMap={warningLevelMap}
+                    warningAreaByRegioncode={warningAreaByRegioncode}
+                    onSelectWarningArea={onSelectWarningAreaFromList}
+                  />
                 )}
 
                 {/* フローティング部分(設定メニュー)とボタン類(ナビ行)の境界線 */}
@@ -13945,6 +14013,153 @@ function TyphoonListPanel({ typhoons = [], loadError = false, onSelectTyphoon })
         ))
       )}
     </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   WARNING AREA LIST PANEL — 警報タブ、非選択時の中身。全国で発表中の
+   警報・注意報を、市区町村単位でレベル順(特別警報→危険警報→警報→注意報)に
+   ソートして一覧表示する。TyphoonListPanelと同じ構成(見出し+区切り線付き行)。
+   ───────────────────────────────────────────────────── */
+function WarningAreaListPanel({ warningLevelMap = {}, warningAreaByRegioncode = {}, onSelectWarningArea }) {
+  const { tokens } = useContext(ThemeContext);
+
+  // warningLevelMapのキー(regioncode)に、名称マスタから名前を付けてレベル順に
+  // ソートする。名称マスタがまだ読み込めていない(regioncodeに対応するmが無い)
+  // 間は、regioncodeをそのままフォールバック表示する。
+  const sorted = Object.entries(warningLevelMap)
+    .map(([regioncode, entry]) => ({
+      regioncode,
+      name: warningAreaByRegioncode[regioncode]?.name || regioncode,
+      ...entry,
+    }))
+    .sort((a, b) => (WARNING_LEVEL_PRIORITY[b.level] ?? 0) - (WARNING_LEVEL_PRIORITY[a.level] ?? 0));
+
+  return (
+    <div>
+      <div style={{
+        display: "flex", alignItems: "center",
+        padding: "8px 18px 11px",
+        borderBottom: `0.5px solid rgba(${tokens.ink},0.15)`,
+      }}>
+        <span style={{ fontSize: 14, fontWeight: 600, flex: 1, color: `rgba(${tokens.ink},0.9)` }}>
+          発表中の警報・注意報
+        </span>
+      </div>
+
+      {sorted.length === 0 ? (
+        <div style={{ padding: "24px 18px", fontSize: 13, color: `rgba(${tokens.ink},0.5)`, textAlign: "center" }}>
+          現在、発表中の警報・注意報はありません。
+        </div>
+      ) : (
+        sorted.map((w, i) => (
+          <div key={w.regioncode}>
+            {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.1)`, marginLeft: 18 }}/>}
+            <PressableButton
+              onClick={() => onSelectWarningArea?.(w.regioncode)}
+              style={{
+                width: "100%", display: "flex", alignItems: "center",
+                padding: "10px 18px", gap: 8, textAlign: "left",
+              }}
+            >
+              <span style={{
+                flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: tokens.text,
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              }}>
+                {w.name}
+              </span>
+              <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 3, flexShrink: 0, maxWidth: "55%" }}>
+                {w.kinds.map(k => (
+                  <WarningKindBadge key={k.code + k.name} level={k.level} label={k.name}/>
+                ))}
+              </div>
+            </PressableButton>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   WARNING AREA DETAIL CARD — 警報タブ、選択中の中身。選んだ市区町村で
+   発表中の警報・注意報の種別を、レベル順にバッジで一覧表示する。
+   TyphoonDetailCardと対の構成。上部に「戻る」ボタンを置く(B要件)。
+   ───────────────────────────────────────────────────── */
+function WarningAreaDetailCard({ regioncode, warningLevelMap = {}, warningAreaByRegioncode = {}, onBack }) {
+  const { tokens } = useContext(ThemeContext);
+  const area = warningAreaByRegioncode[regioncode];
+  const entry = warningLevelMap[regioncode];
+  const name = area?.name || regioncode;
+  const kinds = [...(entry?.kinds || [])].sort((a, b) =>
+    (WARNING_LEVEL_PRIORITY[b.level] ?? 0) - (WARNING_LEVEL_PRIORITY[a.level] ?? 0)
+  );
+
+  return (
+    <div style={{ margin: "0 14px 2px" }}>
+      <div style={{ padding: "0 4px 8px" }}>
+        <PressableButton
+          onClick={onBack}
+          style={{
+            display: "flex", alignItems: "center", gap: 3,
+            padding: "3px 0 6px", background: "transparent",
+          }}
+        >
+          <span style={{ fontSize: 15, fontWeight: 700, color: "#0A84FF", lineHeight: 1 }}>‹</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#0A84FF" }}>戻る</span>
+        </PressableButton>
+        <div style={{
+          fontSize: 17, fontWeight: 800, color: tokens.text, lineHeight: 1.15,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          {name}
+        </div>
+      </div>
+
+      {kinds.length === 0 ? (
+        <div style={{ padding: "24px 4px", fontSize: 13, color: `rgba(${tokens.ink},0.5)`, textAlign: "center" }}>
+          現在、このエリアで発表中の警報・注意報はありません。
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "4px 4px 12px" }}>
+          {kinds.map(k => (
+            <div
+              key={k.code + k.name}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "8px 10px",
+                borderRadius: 10,
+                background: `rgba(${tokens.ink},0.05)`,
+              }}
+            >
+              <WarningKindBadge level={k.level} label={WARNING_LEVEL_LABEL[k.level]}/>
+              <span style={{ fontSize: 13, fontWeight: 600, color: tokens.text }}>
+                {k.name}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 警報・注意報のレベル別バッジ。旧ツールの.warn-badgeと同じ配色
+// (特別警報=黒/危険警報=紫/警報=赤/注意報=黄、注意報のみ文字を黒にする)。
+function WarningKindBadge({ level, label }) {
+  return (
+    <span style={{
+      display: "inline-block",
+      fontSize: 10, fontWeight: 700,
+      padding: "2px 6px",
+      borderRadius: 4,
+      whiteSpace: "nowrap",
+      background: WARNING_LEVEL_COLOR[level] || "#888",
+      color: level === "chui" ? "#000" : "#fff",
+      border: level === "tokubetsu" ? "1px solid rgba(255,255,255,0.4)" : "none",
+    }}>
+      {label}
+    </span>
   );
 }
 
@@ -19014,6 +19229,56 @@ export default function App() {
     return () => { cancelled = true; clearInterval(intervalId); };
   }, [activeNav]);
 
+  // 警報タブ: 市区町村の名称・代表座標マスタ(1,821件)。地点登録の五十音ピッカーで
+  // 既に使っているloadWarningAreaMunicipalities()をそのまま再利用する(内部で
+  // fetchはURL単位にキャッシュされるため、二重取得にはならない)。警報タブを
+  // 一度でも開いた時だけ遅延読み込みする。
+  const [warningAreaMunicipalities, setWarningAreaMunicipalities] = useState(null);
+  const warningAreaMunicipalitiesLoadedRef = useRef(false);
+  useEffect(() => {
+    if (activeNav !== "alert" || warningAreaMunicipalitiesLoadedRef.current) return;
+    warningAreaMunicipalitiesLoadedRef.current = true;
+    loadWarningAreaMunicipalities()
+      .then(setWarningAreaMunicipalities)
+      .catch((err) => {
+        console.error("警報エリアの名称マスタの読み込みに失敗しました:", err);
+        warningAreaMunicipalitiesLoadedRef.current = false; // 失敗時は次回開いた時に再試行できるようにする
+      });
+  }, [activeNav]);
+  // regioncode → {name, lat, lon} の逆引きテーブル。一覧表示・詳細カードの
+  // 両方で使うのでここで一度だけ作る。
+  const warningAreaByRegioncode = useMemo(() => {
+    const map = {};
+    (warningAreaMunicipalities || []).forEach(m => { map[m.regioncode] = m; });
+    return map;
+  }, [warningAreaMunicipalities]);
+
+  // 警報タブ: タップ/一覧選択中のエリア(regioncode) | null。
+  // タブを離れたら選択解除する(津波タブの選択解除と同じ考え方)。
+  const [selectedWarningArea, setSelectedWarningArea] = useState(null);
+  useEffect(() => {
+    if (activeNav !== "alert") setSelectedWarningArea(null);
+  }, [activeNav]);
+  // 一覧の項目をタップした時のflyTo先。{lon, lat, nonce} | null
+  // (nonceは同じエリアを連続でタップしても再度flyToが発火するようにするため)。
+  const [warningAreaFlyToRequest, setWarningAreaFlyToRequest] = useState(null);
+  // 地図の塗り分けをタップした時。
+  function handleSelectWarningArea(regioncode) {
+    setSelectedWarningArea(regioncode);
+  }
+  // 一覧の項目をタップした時。選択に加えて、代表座標が分かっていればflyToする。
+  function handleSelectWarningAreaFromList(regioncode) {
+    setSelectedWarningArea(regioncode);
+    const area = warningAreaByRegioncode[regioncode];
+    if (area && area.lat != null && area.lon != null) {
+      setWarningAreaFlyToRequest({ lon: area.lon, lat: area.lat, nonce: Date.now() });
+    }
+  }
+  // 詳細カードの「戻る」ボタン。
+  function handleBackFromWarningArea() {
+    setSelectedWarningArea(null);
+  }
+
   // 断層(faults.geojson)の表示ON/OFF。設定タブ「地震」内のトグルで操作し、
   // localStorageに永続化する。ファイルサイズが大きいためデフォルトはOFF。
   const [faultsEnabled, setFaultsEnabledState] = useState(loadStoredFaultsEnabled);
@@ -20818,6 +21083,9 @@ export default function App() {
           typhoonFlyToRequest={typhoonFlyToRequest}
           warningVisible={activeNav === "alert"}
           warningLevelMap={warningLevelMap}
+          selectedWarningArea={selectedWarningArea}
+          onSelectWarningArea={handleSelectWarningArea}
+          warningAreaFlyToRequest={warningAreaFlyToRequest}
           stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
           tideStationPoints={
@@ -21152,6 +21420,11 @@ export default function App() {
                   selectedTyphoonInfo={selectedTyphoonInfo}
                   onClearSelectedTyphoon={handleClearSelectedTyphoon}
                   onSelectTyphoonDetail={handleSelectTyphoonCenter}
+                  warningLevelMap={warningLevelMap}
+                  warningAreaByRegioncode={warningAreaByRegioncode}
+                  selectedWarningArea={selectedWarningArea}
+                  onSelectWarningAreaFromList={handleSelectWarningAreaFromList}
+                  onBackFromWarningArea={handleBackFromWarningArea}
                   tideStations={tideStationsWithGrade}
                   tideStationsStatus={tideStationsStatus}
                   selectedTideStationCode={selectedTideStationCode}
@@ -21256,6 +21529,11 @@ export default function App() {
                   selectedTyphoonInfo={selectedTyphoonInfo}
                   onClearSelectedTyphoon={handleClearSelectedTyphoon}
                   onSelectTyphoonDetail={handleSelectTyphoonCenter}
+                  warningLevelMap={warningLevelMap}
+                  warningAreaByRegioncode={warningAreaByRegioncode}
+                  selectedWarningArea={selectedWarningArea}
+                  onSelectWarningAreaFromList={handleSelectWarningAreaFromList}
+                  onBackFromWarningArea={handleBackFromWarningArea}
               tideStations={tideStationsWithGrade}
               tideStationsStatus={tideStationsStatus}
               selectedTideStationCode={selectedTideStationCode}
