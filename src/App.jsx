@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.9.7";
+const APP_VERSION = "1.9.8";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -14095,38 +14095,32 @@ function TyphoonListPanel({ typhoons = [], loadError = false, onSelectTyphoon })
    警報・注意報を、市区町村単位でレベル順(特別警報→危険警報→警報→注意報)に
    ソートして一覧表示する。TyphoonListPanelと同じ構成(見出し+区切り線付き行)。
    ───────────────────────────────────────────────────── */
-// 警報種別名(例: "土砂災害危険警報")から末尾のレベル語("特別警報"/"危険警報"/
-// "警報"/"注意報")を取り除いた基礎名("土砂災害")を返す。一覧表示のアイコンは
-// バッジの色でレベルを表すため、文字まで重複させない(要件により省略)。
-function stripWarningLevelSuffix(name) {
-  return (name || "").replace(/(特別警報|危険警報|警報|注意報)$/, "");
-}
-
 // BottomDockはドラッグ中のアニメーション等で頻繁に再レンダーされるため、
 // memo化して警報一覧タブが開いていない時・propsが変わっていない時の
 // 無駄な再レンダーを避ける(内部の重い組み立てはuseMemoで別途対策済み)。
 const WarningAreaListPanel = memo(function WarningAreaListPanel({ warningLevelMap = {}, warningAreaByRegioncode = {}, onSelectWarningArea }) {
   const { tokens } = useContext(ThemeContext);
 
-  // warningLevelMapのキー(regioncode)に、名称マスタから名前を付けてレベル順に
-  // ソートする。名称マスタがまだ読み込めていない(regioncodeに対応するmが無い)
-  // 間は、regioncodeをそのままフォールバック表示する。
-  // 全国的な警報発表時は件数が数百件規模になることもあるため、この組み立て
-  // (Object.entries+map+sort、行ごとのバッジのsortを含む)はuseMemoで、
-  // warningLevelMap/warningAreaByRegioncodeが実際に変わった時だけ行う
-  // (BottomDockはドラッグ中など頻繁に再レンダーされるため、メモ化していないと
-  // 開閉アニメーションのフレームごとに毎回この組み立てが走ってしまう)。
-  const sorted = useMemo(() => {
-    return Object.entries(warningLevelMap)
-      .map(([regioncode, entry]) => ({
-        regioncode,
-        name: warningAreaByRegioncode[regioncode]?.name || regioncode,
-        level: entry.level,
-        // バッジの並び順(グレードが低い→高い、右端が最高グレードになるよう)も
-        // ここで一度だけ計算しておく。
-        kinds: [...entry.kinds].sort((a, b) => (WARNING_LEVEL_PRIORITY[a.level] ?? 0) - (WARNING_LEVEL_PRIORITY[b.level] ?? 0)),
-      }))
-      .sort((a, b) => (WARNING_LEVEL_PRIORITY[b.level] ?? 0) - (WARNING_LEVEL_PRIORITY[a.level] ?? 0));
+  // 種類ごと(例: "大雨警報")に対象の市区町村をまとめる。市区町村1件ずつに
+  // バッジ配列を組み立てていた以前の方式は、全国的な発表時に件数が膨らむと
+  // 重くなっていたため、種類(最大でも警報種別の定義数、数十件程度)を軸に
+  // まとめ直す。市区町村チップは種類の色で統一されるため、行ごとの色計算・
+  // ソートも不要になる。warningLevelMap/warningAreaByRegioncodeが実際に
+  // 変わった時だけuseMemoで再計算する。
+  const groups = useMemo(() => {
+    const byKind = new Map(); // key: "code" (種類のcode) → { code, name, level, areas: [{regioncode, name}] }
+    for (const [regioncode, entry] of Object.entries(warningLevelMap)) {
+      const areaName = warningAreaByRegioncode[regioncode]?.name || regioncode;
+      for (const k of entry.kinds) {
+        let g = byKind.get(k.code);
+        if (!g) {
+          g = { code: k.code, name: k.name, level: k.level, areas: [] };
+          byKind.set(k.code, g);
+        }
+        g.areas.push({ regioncode, name: areaName });
+      }
+    }
+    return [...byKind.values()].sort((a, b) => (WARNING_LEVEL_PRIORITY[b.level] ?? 0) - (WARNING_LEVEL_PRIORITY[a.level] ?? 0));
   }, [warningLevelMap, warningAreaByRegioncode]);
 
   return (
@@ -14141,33 +14135,35 @@ const WarningAreaListPanel = memo(function WarningAreaListPanel({ warningLevelMa
         </span>
       </div>
 
-      {sorted.length === 0 ? (
+      {groups.length === 0 ? (
         <div style={{ padding: "24px 18px", fontSize: 13, color: `rgba(${tokens.ink},0.5)`, textAlign: "center" }}>
           現在、発表中の警報・注意報はありません。
         </div>
       ) : (
-        sorted.map((w, i) => (
-          <div key={w.regioncode}>
-            {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.1)`, marginLeft: 18 }}/>}
-            <PressableButton
-              onClick={() => onSelectWarningArea?.(w.regioncode)}
-              style={{
-                width: "100%", display: "flex", alignItems: "center",
-                padding: "10px 18px", gap: 8, textAlign: "left",
-              }}
-            >
-              <span style={{
-                flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: tokens.text,
-                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-              }}>
-                {w.name}
+        groups.map((g, i) => (
+          <div key={g.code} style={{ padding: "10px 18px", borderTop: i > 0 ? `0.5px solid rgba(${tokens.ink},0.1)` : "none" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 7 }}>
+              <WarningKindBadge level={g.level} label={g.name}/>
+              <span style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.45)` }}>
+                {g.areas.length}市区町村
               </span>
-              <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 3, flexShrink: 0, maxWidth: "55%" }}>
-                {w.kinds.map(k => (
-                  <WarningKindBadge key={k.code + k.name} level={k.level} label={stripWarningLevelSuffix(k.name)}/>
-                ))}
-              </div>
-            </PressableButton>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+              {g.areas.map(a => (
+                <PressableButton
+                  key={a.regioncode}
+                  onClick={() => onSelectWarningArea?.(a.regioncode)}
+                  style={{
+                    padding: "4px 9px",
+                    borderRadius: 7,
+                    background: `rgba(${tokens.ink},0.06)`,
+                    fontSize: 12.5, fontWeight: 600, color: tokens.text,
+                  }}
+                >
+                  {a.name}
+                </PressableButton>
+              ))}
+            </div>
           </div>
         ))
       )}
