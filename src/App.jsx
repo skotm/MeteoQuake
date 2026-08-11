@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.7.5";
+const APP_VERSION = "1.7.6";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1118,27 +1118,42 @@ function formatPrecipFrameLabel(frame) {
    5kmメッシュで、3時間ごと・翌日24時まで予報するデータ(毎日5時・11時・
    17時発表)。
 
-   ⚠️ 天気分布のタイルURL構造は実機で確認済み(2026年8月時点で正常に表示)。
-   気温分布(要素名"temp")は、ページのURLハッシュ(elements:temp)から
-   類推した未検証の値。実機で404や想定外のデータが出た場合はconsole.warnに
-   実際のURL・レスポンスを出すようにしてあるので、そこから正しい値を
-   特定して直す想定。
+   気温分布だけは、これに加えて「推計気象分布」(アメダス・ひまわりの観測を
+   元にした1kmメッシュの実況、毎時20分頃更新)を実況部分として繋げ、
+   雨雲レーダーの実況(N1)+予測(N2)と同じように1本のタイムラインにする。
+   天気分布(晴れ/くもり等)の推計気象分布は今回は対象外(気温のみ)。
+
+   ⚠️ 天気分布(wdist)のタイルURL構造は実機で確認済み(2026年8月時点で
+   正常に表示)。気温分布(wdist側、要素名"temp")と推計気象分布(suikei)は
+   ページのURLハッシュ(elements:temp)や命名の類推による未検証の値。
+   実機で404や想定外のデータが出た場合はconsole.warnに実際のURL・
+   レスポンスを出すようにしてあるので、そこから正しい値を特定して直す想定。
    ───────────────────────────────────────────────────── */
 const WDIST_DATA_BASE = "https://www.jma.go.jp/bosai/jmatile/data/wdist";
+const SUIKEI_DATA_BASE = "https://www.jma.go.jp/bosai/jmatile/data/suikei"; // 要検証
+const SUIKEI_TEMP_ELEMENT = "temp"; // 要検証。wdistの気温要素名に合わせた推測
 const WDIST_MODE_CONFIG = {
   weather:     { element: "wm",   label: "天気分布" },
   temperature: { element: "temp", label: "気温分布" }, // 要検証
 };
-function wdistTileUrl(mode, member, basetime, validtime, z, x, y) {
+
+// frame(source:"suikei"|"wdist"を含む)から実際のタイルURLを組み立てる。
+// 推計気象分布(実況)と天気分布予報(予報)はデータの出どころ(基点URL)が
+// 別なので、frameごとにどちらのURLを使うか出し分ける。
+function wdistTileUrl(frame, mode, z, x, y) {
+  if (frame.source === "suikei") {
+    return `${SUIKEI_DATA_BASE}/${frame.basetime}/${frame.member}/${frame.validtime}/surf/${SUIKEI_TEMP_ELEMENT}/${z}/${x}/${y}.png`;
+  }
   const element = WDIST_MODE_CONFIG[mode]?.element || "wm";
-  return `${WDIST_DATA_BASE}/${basetime}/${member}/${validtime}/surf/${element}/${z}/${x}/${y}.png`;
+  return `${WDIST_DATA_BASE}/${frame.basetime}/${frame.member}/${frame.validtime}/surf/${element}/${z}/${x}/${y}.png`;
 }
-function wdistProtocolUrl(mode, member, basetime, validtime) {
-  return `jmawdist://${mode}/${member}/${basetime}/${validtime}/{z}/{x}/{y}`;
+function wdistProtocolUrl(frame, mode) {
+  return `jmawdist://${frame.source}/${mode}/${frame.member}/${frame.basetime}/${frame.validtime}/{z}/{x}/{y}`;
 }
 
-// modeの時刻一覧を取得する。[{ basetime, validtime, member }, ...] を時系列昇順で返す。
-async function loadWdistFrames(mode) {
+// 天気分布予報(wdist)側の時刻一覧を取得する。[{ basetime, validtime, member,
+// source:"wdist" }, ...] を時系列昇順で返す。
+async function loadWdistForecastFrames(mode) {
   const label = WDIST_MODE_CONFIG[mode]?.label || mode;
   const element = WDIST_MODE_CONFIG[mode]?.element || "wm";
   const url = `${WDIST_DATA_BASE}/targetTimes.json`;
@@ -1171,12 +1186,74 @@ async function loadWdistFrames(mode) {
   const result = withElement.length > 0 ? withElement : filtered;
   return result
     .sort((a, b) => String(a.validtime).localeCompare(String(b.validtime)))
-    .map(t => ({ basetime: t.basetime, validtime: t.validtime, member: t.member || "none" }));
+    .map(t => ({ basetime: t.basetime, validtime: t.validtime, member: t.member || "none", source: "wdist" }));
+}
+
+// 推計気象分布(気温、実況)側の時刻一覧を取得する。wdistと同じ形式・同じ
+// 間引きロジックだが、基点URL(SUIKEI_DATA_BASE)が別。
+async function loadSuikeiTempFrames() {
+  const url = `${SUIKEI_DATA_BASE}/targetTimes.json`;
+  let raw;
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    raw = await res.json();
+  } catch (err) {
+    console.warn(`推計気象分布(気温): 時刻一覧の取得に失敗 url=${url}`, err);
+    throw err;
+  }
+  if (!Array.isArray(raw) || raw.length === 0) {
+    console.warn(`推計気象分布(気温): 時刻一覧が空、または想定外の形式です url=${url}`, raw);
+    return [];
+  }
+  const filtered = raw.filter(t => t && t.basetime && t.validtime);
+  const withElement = filtered.filter(t => Array.isArray(t.elements) && t.elements.includes(SUIKEI_TEMP_ELEMENT));
+  if (filtered.length > 0 && withElement.length === 0) {
+    console.warn(
+      `推計気象分布(気温): elements="${SUIKEI_TEMP_ELEMENT}"を含むエントリが1件も無かった。` +
+      `要素名の推測が外れている可能性があります。実際のエントリ例:`,
+      filtered[0]
+    );
+  }
+  const result = withElement.length > 0 ? withElement : filtered;
+  return result
+    .sort((a, b) => String(a.validtime).localeCompare(String(b.validtime)))
+    .map(t => ({ basetime: t.basetime, validtime: t.validtime, member: t.member || "none", source: "suikei" }));
+}
+
+// modeの時刻一覧を取得する。気温分布だけは、推計気象分布(実況)+天気分布予報
+// (予報)を1本のタイムラインに繋げる(雨雲レーダーの実況+予測と同じ考え方)。
+// 天気分布(晴れ/くもり等)は今回は天気分布予報のみ。
+async function loadWdistFrames(mode) {
+  if (mode !== "temperature") {
+    return loadWdistForecastFrames(mode);
+  }
+  const [suikeiFrames, forecastFrames] = await Promise.all([
+    loadSuikeiTempFrames().catch((err) => {
+      console.warn("推計気象分布(気温)の取得に失敗したため、天気分布予報(気温)のみで表示します:", err);
+      return [];
+    }),
+    loadWdistForecastFrames(mode).catch((err) => {
+      console.warn("天気分布予報(気温)の取得に失敗したため、推計気象分布(気温)のみで表示します:", err);
+      return [];
+    }),
+  ]);
+  // 実況(推計気象分布)の最新時刻より後の予報だけを残し、重複を避ける
+  // (雨雲レーダーの実況/予測の重複除去と同じ考え方)。
+  const latestSuikeiMs = suikeiFrames.length > 0
+    ? nowcastValidtimeToMs(suikeiFrames[suikeiFrames.length - 1].validtime)
+    : -Infinity;
+  const dedupedForecast = forecastFrames.filter(f => {
+    const ms = nowcastValidtimeToMs(f.validtime);
+    return ms == null || ms > latestSuikeiMs;
+  });
+  return [...suikeiFrames, ...dedupedForecast];
 }
 
 // 天気分布予報のスライダー用ラベル。翌日24時まで予報があるため、雨雲レーダー・
 // 降水量のような「HH:MM」だけだと今日なのか明日なのか分からなくなる。
-// 「10日15時」のように日付+時をそのまま出す。
+// 「10日15時」のように日付+時を出し、気温分布(実況+予報が混ざる)では
+// 実況/予報も付け足す。
 function formatWdistFrameLabel(frame) {
   if (!frame) return "";
   const ms = nowcastValidtimeToMs(frame.validtime);
@@ -1184,7 +1261,9 @@ function formatWdistFrameLabel(frame) {
   const jst = new Date(ms + 9 * 60 * 60 * 1000);
   const day = jst.getUTCDate();
   const hour = jst.getUTCHours();
-  return `${day}日${hour}時`;
+  const base = `${day}日${hour}時`;
+  if (!frame.source) return base;
+  return frame.source === "suikei" ? `${base} 実況` : `${base} 予報`;
 }
 
 /* ─────────────────────────────────────────────────────
@@ -1706,10 +1785,11 @@ function registerWdistProtocol(maplibregl) {
   if (wdistProtocolRegistered) return;
   wdistProtocolRegistered = true;
   maplibregl.addProtocol("jmawdist", async (params, abortController) => {
-    const m = params.url.match(/^jmawdist:\/\/([a-z]+)\/([a-z]+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)\/(-?\d+)$/);
+    const m = params.url.match(/^jmawdist:\/\/([a-z]+)\/([a-z]+)\/([a-z]+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)\/(-?\d+)$/);
     if (!m) return { data: null };
-    const [, mode, member, basetime, validtime, zStr, xStr, yStr] = m;
+    const [, source, mode, member, basetime, validtime, zStr, xStr, yStr] = m;
     let z = Number(zStr), x = Number(xStr), y = Number(yStr);
+    const frame = { source, member, basetime, validtime };
 
     // 奇数ズームは1段階粗い偶数ズームのタイルを取得し、該当する象限だけを
     // 切り出して代用する(雨雲レーダー・降水量と同じ方式)。天気種別・気温の
@@ -1722,7 +1802,7 @@ function registerWdistProtocol(maplibregl) {
       x = Math.floor(x / 2);
       y = Math.floor(y / 2);
     }
-    const url = wdistTileUrl(mode, member, basetime, validtime, z, x, y);
+    const url = wdistTileUrl(frame, mode, z, x, y);
     if (wdistFailedTileUrls.has(url)) return { data: null };
 
     let res;
@@ -1735,7 +1815,8 @@ function registerWdistProtocol(maplibregl) {
     if (!res.ok) {
       if (res.status === 404) {
         wdistFailedTileUrls.add(url);
-        console.warn(`${WDIST_MODE_CONFIG[mode]?.label || mode}タイル 404(要素名・URL構造の推測が外れている可能性があります): ${url}`);
+        const label = source === "suikei" ? "推計気象分布" : (WDIST_MODE_CONFIG[mode]?.label || mode);
+        console.warn(`${label}タイル 404(要素名・URL構造の推測が外れている可能性があります): ${url}`);
       }
       return { data: null };
     }
@@ -3585,7 +3666,7 @@ function MapCanvas({
     if (!map.getSource(srcId)) {
       map.addSource(srcId, {
         type: "raster",
-        tiles: [wdistProtocolUrl(wdistMode, wdistFrame.member, wdistFrame.basetime, wdistFrame.validtime)],
+        tiles: [wdistProtocolUrl(wdistFrame, wdistMode)],
         tileSize: 256,
         minzoom: 4,
         maxzoom: 10,
