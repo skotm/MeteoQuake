@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.9.5";
+const APP_VERSION = "1.9.6";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -3245,9 +3245,14 @@ function MapCanvas({
 
   // 警報タブ: 警報・注意報レイヤー。境界データ(warning_areas.json、1,821件)は
   // 警報タブを一度でも開いた時だけ遅延読み込みする(断層・津波予報区と同じ方式)。
-  // warningLevelMapが更新されるたび(Appの定期ポーリング)、色だけを塗り直す。
+  // warningLevelMapが実際に更新された時だけ、色を塗り直す(=setDataし直す)。
   const warningAreasLoadedRef = useRef(false);
   const warningAreasBaseGeoJsonRef = useRef(null);
+  // 直近でsetDataに使ったwarningLevelMapの参照。タブを開き直しただけで
+  // warningLevelMapの中身が変わっていない(=Appの再取得がまだ終わっていない)
+  // 間は、visibilityの切り替えだけにして、1,821件分の塗り直し
+  // (setData、MapLibre内部の再タイル化を伴う重い処理)をスキップする。
+  const warningAreasLastMergedLevelMapRef = useRef(null);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
@@ -3262,6 +3267,7 @@ function MapCanvas({
       loadWarningAreasFullGeoJson()
         .then((geojson) => {
           warningAreasBaseGeoJsonRef.current = geojson;
+          warningAreasLastMergedLevelMapRef.current = warningLevelMap;
           const merged = buildWarningAreasGeoJson(geojson, warningLevelMap);
           const source = map.getSource("warning-areas");
           if (source) source.setData(merged);
@@ -3270,9 +3276,14 @@ function MapCanvas({
           console.error("警報・注意報の境界データの読み込みに失敗しました:", err);
           warningAreasLoadedRef.current = false; // 失敗時は次回表示された時に再試行できるようにする
         });
-    } else if (warningAreasBaseGeoJsonRef.current) {
-      // 境界データは既にある状態でwarningLevelMapだけ更新された場合(ポーリング更新)は
-      // setDataし直すだけでよい(再取得は不要)。
+    } else if (
+      warningAreasBaseGeoJsonRef.current &&
+      warningAreasLastMergedLevelMapRef.current !== warningLevelMap
+    ) {
+      // 境界データは既にあり、かつwarningLevelMapが前回塗り直した時から
+      // 実際に変わっている場合(ポーリング更新、または再取得完了)だけ
+      // setDataし直す(再取得は不要)。
+      warningAreasLastMergedLevelMapRef.current = warningLevelMap;
       const merged = buildWarningAreasGeoJson(warningAreasBaseGeoJsonRef.current, warningLevelMap);
       const source = map.getSource("warning-areas");
       if (source) source.setData(merged);
@@ -7042,6 +7053,19 @@ function polygonRoughCentroid(geometry) {
    ───────────────────────────────────────────────────── */
 const WARNING_AREAS_URL = `${import.meta.env.BASE_URL}map/warning_areas.json`;
 
+// warning_areas.jsonの生データを1回だけfetch+JSON.parseして使い回すための共有
+// キャッシュ。以前はloadWarningAreas()(逆引き・五十音ピッカー用)と
+// loadWarningAreasFullGeoJson()(地図の塗り分け用)がそれぞれ個別に
+// cachedFetchJSON(同じURL)を呼んでいたため、警報タブを開いた瞬間に同じ
+// 大きめのファイルを2回fetch+parseしてしまい、体感の重さの一因になっていた。
+let warningAreasRawPromise = null;
+function loadWarningAreasRaw() {
+  if (!warningAreasRawPromise) {
+    warningAreasRawPromise = cachedFetchJSON(WARNING_AREAS_URL);
+  }
+  return warningAreasRawPromise;
+}
+
 function computeGeoJsonBBox(geometry) {
   let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
   const visit = (coords) => {
@@ -7090,7 +7114,7 @@ function pointInGeoJsonGeometry(lon, lat, geometry) {
 let warningAreasPromise = null;
 function loadWarningAreas() {
   if (!warningAreasPromise) {
-    warningAreasPromise = cachedFetchJSON(WARNING_AREAS_URL).then(data =>
+    warningAreasPromise = loadWarningAreasRaw().then(data =>
       (data.features || []).map(f => ({
         properties: f.properties,
         geometry: f.geometry,
@@ -7103,7 +7127,9 @@ function loadWarningAreas() {
 
 // 地点登録の五十音ピッカー用に、市区町村名・読み・代表座標(ポリゴン頂点の
 // 単純平均)だけの軽量な一覧を作る(ジオメトリ自体は逆引き判定にしか使わないため
-// 持ち回らない)。
+// 持ち回らない)。1,821件全部のcentroidを毎回計算するので、五十音ピッカーを
+// 開いた時など「本当に全件必要な場面」でだけ呼ぶこと。警報タブの一覧・詳細表示
+// のように「発表中の数件だけ座標が要る」場面ではloadWarningAreaNameIndex()の方を使う。
 async function loadWarningAreaMunicipalities() {
   const features = await loadWarningAreas();
   return features.map(f => {
@@ -7117,6 +7143,20 @@ async function loadWarningAreaMunicipalities() {
       lon: centroid?.lon ?? null,
     };
   }).filter(m => m.lat != null && m.lon != null);
+}
+
+// 警報タブ用の軽量インデックス: regioncode → {name, geometry}。
+// loadWarningAreaMunicipalities()と違い、ここでは1,821件分のcentroidを
+// 前もって計算しない(名前とジオメトリの受け渡しだけなのでO(1,821)の軽い
+// オブジェクト構築のみ)。実際に発表中のエリアの代表座標は、呼び出し側
+// (App本体)で発表中の数件分だけpolygonRoughCentroid()を遅延計算する。
+async function loadWarningAreaNameIndex() {
+  const features = await loadWarningAreas();
+  const index = {};
+  for (const f of features) {
+    index[f.properties.regioncode] = { name: f.properties.name, geometry: f.geometry };
+  }
+  return index;
 }
 
 // 緯度経度からその地点を含む市区町村を逆引きする。まずbboxで簡易に絞り込んでから
@@ -7315,12 +7355,13 @@ async function fetchWarningLevelMap_combined() {
 }
 
 // 境界データ(public/map/warning_areas.json)をそのままGeoJSONとして読み込む。
-// loadWarningAreas()(逆引き・五十音ピッカー用の軽量版)とは別に、地図のsetDataに
-// そのまま渡せるフル形式で1回だけ取得してキャッシュする。
+// loadWarningAreas()(逆引き・五十音ピッカー用の軽量版)とは処理内容は別だが、
+// 生データの取得自体はloadWarningAreasRaw()を共有しているので、どちらが先に
+// 呼ばれても実際のfetch+JSON.parseは1回で済む。
 let warningAreasFullGeoJsonPromise = null;
 function loadWarningAreasFullGeoJson() {
   if (!warningAreasFullGeoJsonPromise) {
-    warningAreasFullGeoJsonPromise = cachedFetchJSON(WARNING_AREAS_URL);
+    warningAreasFullGeoJsonPromise = loadWarningAreasRaw();
   }
   return warningAreasFullGeoJsonPromise;
 }
@@ -19250,42 +19291,61 @@ export default function App() {
   // 警報タブを開いている間だけ10分おきにポーリングする(EEW等の常時監視系と違い、
   // 警報・注意報は数分単位で急変するものではないため)。
   const [warningLevelMap, setWarningLevelMap] = useState({});
+  // 直近の取得時刻。タブを行ったり来たりするたびに毎回APIを叩き直さないよう、
+  // 直近1分以内に取得済みなら再取得をスキップする(定期ポーリングのタイマーは
+  // forceで無視する)。
+  const warningLevelMapFetchedAtRef = useRef(0);
   useEffect(() => {
     if (activeNav !== "alert") return;
     let cancelled = false;
-    const refresh = () => {
+    const refresh = (force = false) => {
+      if (!force && Date.now() - warningLevelMapFetchedAtRef.current < 60 * 1000) return;
       fetchWarningLevelMap_combined()
-        .then((map) => { if (!cancelled) setWarningLevelMap(map); })
+        .then((map) => {
+          if (cancelled) return;
+          warningLevelMapFetchedAtRef.current = Date.now();
+          setWarningLevelMap(map);
+        })
         .catch((err) => console.error("警報・注意報データの取得に失敗しました:", err));
     };
     refresh();
-    const intervalId = setInterval(refresh, 10 * 60 * 1000);
+    const intervalId = setInterval(() => refresh(true), 10 * 60 * 1000);
     return () => { cancelled = true; clearInterval(intervalId); };
   }, [activeNav]);
 
-  // 警報タブ: 市区町村の名称・代表座標マスタ(1,821件)。地点登録の五十音ピッカーで
-  // 既に使っているloadWarningAreaMunicipalities()をそのまま再利用する(内部で
-  // fetchはURL単位にキャッシュされるため、二重取得にはならない)。警報タブを
-  // 一度でも開いた時だけ遅延読み込みする。
-  const [warningAreaMunicipalities, setWarningAreaMunicipalities] = useState(null);
-  const warningAreaMunicipalitiesLoadedRef = useRef(false);
+  // 警報タブ: 市区町村の名称インデックス(1,821件、regioncode→{name, geometry})。
+  // 以前はloadWarningAreaMunicipalities()(1,821件全部のcentroidを毎回計算する
+  // 重い版、五十音ピッカー専用)を流用していたが、警報タブを開いた瞬間に
+  // 発表の有無に関わらず全市区町村分の座標計算が走ってしまい、体感の重さの
+  // 原因になっていた。ここでは名称とジオメトリを受け渡すだけの軽量版
+  // loadWarningAreaNameIndex()を使い、座標(centroid)は下のuseMemoで
+  // 「実際に発表中の数件」だけ遅延計算する。
+  const [warningAreaNameIndex, setWarningAreaNameIndex] = useState(null);
+  const warningAreaNameIndexLoadedRef = useRef(false);
   useEffect(() => {
-    if (activeNav !== "alert" || warningAreaMunicipalitiesLoadedRef.current) return;
-    warningAreaMunicipalitiesLoadedRef.current = true;
-    loadWarningAreaMunicipalities()
-      .then(setWarningAreaMunicipalities)
+    if (activeNav !== "alert" || warningAreaNameIndexLoadedRef.current) return;
+    warningAreaNameIndexLoadedRef.current = true;
+    loadWarningAreaNameIndex()
+      .then(setWarningAreaNameIndex)
       .catch((err) => {
         console.error("警報エリアの名称マスタの読み込みに失敗しました:", err);
-        warningAreaMunicipalitiesLoadedRef.current = false; // 失敗時は次回開いた時に再試行できるようにする
+        warningAreaNameIndexLoadedRef.current = false; // 失敗時は次回開いた時に再試行できるようにする
       });
   }, [activeNav]);
   // regioncode → {name, lat, lon} の逆引きテーブル。一覧表示・詳細カードの
-  // 両方で使うのでここで一度だけ作る。
+  // 両方で使う。centroid計算は「現在warningLevelMapに載っている(=発表中の)
+  // regioncodeだけ」に絞ることで、全1,821件分の計算を避けている。
   const warningAreaByRegioncode = useMemo(() => {
     const map = {};
-    (warningAreaMunicipalities || []).forEach(m => { map[m.regioncode] = m; });
+    if (!warningAreaNameIndex) return map;
+    for (const regioncode of Object.keys(warningLevelMap)) {
+      const entry = warningAreaNameIndex[regioncode];
+      if (!entry) continue;
+      const centroid = polygonRoughCentroid(entry.geometry);
+      map[regioncode] = { name: entry.name, lat: centroid?.lat ?? null, lon: centroid?.lon ?? null };
+    }
     return map;
-  }, [warningAreaMunicipalities]);
+  }, [warningLevelMap, warningAreaNameIndex]);
 
   // 警報タブ: タップ/一覧選択中のエリア(regioncode) | null。
   // タブを離れたら選択解除する(津波タブの選択解除と同じ考え方)。
@@ -19298,6 +19358,10 @@ export default function App() {
   const [warningAreaFlyToRequest, setWarningAreaFlyToRequest] = useState(null);
   // 地図の塗り分けをタップした時。
   function handleSelectWarningArea(regioncode) {
+    // 地図タップは警報レイヤーの全ポリゴン(発表の有無を問わず日本全国)に対して
+    // 判定されるが、実際に発表中でないエリアは名称マスタ(発表中の分だけ遅延計算)
+    // にも載っておらず見せられる情報が無いため、タップを無視する。
+    if (!warningLevelMap[regioncode]) return;
     setSelectedWarningArea(regioncode);
   }
   // 一覧の項目をタップした時。選択に加えて、代表座標が分かっていればflyToする。
