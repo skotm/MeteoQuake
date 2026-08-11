@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.8.9";
+const APP_VERSION = "1.9.0";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -2414,17 +2414,22 @@ function MapCanvas({
             source: "warning-areas",
             layout: { visibility: "none" },
             paint: {
-              "fill-color": buildWarningAreaColorExpr(0.55),
+              // 色そのものはベタ(不透明)で持たせ、不透明度はfill-opacityで別掛けする。
+              // 移植元ツールと完全に同じ配色・不透明度(0.55)にする。
+              "fill-color": buildWarningAreaColorExpr(),
+              "fill-opacity": 0.55,
             },
           }, "station-points-symbol");
           map.addLayer({
             id: "warning-areas-line-layer",
             type: "line",
             source: "warning-areas",
-            layout: { visibility: "none", "line-cap": "round", "line-join": "round" },
+            layout: { visibility: "none" },
             paint: {
-              "line-color": buildWarningAreaColorExpr(0.9),
-              "line-width": 1,
+              // 移植元ツールと同じく、境界線は警報レベルで色分けせず、
+              // 市区町村境界を示すだけの固定の薄い白線にする。
+              "line-color": "rgba(255,255,255,0.25)",
+              "line-width": 0.6,
             },
           }, "station-points-symbol");
 
@@ -7270,29 +7275,21 @@ function buildWarningAreasGeoJson(baseGeoJson, warningLevelMap) {
       const entry = warningLevelMap[f.properties.regioncode];
       return {
         ...f,
-        properties: { ...f.properties, warnLevel: entry ? entry.level : null },
+        // 移植元ツールと同じく、warnLevel(文字列)とwarnColor(ベタ色/transparent)の
+        // 両方をfeature propertiesに埋め込む。fill-colorはこのwarnColorをそのまま参照する。
+        properties: {
+          ...f.properties,
+          warnLevel: entry ? entry.level : "",
+          warnColor: entry ? WARNING_LEVEL_COLOR[entry.level] : "transparent",
+        },
       };
     }),
   };
 }
 
-// warnLevelプロパティ(chui/keiho/kiken/tokubetsu/null)→色のmatch式。
-// 該当なしは透明にする(faultsやtsunami-areasと同じ考え方)。
-function buildWarningAreaColorExpr(opacity = 0.55) {
-  return [
-    "match", ["get", "warnLevel"],
-    "tokubetsu", withAlpha(WARNING_LEVEL_COLOR.tokubetsu, opacity),
-    "kiken",     withAlpha(WARNING_LEVEL_COLOR.kiken, opacity),
-    "keiho",     withAlpha(WARNING_LEVEL_COLOR.keiho, opacity),
-    "chui",      withAlpha(WARNING_LEVEL_COLOR.chui, opacity),
-    "rgba(0,0,0,0)",
-  ];
-}
-// #RRGGBB + 0-1の不透明度 → "rgba(r,g,b,a)" 文字列
-function withAlpha(hex, alpha) {
-  const n = parseInt(hex.replace("#", ""), 16);
-  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-  return `rgba(${r},${g},${b},${alpha})`;
+// fill-colorは["get","warnColor"](移植元ツールと同じ、match式は使わない)。
+function buildWarningAreaColorExpr() {
+  return ["get", "warnColor"];
 }
 
 // 五十音(あかさたなはまやらわ)の行・段の定義。「あかさたなはまやらわ」の
