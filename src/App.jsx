@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.7.6";
+const APP_VERSION = "1.7.8";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1123,14 +1123,15 @@ function formatPrecipFrameLabel(frame) {
    雨雲レーダーの実況(N1)+予測(N2)と同じように1本のタイムラインにする。
    天気分布(晴れ/くもり等)の推計気象分布は今回は対象外(気温のみ)。
 
-   ⚠️ 天気分布(wdist)のタイルURL構造は実機で確認済み(2026年8月時点で
-   正常に表示)。気温分布(wdist側、要素名"temp")と推計気象分布(suikei)は
-   ページのURLハッシュ(elements:temp)や命名の類推による未検証の値。
+   ⚠️ 天気分布(wdist)のタイルURL構造・推計気象分布(suikeikishou、基点URLの
+   末尾は"suikei"ではなく"suikeikishou")は実機で確認済み(2026年8月時点で
+   正常に表示)。気温分布(wdist側、要素名"temp")は未検証だが、推計気象分布側で
+   同じ要素名"temp"が実在を確認できているため、可能性は高いと見ている。
    実機で404や想定外のデータが出た場合はconsole.warnに実際のURL・
    レスポンスを出すようにしてあるので、そこから正しい値を特定して直す想定。
    ───────────────────────────────────────────────────── */
 const WDIST_DATA_BASE = "https://www.jma.go.jp/bosai/jmatile/data/wdist";
-const SUIKEI_DATA_BASE = "https://www.jma.go.jp/bosai/jmatile/data/suikei"; // 要検証
+const SUIKEI_DATA_BASE = "https://www.jma.go.jp/bosai/jmatile/data/suikeikishou"; // 実機で確認済み
 const SUIKEI_TEMP_ELEMENT = "temp"; // 要検証。wdistの気温要素名に合わせた推測
 const WDIST_MODE_CONFIG = {
   weather:     { element: "wm",   label: "天気分布" },
