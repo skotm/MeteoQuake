@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.8.4";
+const APP_VERSION = "1.8.9";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -7137,8 +7137,6 @@ const WARNING_KIND_MAP = {
   "39": { name: "土砂災害特別警報", level: "tokubetsu" },
 };
 // 洪水警報API(l_flood)のcode → 対応するWARNING_KIND_MAPのキー
-const FLOOD_WARNING_CODE_MAP = { "1": "04", "2": "18" }; // 1:洪水警報 2:洪水注意報 ※実データのcode体系に応じて要確認
-
 const WARNING_LEVEL_PRIORITY = { chui: 1, keiho: 2, kiken: 3, tokubetsu: 4 };
 const WARNING_LEVEL_LABEL = { chui: "注意報", keiho: "警報", kiken: "危険警報", tokubetsu: "特別警報" };
 const WARNING_LEVEL_COLOR = {
@@ -7149,14 +7147,15 @@ const WARNING_LEVEL_COLOR = {
 };
 
 // regioncode(市区町村コード) → { level, kinds:[{code,name,level}] } のマージ処理。
-// 複数ソース(警報・注意報API/洪水API)から同じ地域に複数種別が来る前提でマージする。
-function mergeWarningKind(map, regioncode, kindCode) {
-  const kind = WARNING_KIND_MAP[kindCode];
+// 複数ソース(警報・注意報API/河川氾濫API)から同じ地域に複数種別が来る前提でマージする。
+// kind自体({code,name,level})を直接渡す形にしている(氾濫系はWARNING_KIND_MAPに
+// 無い動的な名称になるため、コード引きではなく呼び出し側で組み立てる)。
+function mergeWarningKind(map, regioncode, kind) {
   if (!kind || !regioncode) return;
   const existing = map[regioncode];
   const kinds = existing ? [...existing.kinds] : [];
-  if (!kinds.some(k => k.code === kindCode)) {
-    kinds.push({ code: kindCode, name: kind.name, level: kind.level });
+  if (!kinds.some(k => k.code === kind.code && k.name === kind.name)) {
+    kinds.push(kind);
   }
   const topLevel = kinds.reduce(
     (best, k) => (WARNING_LEVEL_PRIORITY[k.level] > WARNING_LEVEL_PRIORITY[best] ? k.level : best),
@@ -7165,14 +7164,19 @@ function mergeWarningKind(map, regioncode, kindCode) {
   map[regioncode] = { level: topLevel, kinds };
 }
 
-// 全都道府県分の警報・注意報+洪水警報を取得し、regioncode(市区町村コード)単位の
-// マップにまとめる。ライブデータのため cachedFetchJSON(Cache API長期保存)は使わず、
-// no-storeの素のfetchにする(warning_areas.json等の静的境界データとは性質が違う)。
-async function fetchWarningLevelMap() {
-  const map = {};
+// 気象警報・注意報(暴風/大雨/波浪/雷/土砂災害/危険警報/特別警報 等)を取得し、
+// regioncode(7桁市区町村コード)単位でmapにマージする。
+// 使用するのは新形式(令和8年5月29日運用開始)の r8 エンドポイント。
+// 注意: 似た名前の別エンドポイント(data/warning/{code}.json)は「警戒レベル相当情報
+// 4要素(大雨・土砂災害・河川氾濫・高潮)」専用かつ更新が反映されないことがあり、
+// これを使うと警報級以上が全く出てこない不具合になる(実際に発生した問題)。
+// 必ずこちらのr8エンドポイントを使うこと。
+// レスポンスは配列で、各要素の entry.warning.class20Items[] に
+// { areaCode(7桁regioncode), kinds:[{code, status}] } が入っている。
+async function fetchWarningLevelMap(map) {
   const results = await Promise.allSettled(
     WARNING_OFFICE_CODES.map(code =>
-      fetch(`https://www.jma.go.jp/bosai/warning/data/warning/${code}.json`, { cache: "no-store" })
+      fetch(`https://www.jma.go.jp/bosai/warning/data/r8/${code}.json`, { cache: "no-store" })
         .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
     )
   );
@@ -7181,20 +7185,66 @@ async function fetchWarningLevelMap() {
       console.warn(`[警報] ${WARNING_OFFICE_CODES[i]} の取得に失敗しました:`, r.reason);
       return;
     }
-    // r8形式: entry.areaTypes[].areas[].warnings[] を想定。実際のAPIレスポンス構造は
-    // 気象庁側の仕様変更があり得るため、取得できたらまずconsole.logで実構造を確認し、
-    // 必要ならここのパース部分だけを直すこと(warningMapへの反映ロジックは変えなくてよい)。
-    const areaTypes = r.value?.areaTypes ?? [];
-    for (const areaType of areaTypes) {
-      for (const area of (areaType.areas ?? [])) {
-        const regioncode = area.code;
-        for (const w of (area.warnings ?? [])) {
-          if (w.status === "解除") continue;
-          mergeWarningKind(map, regioncode, w.code);
-        }
-      }
-    }
+    const dataArr = Array.isArray(r.value) ? r.value : [r.value];
+    dataArr.forEach(entry => {
+      const items = entry?.warning?.class20Items ?? [];
+      items.forEach(item => {
+        const regioncode = String(item.areaCode ?? "").trim();
+        if (!regioncode) return;
+        (item.kinds ?? []).forEach(k => {
+          const s = String(k.status ?? "").trim();
+          if (s === "" || s === "解除") return;
+          // コードは数値の場合もあるので2桁ゼロ埋め文字列に正規化
+          const codeStr = String(k.code ?? "").trim().padStart(2, "0");
+          const def = WARNING_KIND_MAP[codeStr];
+          if (!def) return;
+          mergeWarningKind(map, regioncode, { code: codeStr, name: def.name, level: def.level });
+        });
+      });
+    });
   });
+}
+
+// 氾濫系警報コード(気象庁 flood_xml.json の item.code)→ {name, level} に変換する。
+// 十の位でレベルが決まる: 1x=解除 / 2x=氾濫注意報 / 3x=氾濫警報 / 4x=氾濫危険警報 / 5x=氾濫特別警報
+// (指定河川洪水予報。令和8年5月の改定で「洪水注意報・警報」自体は廃止され、
+//  指定河川はこちらの氾濫情報、それ以外の河川は大雨警報の枠組みに統合された)。
+function getFloodWarningKind(codeStr) {
+  const n = parseInt(codeStr, 10);
+  if (n >= 20 && n < 30) return { code: `flood-${n}`, name: "氾濫注意報",   level: "chui" };
+  if (n >= 30 && n < 40) return { code: `flood-${n}`, name: "氾濫警報",     level: "keiho" };
+  if (n >= 40 && n < 50) return { code: `flood-${n}`, name: "氾濫危険警報", level: "kiken" };
+  if (n >= 50)           return { code: `flood-${n}`, name: "氾濫特別警報", level: "tokubetsu" };
+  return null; // 1x = 解除, その他 = 不明 → スキップ
+}
+
+// 指定河川の氾濫警報等(氾濫危険警報など)を取得し、regioncode単位でmapにマージする。
+async function fetchFloodWarningLevelMap(map) {
+  try {
+    const res = await fetch("https://www.jma.go.jp/bosai/flood/data/r8/flood_xml.json", { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!Array.isArray(data)) return;
+    data.forEach(entry => {
+      const kind = getFloodWarningKind(String(entry?.item?.code ?? "").trim());
+      if (!kind) return; // 解除または不明コードはスキップ
+      // class20Codesは7桁の市区町村コードで、warningLevelMapのregioncodeと同じ単位
+      (entry?.class20Codes ?? []).forEach(rc => {
+        const regioncode = String(rc).trim();
+        if (regioncode) mergeWarningKind(map, regioncode, kind);
+      });
+    });
+  } catch (err) {
+    console.warn("[河川氾濫警報] flood_xml.jsonの取得に失敗しました:", err);
+  }
+}
+
+// 気象警報・注意報+河川氾濫警報の両方を取得し、regioncode(市区町村コード)単位の
+// マップにまとめる。ライブデータのため cachedFetchJSON(Cache API長期保存)は使わず、
+// no-storeの素のfetchにする(warning_areas.json等の静的境界データとは性質が違う)。
+async function fetchWarningLevelMap_combined() {
+  const map = {};
+  await Promise.all([fetchWarningLevelMap(map), fetchFloodWarningLevelMap(map)]);
   console.log(`[警報] warningLevelMap件数: ${Object.keys(map).length}`);
   return map;
 }
@@ -18910,7 +18960,7 @@ export default function App() {
     if (activeNav !== "alert") return;
     let cancelled = false;
     const refresh = () => {
-      fetchWarningLevelMap()
+      fetchWarningLevelMap_combined()
         .then((map) => { if (!cancelled) setWarningLevelMap(map); })
         .catch((err) => console.error("警報・注意報データの取得に失敗しました:", err));
     };
