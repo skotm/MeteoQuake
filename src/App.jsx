@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.9.4";
+const APP_VERSION = "1.9.5";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -11850,6 +11850,7 @@ function BottomDock({
       (activeTsunami != null && !causingQuakeFound)
     )) ||
     (active === "weather") ||
+    (active === "alert" && selectedWarningArea != null) ||
     (active === "settings" && settingsPath.length > 0);
 
   return (
@@ -12033,6 +12034,39 @@ function BottomDock({
           <BackToListButton
             onClick={() => setSettingsPath(p => p.slice(0, -1))}
             label="前の画面に戻る"
+          />
+        </div>
+        )
+      )}
+
+      {/* 警報タブ用 — エリアを選択(タップ/一覧選択)している間だけ、地震・津波・
+          設定タブと全く同じ「戻るボタンの枠」(フローティング外部、right:16・
+          bottom:backButtonBottom。横画面ではパネル右上の外側)に戻るボタンを浮かべる。 */}
+      {!eewDetailOpen && active === "alert" && selectedWarningArea != null && (
+        isWide && wideAnchorRect ? createPortal(
+          <div style={{
+            position: "fixed",
+            left: wideAnchorRect.right + 12,
+            top: wideAnchorRect.top + 16,
+            zIndex: 50,
+          }}>
+            <BackToListButton
+              onClick={onBackFromWarningArea}
+              label="警報一覧に戻る"
+            />
+          </div>,
+          document.body
+        ) : (
+        <div style={{
+          position: "absolute",
+          right: 16,
+          bottom: backButtonBottom,
+          transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
+          zIndex: 10,
+        }}>
+          <BackToListButton
+            onClick={onBackFromWarningArea}
+            label="警報一覧に戻る"
           />
         </div>
         )
@@ -12615,7 +12649,6 @@ function BottomDock({
                     regioncode={selectedWarningArea}
                     warningLevelMap={warningLevelMap}
                     warningAreaByRegioncode={warningAreaByRegioncode}
-                    onBack={onBackFromWarningArea}
                   />
                 ) : (
                   <WarningAreaListPanel
@@ -14076,9 +14109,11 @@ function WarningAreaListPanel({ warningLevelMap = {}, warningAreaByRegioncode = 
                 {w.name}
               </span>
               <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 3, flexShrink: 0, maxWidth: "55%" }}>
-                {w.kinds.map(k => (
-                  <WarningKindBadge key={k.code + k.name} level={k.level} label={stripWarningLevelSuffix(k.name)}/>
-                ))}
+                {[...w.kinds]
+                  .sort((a, b) => (WARNING_LEVEL_PRIORITY[a.level] ?? 0) - (WARNING_LEVEL_PRIORITY[b.level] ?? 0))
+                  .map(k => (
+                    <WarningKindBadge key={k.code + k.name} level={k.level} label={stripWarningLevelSuffix(k.name)}/>
+                  ))}
               </div>
             </PressableButton>
           </div>
@@ -14093,7 +14128,7 @@ function WarningAreaListPanel({ warningLevelMap = {}, warningAreaByRegioncode = 
    発表中の警報・注意報の種別を、レベル順にバッジで一覧表示する。
    TyphoonDetailCardと対の構成。上部に「戻る」ボタンを置く(B要件)。
    ───────────────────────────────────────────────────── */
-function WarningAreaDetailCard({ regioncode, warningLevelMap = {}, warningAreaByRegioncode = {}, onBack }) {
+function WarningAreaDetailCard({ regioncode, warningLevelMap = {}, warningAreaByRegioncode = {} }) {
   const { tokens } = useContext(ThemeContext);
   const area = warningAreaByRegioncode[regioncode];
   const entry = warningLevelMap[regioncode];
@@ -14103,14 +14138,10 @@ function WarningAreaDetailCard({ regioncode, warningLevelMap = {}, warningAreaBy
   );
 
   return (
-    <div style={{ margin: "0 14px 2px", position: "relative" }}>
-      {/* 戻るボタン — 他タブ(地震・津波・台風)の丸型BackToListButtonをそのまま流用し、
-          フローティング(このカード)の右上に固定配置する。見出しと重なる分は
-          下の見出し側でpaddingRightを確保して避ける。 */}
-      <div style={{ position: "absolute", top: 0, right: 0, zIndex: 2 }}>
-        <BackToListButton onClick={onBack} label="警報一覧に戻る"/>
-      </div>
-      <div style={{ padding: "2px 56px 8px 4px" }}>
+    <div style={{ margin: "0 14px 2px" }}>
+      {/* 戻るボタンは他タブ(地震・津波・設定)と同じく、BottomDock側でフローティング
+          外部(右上/右下)に共通の枠で表示するため、ここでは持たない。 */}
+      <div style={{ padding: "2px 4px 8px" }}>
         <div style={{
           fontSize: 17, fontWeight: 800, color: tokens.text, lineHeight: 1.15,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
