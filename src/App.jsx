@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.7.9";
+const APP_VERSION = "1.8.0";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1789,54 +1789,71 @@ function registerWdistProtocol(maplibregl) {
     const m = params.url.match(/^jmawdist:\/\/([a-z]+)\/([a-z]+)\/([a-z]+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)\/(-?\d+)$/);
     if (!m) return { data: null };
     const [, source, mode, member, basetime, validtime, zStr, xStr, yStr] = m;
-    let z = Number(zStr), x = Number(xStr), y = Number(yStr);
+    const z = Number(zStr), x = Number(xStr), y = Number(yStr);
     const frame = { source, member, basetime, validtime };
+    const label = source === "suikei" ? "推計気象分布" : (WDIST_MODE_CONFIG[mode]?.label || mode);
 
-    // 奇数ズームは1段階粗い偶数ズームのタイルを取得し、該当する象限だけを
-    // 切り出して代用する(雨雲レーダー・降水量と同じ方式)。天気種別・気温の
-    // 色分けは配色スキームに関係なく固定なので、色の変換(remapImageDataColors)は
-    // 行わない。
-    let cropQuadrant = null;
-    if (z % 2 !== 0) {
-      cropQuadrant = { qx: x % 2, qy: y % 2 };
-      z = z - 1;
-      x = Math.floor(x / 2);
-      y = Math.floor(y / 2);
-    }
-    const url = wdistTileUrl(frame, mode, z, x, y);
-    if (wdistFailedTileUrls.has(url)) return { data: null };
-
-    let res;
-    try {
-      res = await fetch(url, { signal: abortController.signal });
-    } catch (err) {
-      if (err.name === "AbortError") throw err;
-      console.warn(`${source === "suikei" ? "推計気象分布" : "天気分布予報"}タイル fetch失敗: ${url}`, err);
-      return { data: null };
-    }
-    if (!res.ok) {
-      if (res.status === 404) {
-        wdistFailedTileUrls.add(url);
-        const label = source === "suikei" ? "推計気象分布" : (WDIST_MODE_CONFIG[mode]?.label || mode);
-        console.warn(`${label}タイル 404(要素名・URL構造の推測が外れている可能性があります): ${url}`);
+    const fetchTile = async (url) => {
+      if (wdistFailedTileUrls.has(url)) return { ok: false, notFound: true };
+      let res;
+      try {
+        res = await fetch(url, { signal: abortController.signal });
+      } catch (err) {
+        if (err.name === "AbortError") throw err;
+        console.warn(`${label}タイル fetch失敗: ${url}`, err);
+        return { ok: false, notFound: false };
       }
+      if (!res.ok) {
+        if (res.status === 404) {
+          wdistFailedTileUrls.add(url);
+          console.warn(`${label}タイル 404: ${url}`);
+        }
+        return { ok: false, notFound: res.status === 404 };
+      }
+      const blob = await res.blob();
+      if (!blob || blob.size === 0) {
+        console.warn(`${label}タイル: レスポンスが空(0バイト)でした: ${url}`);
+        return { ok: false, notFound: false };
+      }
+      return { ok: true, blob };
+    };
+
+    // まず、要求されたズームそのままで直接取りに行く。雨雲レーダー(nowc)は
+    // 実際に偶数ズームにしか実データが無いことを確認済みだが、天気分布予報・
+    // 推計気象分布は奇数ズームにも直接タイルがある可能性があるため、
+    // 先に「切り出し無し」を試し、404だった場合だけ1段階粗い偶数ズームから
+    // 象限を切り出すフォールバックに回す(切り出し済みタイルが空/透明になる
+    // 問題を避けるため)。
+    const directUrl = wdistTileUrl(frame, mode, z, x, y);
+    const direct = await fetchTile(directUrl);
+    if (direct.ok) {
+      return { data: await direct.blob.arrayBuffer() };
+    }
+    if (!direct.notFound) {
+      // 404以外の失敗(ネットワークエラー・空データ等)はフォールバックしても
+      // 変わらない可能性が高いので、ここで諦める。
       return { data: null };
     }
-    const blob = await res.blob();
-    // データが空(0バイト)で返ってきていないか確認する。空だった場合、
-    // 見た目には「実況だけ何も表示されない」ように見えるため、原因調査用に
-    // ログへ残す。
-    if (!blob || blob.size === 0) {
-      console.warn(`${source === "suikei" ? "推計気象分布" : "天気分布予報"}タイル: レスポンスが空(0バイト)でした: ${url}`);
+    if (z % 2 === 0) {
+      // 偶数ズームは元々「切り出し」の対象外なので、ここで諦める。
       return { data: null };
     }
-    if (!cropQuadrant) return { data: await blob.arrayBuffer() };
+
+    // 奇数ズームが直接404だった場合だけ、1段階粗い偶数ズームのタイルを
+    // 取得し、該当する象限を切り出して代用する。
+    const cropQuadrant = { qx: x % 2, qy: y % 2 };
+    const coarserZ = z - 1;
+    const coarserX = Math.floor(x / 2);
+    const coarserY = Math.floor(y / 2);
+    const coarserUrl = wdistTileUrl(frame, mode, coarserZ, coarserX, coarserY);
+    const coarser = await fetchTile(coarserUrl);
+    if (!coarser.ok) return { data: null };
 
     let bitmap;
     try {
-      bitmap = await createImageBitmap(blob);
+      bitmap = await createImageBitmap(coarser.blob);
     } catch (err) {
-      console.warn(`${source === "suikei" ? "推計気象分布" : "天気分布予報"}タイル: 画像デコードに失敗しました: ${url}`, err);
+      console.warn(`${label}タイル: 画像デコードに失敗しました: ${coarserUrl}`, err);
       return { data: null };
     }
     const canvas = new OffscreenCanvas(256, 256);
