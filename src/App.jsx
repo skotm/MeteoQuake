@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.7.4";
+const APP_VERSION = "1.7.5";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -12729,6 +12729,7 @@ function WdistLegend({ mode }) {
 
   if (mode === "temperature") {
     const SWATCH_WIDTH = 17; // 15段あるのでPrecipLegendより少し狭くして詰める
+    const barWidth = WDIST_TEMP_LEGEND_COLORS.length * SWATCH_WIDTH;
     return (
       <Glass
         radius={12}
@@ -12754,18 +12755,23 @@ function WdistLegend({ mode }) {
               />
             ))}
           </div>
-          <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
+          {/* 数字は各色の下ではなく、境界線(色と色の切れ目)のちょうど真上に
+              来るよう、絶対配置で中央揃えにする。 */}
+          <div style={{ position: "relative", width: barWidth, height: 10 }}>
             {WDIST_TEMP_LEGEND_BOUNDS.map((label, i) => (
-              <div
-                key={i}
-                style={{
-                  width: SWATCH_WIDTH, flexShrink: 0, textAlign: "left", paddingLeft: 1,
-                  fontSize: 8, lineHeight: "9px", fontWeight: 600, color: `rgba(${tokens.ink},0.55)`,
-                  overflow: "visible", whiteSpace: "nowrap",
-                }}
-              >
-                {label}
-              </div>
+              label ? (
+                <div
+                  key={i}
+                  style={{
+                    position: "absolute", left: i * SWATCH_WIDTH, top: 0,
+                    transform: "translateX(-50%)",
+                    fontSize: 8, lineHeight: "9px", fontWeight: 600, color: `rgba(${tokens.ink},0.55)`,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {label}
+                </div>
+              ) : null
             ))}
           </div>
 
