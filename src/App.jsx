@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.9.8";
+const APP_VERSION = "1.9.9";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -7154,7 +7154,10 @@ async function loadWarningAreaNameIndex() {
   const features = await loadWarningAreas();
   const index = {};
   for (const f of features) {
-    index[f.properties.regioncode] = { name: f.properties.name, geometry: f.geometry };
+    // regionnameは「東京都千代田区」のように都道府県名を前方に含む表記のため、
+    // 警報タブの一覧で都道府県ごとの小見出しを作る際にderivePrefFromEewAreaName()
+    // へそのまま渡せる(EEWの細分区域名と同じ判定ロジックを使い回せる)。
+    index[f.properties.regioncode] = { name: f.properties.name, regionname: f.properties.regionname, geometry: f.geometry };
   }
   return index;
 }
@@ -14101,6 +14104,18 @@ function TyphoonListPanel({ typhoons = [], loadError = false, onSelectTyphoon })
 const WarningAreaListPanel = memo(function WarningAreaListPanel({ warningLevelMap = {}, warningAreaByRegioncode = {}, onSelectWarningArea }) {
   const { tokens } = useContext(ThemeContext);
 
+  // 種類ごとの市区町村チップ一覧は、全国的な発表時にかなりの件数になり
+  // 一覧が縦に伸びすぎるため、デフォルトは折りたたんでおき、行右端の
+  // くの字ボタンを押した時だけ展開する。開閉状態はcode(種類)単位でSetに保持。
+  const [expandedKinds, setExpandedKinds] = useState(() => new Set());
+  function toggleKindExpanded(code) {
+    setExpandedKinds(prev => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code); else next.add(code);
+      return next;
+    });
+  }
+
   // 種類ごと(例: "大雨警報")に対象の市区町村をまとめる。市区町村1件ずつに
   // バッジ配列を組み立てていた以前の方式は、全国的な発表時に件数が膨らむと
   // 重くなっていたため、種類(最大でも警報種別の定義数、数十件程度)を軸に
@@ -14108,19 +14123,40 @@ const WarningAreaListPanel = memo(function WarningAreaListPanel({ warningLevelMa
   // ソートも不要になる。warningLevelMap/warningAreaByRegioncodeが実際に
   // 変わった時だけuseMemoで再計算する。
   const groups = useMemo(() => {
-    const byKind = new Map(); // key: "code" (種類のcode) → { code, name, level, areas: [{regioncode, name}] }
+    const byKind = new Map(); // key: "code" (種類のcode) → { code, name, level, areas: [{regioncode, name, pref}] }
     for (const [regioncode, entry] of Object.entries(warningLevelMap)) {
-      const areaName = warningAreaByRegioncode[regioncode]?.name || regioncode;
+      const areaInfo = warningAreaByRegioncode[regioncode];
+      const areaName = areaInfo?.name || regioncode;
+      // regionnameから都道府県名を推定する(EEWの細分区域名と同じロジック)。
+      // 判定不能な場合は「その他」小見出しにまとめる。
+      const pref = derivePrefFromEewAreaName(areaInfo?.regionname) || "その他";
       for (const k of entry.kinds) {
         let g = byKind.get(k.code);
         if (!g) {
           g = { code: k.code, name: k.name, level: k.level, areas: [] };
           byKind.set(k.code, g);
         }
-        g.areas.push({ regioncode, name: areaName });
+        g.areas.push({ regioncode, name: areaName, pref });
       }
     }
-    return [...byKind.values()].sort((a, b) => (WARNING_LEVEL_PRIORITY[b.level] ?? 0) - (WARNING_LEVEL_PRIORITY[a.level] ?? 0));
+    const sortedGroups = [...byKind.values()].sort((a, b) => (WARNING_LEVEL_PRIORITY[b.level] ?? 0) - (WARNING_LEVEL_PRIORITY[a.level] ?? 0));
+    // 各種類の中で、都道府県ごとの小グループにまとめる(北→南の固定順。
+    // 判定できなかった「その他」は最後に置く)。
+    for (const g of sortedGroups) {
+      const byPref = new Map();
+      for (const a of g.areas) {
+        let list = byPref.get(a.pref);
+        if (!list) { list = []; byPref.set(a.pref, list); }
+        list.push(a);
+      }
+      g.prefGroups = [...byPref.entries()]
+        .sort(([prefA], [prefB]) => {
+          const ia = PREF_ORDER.indexOf(prefA), ib = PREF_ORDER.indexOf(prefB);
+          return (ia === -1 ? PREF_ORDER.length : ia) - (ib === -1 ? PREF_ORDER.length : ib);
+        })
+        .map(([pref, areas]) => ({ pref, areas }));
+    }
+    return sortedGroups;
   }, [warningLevelMap, warningAreaByRegioncode]);
 
   return (
@@ -14140,32 +14176,58 @@ const WarningAreaListPanel = memo(function WarningAreaListPanel({ warningLevelMa
           現在、発表中の警報・注意報はありません。
         </div>
       ) : (
-        groups.map((g, i) => (
-          <div key={g.code} style={{ padding: "10px 18px", borderTop: i > 0 ? `0.5px solid rgba(${tokens.ink},0.1)` : "none" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 7 }}>
-              <WarningKindBadge level={g.level} label={g.name}/>
-              <span style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.45)` }}>
-                {g.areas.length}市区町村
-              </span>
+        groups.map((g, i) => {
+          const isOpen = expandedKinds.has(g.code);
+          return (
+            <div key={g.code} style={{ padding: "10px 18px", borderTop: i > 0 ? `0.5px solid rgba(${tokens.ink},0.1)` : "none" }}>
+              <PressableButton
+                onClick={() => toggleKindExpanded(g.code)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  width: "100%",
+                  marginBottom: isOpen ? 7 : 0,
+                }}
+              >
+                <WarningKindBadge level={g.level} label={g.name}/>
+                <span style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.45)` }}>
+                  {g.areas.length}市区町村
+                </span>
+                <span style={{ flex: 1 }}/>
+                <ChevronDownIcon open={isOpen}/>
+              </PressableButton>
+              {isOpen && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {g.prefGroups.map(pg => (
+                    <div key={pg.pref}>
+                      <div style={{
+                        fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.4)`,
+                        marginBottom: 4,
+                      }}>
+                        {pg.pref}
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                        {pg.areas.map(a => (
+                          <PressableButton
+                            key={a.regioncode}
+                            onClick={() => onSelectWarningArea?.(a.regioncode)}
+                            style={{
+                              padding: "4px 9px",
+                              borderRadius: 7,
+                              background: `rgba(${tokens.ink},0.06)`,
+                              fontSize: 12.5, fontWeight: 600, color: tokens.text,
+                            }}
+                          >
+                            {a.name}
+                          </PressableButton>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-              {g.areas.map(a => (
-                <PressableButton
-                  key={a.regioncode}
-                  onClick={() => onSelectWarningArea?.(a.regioncode)}
-                  style={{
-                    padding: "4px 9px",
-                    borderRadius: 7,
-                    background: `rgba(${tokens.ink},0.06)`,
-                    fontSize: 12.5, fontWeight: 600, color: tokens.text,
-                  }}
-                >
-                  {a.name}
-                </PressableButton>
-              ))}
-            </div>
-          </div>
-        ))
+          );
+        })
       )}
     </div>
   );
@@ -19349,7 +19411,7 @@ export default function App() {
       const entry = warningAreaNameIndex[regioncode];
       if (!entry) continue;
       const centroid = polygonRoughCentroid(entry.geometry);
-      map[regioncode] = { name: entry.name, lat: centroid?.lat ?? null, lon: centroid?.lon ?? null };
+      map[regioncode] = { name: entry.name, regionname: entry.regionname, lat: centroid?.lat ?? null, lon: centroid?.lon ?? null };
     }
     return map;
   }, [warningLevelMap, warningAreaNameIndex]);
