@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.0.2";
+const APP_VERSION = "2.0.3";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10253,6 +10253,7 @@ function BottomDock({
   selectedWarningArea, // 警報タブ: タップ/一覧選択中のregioncode | null
   onSelectWarningAreaFromList, // 警報タブ: 一覧の項目をタップした時に呼ぶ(選択+flyTo)
   onBackFromWarningArea, // 警報タブ: 詳細カードの「戻る」ボタンを押した時に呼ぶ
+  onAlertLayerChange, // 警報タブ: くの字メニューでキキクル(土砂/洪水)を切り替えた時にApp側(地図のキキクルレイヤー表示用)に伝える。"doshaKikkuru" | "floodKikkuru" | null
 }) {
   const { tokens, mode } = useContext(ThemeContext);
   const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
@@ -11067,6 +11068,22 @@ function BottomDock({
     weatherDistribution: wdistMode === "weather",
     temperatureDistribution: wdistMode === "temperature",
   };
+  // 警報タブの「くの字」メニュー(キキクル)版。考え方は気象メニューと同じで、
+  // ここではUIの開閉・選択状態(ラジオボタン的に1つだけON)だけを持つ。実際に
+  // 地図へ土砂/洪水キキクルのタイルを重ねる処理は、onAlertLayerChange経由で
+  // 親(App)側に伝えて、そちらの地図レイヤーuseEffectで行う。
+  const [alertMenuOpen, setAlertMenuOpen] = useState(false);
+  const [alertLayerMode, setAlertLayerMode] = useState(null); // "doshaKikkuru" | "floodKikkuru" | null
+  function handleToggleAlertMenuItem(id) {
+    setAlertLayerMode(prev => (prev === id ? null : id));
+  }
+  const alertMenuItemStates = {
+    doshaKikkuru: alertLayerMode === "doshaKikkuru",
+    floodKikkuru: alertLayerMode === "floodKikkuru",
+  };
+  useEffect(() => {
+    onAlertLayerChange?.(alertLayerMode);
+  }, [alertLayerMode, onAlertLayerChange]);
   // 台風タブ版の「戻る」— 詳細カードから一覧表示に戻す。フローティング自体は
   // 閉じない(閉じた時の選択解除は別のuseEffectで扱う)。
   function handleBackFromTyphoon() {
@@ -11646,6 +11663,18 @@ function BottomDock({
     lastSelectedTsunamiId.current = selectedTsunamiId;
   }, [selectedTsunamiId]);
 
+  // 警報タブ版。地図タップ/一覧タップのどちらでエリアを選んでも(=なし→ありに
+  // 変わったら)、詳細カードがしっかり見えるよう「中高」に揃える。地震・津波と
+  // 違って「戻る」で選択解除した時に別の高さへ戻す処理は無く、一覧表示も
+  // 同じ「中高」を使っているため、選択解除時は現在の高さのままでよい。
+  const lastSelectedWarningArea = useRef(selectedWarningArea);
+  useEffect(() => {
+    if (lastSelectedWarningArea.current == null && selectedWarningArea != null) {
+      setSnapIndex(3);
+    }
+    lastSelectedWarningArea.current = selectedWarningArea;
+  }, [selectedWarningArea]);
+
   // 設定タブを開いた瞬間は、常にパネルの高さを「中高」にする
   // (トップメニューがスクロールなしで丸ごと見える高さのため)。
   // 設定タブから抜ける時も、行き先のタブに関わらず同じく「中高」にする
@@ -12083,10 +12112,12 @@ function BottomDock({
         )
       )}
 
-      {/* 警報タブ用 — エリアを選択(タップ/一覧選択)している間だけ、地震・津波・
+      {/* 警報タブ用 — エリアを選択(タップ/一覧選択)している間は、地震・津波・
           設定タブと全く同じ「戻るボタンの枠」(フローティング外部、right:16・
-          bottom:backButtonBottom。横画面ではパネル右上の外側)に戻るボタンを浮かべる。 */}
-      {!eewDetailOpen && active === "alert" && selectedWarningArea != null && (
+          bottom:backButtonBottom。横画面ではパネル右上の外側)に戻るボタンを浮かべる。
+          選択していない(一覧表示中の)間は、気象タブと全く同じ考え方で、
+          同じ枠にキキクル(土砂/洪水)を切り替えるくの字メニューを浮かべる。 */}
+      {!eewDetailOpen && active === "alert" && (
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",
@@ -12094,10 +12125,20 @@ function BottomDock({
             top: wideAnchorRect.top + 16,
             zIndex: 50,
           }}>
-            <BackToListButton
-              onClick={onBackFromWarningArea}
-              label="警報一覧に戻る"
-            />
+            {selectedWarningArea != null ? (
+              <BackToListButton
+                onClick={onBackFromWarningArea}
+                label="警報一覧に戻る"
+              />
+            ) : (
+              <AlertMenuFloating
+                open={alertMenuOpen}
+                onToggle={() => setAlertMenuOpen(v => !v)}
+                growUp={false}
+                itemStates={alertMenuItemStates}
+                onToggleItem={handleToggleAlertMenuItem}
+              />
+            )}
           </div>,
           document.body
         ) : (
@@ -12108,10 +12149,20 @@ function BottomDock({
           transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
-          <BackToListButton
-            onClick={onBackFromWarningArea}
-            label="警報一覧に戻る"
-          />
+          {selectedWarningArea != null ? (
+            <BackToListButton
+              onClick={onBackFromWarningArea}
+              label="警報一覧に戻る"
+            />
+          ) : (
+            <AlertMenuFloating
+              open={alertMenuOpen}
+              onToggle={() => setAlertMenuOpen(v => !v)}
+              growUp={true}
+              itemStates={alertMenuItemStates}
+              onToggleItem={handleToggleAlertMenuItem}
+            />
+          )}
         </div>
         )
       )}
@@ -13791,6 +13842,117 @@ function WeatherMenuFloating({
             width: "100%", padding: `0 ${WEATHER_MENU_ITEMS_PAD}px ${WEATHER_MENU_ITEMS_PAD}px`,
           }}>
             {pageItems.map((item) => {
+              const active = !!itemStates[item.id];
+              return (
+                <PressableButton
+                  key={item.id}
+                  onClick={() => {
+                    onToggleItem?.(item.id);
+                    onToggle(); // 選択したらメニュー自体は閉じる
+                  }}
+                  style={{
+                    height: WEATHER_MENU_ITEM_HEIGHT,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    textAlign: "center",
+                    fontSize: 11.5, fontWeight: 600,
+                    color: active ? "#fff" : tokens.text,
+                    whiteSpace: "nowrap",
+                    borderRadius: 10,
+                    border: active ? "none" : `0.75px solid rgba(${tokens.ink},0.22)`,
+                    background: active ? "#0A84FF" : `rgba(${tokens.ink},0.06)`,
+                  }}
+                >
+                  {item.label}
+                </PressableButton>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   ALERT MENU FLOATING — 警報タブの一覧表示中に使う、キキクル(危険度分布)を
+   切り替えるくの字メニュー。WeatherMenuFloatingと全く同じ見た目・アニメーション
+   (ボタン自体が丸→帯へ連続的に広がる、閉:上向き⌃/開:下向き⌄)を踏襲しつつ、
+   項目がページ送り不要な2つ(土砂キキクル・洪水キキクル)だけなのでページ送り行は
+   持たない、簡略版。
+   ───────────────────────────────────────────────────── */
+const ALERT_MENU_ITEMS = [
+  { id: "doshaKikkuru", label: "土砂キキクル" },
+  { id: "floodKikkuru", label: "洪水キキクル" },
+];
+
+function AlertMenuFloating({ open, onToggle, growUp = true, itemStates = {}, onToggleItem }) {
+  const { tokens } = useContext(ThemeContext);
+  const [pressed, setPressed] = useState(false);
+
+  const itemsBlockHeight =
+    ALERT_MENU_ITEMS.length * WEATHER_MENU_ITEM_HEIGHT +
+    Math.max(0, ALERT_MENU_ITEMS.length - 1) * WEATHER_MENU_ITEM_GAP +
+    WEATHER_MENU_ITEMS_PAD * 2;
+
+  const width  = open ? WEATHER_MENU_WIDTH : WEATHER_MENU_BUTTON_SIZE;
+  const height = open ? WEATHER_MENU_BUTTON_SIZE_OPEN + itemsBlockHeight : WEATHER_MENU_BUTTON_SIZE;
+  const buttonSize = open ? WEATHER_MENU_BUTTON_SIZE_OPEN : WEATHER_MENU_BUTTON_SIZE;
+
+  // growUp(下部固定の戻るボタン枠)なら、ボタンを一番下に置いて上へ広がるように
+  // column-reverse。isWide(上部固定)なら、ボタンを上に置いて下へ広がるように
+  // 通常のcolumnにする(WeatherMenuFloatingと同じ考え方)。
+  const stackDirection = growUp ? "column-reverse" : "column";
+
+  return (
+    <Glass
+      radius={open ? 20 : 999}
+      style={{
+        width, height,
+        borderRadius: open ? 20 : 999,
+        overflow: "hidden",
+        transition: "width 0.3s cubic-bezier(.22,1,.36,1), height 0.3s cubic-bezier(.22,1,.36,1), border-radius 0.3s cubic-bezier(.22,1,.36,1)",
+      }}
+    >
+      <div style={{ display: "flex", flexDirection: stackDirection, width: "100%", height: "100%" }}>
+        <div style={{
+          flexShrink: 0,
+          width: "100%", height: open ? WEATHER_MENU_BUTTON_SIZE_OPEN : WEATHER_MENU_BUTTON_SIZE,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          transition: "height 0.3s cubic-bezier(.22,1,.36,1)",
+        }}>
+          <button
+            onClick={onToggle}
+            onPointerDown={() => setPressed(true)}
+            onPointerUp={() => setPressed(false)}
+            onPointerCancel={() => setPressed(false)}
+            onPointerLeave={() => setPressed(false)}
+            aria-label={open ? "メニューを閉じる" : "メニューを開く"}
+            style={{
+              width: open ? WEATHER_MENU_WIDTH - WEATHER_MENU_ITEMS_PAD * 2 : buttonSize,
+              height: open ? WEATHER_MENU_TOGGLE_RECT_HEIGHT : buttonSize,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: tokens.text,
+              borderRadius: open ? 8 : 999,
+              border: open ? `0.75px solid rgba(${tokens.ink},0.22)` : "none",
+              background: open ? `rgba(${tokens.ink},0.06)` : "transparent",
+              transform: pressed ? "scale(1.06)" : "scale(1)",
+              transition: "width 0.3s cubic-bezier(.22,1,.36,1), height 0.3s cubic-bezier(.22,1,.36,1), border-radius 0.3s cubic-bezier(.22,1,.36,1), transform 0.18s cubic-bezier(.22,1,.36,1)",
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+                 stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"
+                 style={{ transition: "transform 0.2s cubic-bezier(.22,1,.36,1)", transform: open ? "rotate(180deg)" : "none" }}>
+              <polyline points="6 15 12 9 18 15"/>
+            </svg>
+          </button>
+        </div>
+
+        {open && (
+          <div style={{
+            display: "flex", flexDirection: "column", gap: WEATHER_MENU_ITEM_GAP,
+            width: "100%", padding: `0 ${WEATHER_MENU_ITEMS_PAD}px ${WEATHER_MENU_ITEMS_PAD}px`,
+          }}>
+            {ALERT_MENU_ITEMS.map((item) => {
               const active = !!itemStates[item.id];
               return (
                 <PressableButton
@@ -20183,6 +20345,13 @@ export default function App() {
   const handleTyphoonChange = useCallback((geojson) => {
     setTyphoonGeojson(geojson);
   }, []);
+  // 警報タブのくの字メニューで選択中のキキクル。BottomDock側から伝わってくる。
+  // "doshaKikkuru" | "floodKikkuru" | null。現時点ではUIの選択状態を保持するのみで、
+  // 実際に地図へタイルを重ねる部分(MapCanvas側のレイヤー追加)はまだ未実装。
+  const [alertLayerMode, setAlertLayerMode] = useState(null);
+  const handleAlertLayerChange = useCallback((mode) => {
+    setAlertLayerMode(mode);
+  }, []);
   // 台風の中心点/予報円をタップした時のproperties。BottomDock側のTyphoonDetailCardで
   // 表示する(時刻チップ=予報円タップ、台風一覧タップの両方でここに入る)。
   const [selectedTyphoonInfo, setSelectedTyphoonInfo] = useState(null);
@@ -21598,6 +21767,7 @@ export default function App() {
                   selectedWarningArea={selectedWarningArea}
                   onSelectWarningAreaFromList={handleSelectWarningAreaFromList}
                   onBackFromWarningArea={handleBackFromWarningArea}
+                  onAlertLayerChange={handleAlertLayerChange}
                   tideStations={tideStationsWithGrade}
                   tideStationsStatus={tideStationsStatus}
                   selectedTideStationCode={selectedTideStationCode}
@@ -21707,6 +21877,7 @@ export default function App() {
                   selectedWarningArea={selectedWarningArea}
                   onSelectWarningAreaFromList={handleSelectWarningAreaFromList}
                   onBackFromWarningArea={handleBackFromWarningArea}
+                  onAlertLayerChange={handleAlertLayerChange}
               tideStations={tideStationsWithGrade}
               tideStationsStatus={tideStationsStatus}
               selectedTideStationCode={selectedTideStationCode}
