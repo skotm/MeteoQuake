@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.9.9";
+const APP_VERSION = "2.0.0";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -3314,7 +3314,7 @@ function MapCanvas({
     if (!map || status !== "ready" || !warningAreaFlyToRequest) return;
     const { lon, lat } = warningAreaFlyToRequest;
     if (lon == null || lat == null) return;
-    map.flyTo({ center: [lon, lat], zoom: 10, duration: 800 });
+    map.flyTo({ center: [lon, lat], zoom: 7, duration: 800 });
   }, [status, warningAreaFlyToRequest]);
 
   // 緊急地震速報テスト配信「地図をタップして震源を指定」モード用。ONになったら
