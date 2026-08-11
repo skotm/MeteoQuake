@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.9.0";
+const APP_VERSION = "1.9.1";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -13102,6 +13102,54 @@ function WdistLegend({ mode }) {
 }
 
 /* ─────────────────────────────────────────────────────
+   WARNING LEGEND — 警報タブの気象警報・注意報レイヤーの凡例。
+   TsunamiGradeLegend/QuakeIntensityLegendと全く同じ見た目(横一列の隙間の
+   詰まった色バー)で、実際に発表されている中の最も低いレベルから最も高い
+   レベルまでをラダー表示する(例: 注意報と警報が両方出ていれば2段、
+   最高が警報だけなら「注意報→警報」の2段まで並べる)。
+   ───────────────────────────────────────────────────── */
+const WARNING_LEGEND_ORDER = ["chui", "keiho", "kiken", "tokubetsu"];
+
+function WarningLegend({ warningLevelMap }) {
+  const { tokens } = useContext(ThemeContext);
+  const levelsPresent = [...new Set(Object.values(warningLevelMap || {}).map(v => v.level))];
+  if (levelsPresent.length === 0) return null;
+
+  const maxWeight = Math.max(...levelsPresent.map(l => WARNING_LEVEL_PRIORITY[l]));
+  const ladderLevels = WARNING_LEGEND_ORDER.filter(key => WARNING_LEVEL_PRIORITY[key] <= maxWeight);
+
+  return (
+    <Glass
+      radius={12}
+      style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
+    >
+      <div style={{
+        display: "flex",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 2,
+        padding: "8px 9px",
+      }}>
+        {ladderLevels.map(level => {
+          const isMax = WARNING_LEVEL_PRIORITY[level] === maxWeight;
+          return (
+            <div
+              key={level}
+              style={{
+                width: 7, height: 16, borderRadius: 2,
+                background: WARNING_LEVEL_COLOR[level],
+                boxShadow: isMax ? `0 0 0 2px rgba(${tokens.ink},0.9)` : "none",
+                flexShrink: 0,
+              }}
+            />
+          );
+        })}
+      </div>
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    NOWCAST TIME SLIDER — 雨雲レーダーがONで、展開メニュー(WeatherMenuFloating)が
    閉じている間だけ、ボタンバー(下部ナビ行)のすぐ上に浮かべる時刻スライダー。
    実況(過去)+予測(未来60分)を1本のタイムラインとしてドラッグで選べる。
@@ -20995,6 +21043,19 @@ export default function App() {
             zIndex: 30,
           }}>
             <WdistLegend mode={wdistMode}/>
+          </div>
+        )}
+
+        {/* 警報凡例 — 警報タブで警報・注意報レイヤーを地図に塗っている間だけ、
+            画面右上に浮かぶ(震度凡例・津波凡例と対の構成)。 */}
+        {activeNav === "alert" && Object.keys(warningLevelMap).length > 0 && (
+          <div style={{
+            position: "absolute",
+            top: "calc(16px + env(safe-area-inset-top))",
+            right: 16,
+            zIndex: 30,
+          }}>
+            <WarningLegend warningLevelMap={warningLevelMap}/>
           </div>
         )}
 
