@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.8.2";
+const APP_VERSION = "1.8.3";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1123,39 +1123,18 @@ function formatPrecipFrameLabel(frame) {
    類推した未検証の値。実機で404や想定外のデータが出た場合はconsole.warnに
    実際のURL・レスポンスを出すようにしてあるので、そこから正しい値を
    特定して直す想定。
-
-   気温分布だけは、この予報(wdist)に加えて気象庁「推計気象分布」の実況値
-   (suikeikishou、過去48時間・1時間おき)も1本のタイムラインにマージして
-   扱う。詳細はさらに下のSUIKEI_DATA_BASE・loadTemperatureTimeline周りの
-   コメントを参照。
    ───────────────────────────────────────────────────── */
 const WDIST_DATA_BASE = "https://www.jma.go.jp/bosai/jmatile/data/wdist";
 const WDIST_MODE_CONFIG = {
   weather:     { element: "wm",   label: "天気分布" },
   temperature: { element: "temp", label: "気温分布" }, // 要検証
 };
-// 気温分布(実況)。気象庁「推計気象分布」の実況値タイル。タイルURL構造
-// ("{base}/{basetime}/{member}/{validtime}/surf/{element}/{z}/{x}/{y}.png")・
-// targetTimes.jsonのスキーマとも、天気分布予報(wdist)と実測で完全に一致することを
-// 確認済み(2026-08-11時点)。basetime=validtimeの1時間おきエントリが過去48時間分
-// 並ぶ(予報は含まない)。要素はtemp(気温)/wthr(天気)/suns1h(日照)の3種あるが、
-// 今回はtempのみ対象。下のwdistTileUrl/wdistProtocolUrlはdataset("wdist"予報|
-// "suikei"実況)を受け取り、両方のベースURLに対応する形にしてある。
-const SUIKEI_DATA_BASE = "https://www.jma.go.jp/bosai/jmatile/data/suikeikishou";
-const SUIKEI_MODE_CONFIG = {
-  temperature: { element: "temp", label: "気温分布(実況)" },
-};
-const DIST_SOURCE_CONFIG = {
-  wdist:  { base: WDIST_DATA_BASE,  modeConfig: WDIST_MODE_CONFIG },
-  suikei: { base: SUIKEI_DATA_BASE, modeConfig: SUIKEI_MODE_CONFIG },
-};
-function wdistTileUrl(dataset, mode, member, basetime, validtime, z, x, y) {
-  const src = DIST_SOURCE_CONFIG[dataset] || DIST_SOURCE_CONFIG.wdist;
-  const element = src.modeConfig[mode]?.element || "wm";
-  return `${src.base}/${basetime}/${member}/${validtime}/surf/${element}/${z}/${x}/${y}.png`;
+function wdistTileUrl(mode, member, basetime, validtime, z, x, y) {
+  const element = WDIST_MODE_CONFIG[mode]?.element || "wm";
+  return `${WDIST_DATA_BASE}/${basetime}/${member}/${validtime}/surf/${element}/${z}/${x}/${y}.png`;
 }
-function wdistProtocolUrl(dataset, mode, member, basetime, validtime) {
-  return `jmawdist://${dataset}/${mode}/${member}/${basetime}/${validtime}/{z}/{x}/{y}`;
+function wdistProtocolUrl(mode, member, basetime, validtime) {
+  return `jmawdist://${mode}/${member}/${basetime}/${validtime}/{z}/{x}/{y}`;
 }
 
 // modeの時刻一覧を取得する。[{ basetime, validtime, member }, ...] を時系列昇順で返す。
@@ -1192,58 +1171,7 @@ async function loadWdistFrames(mode) {
   const result = withElement.length > 0 ? withElement : filtered;
   return result
     .sort((a, b) => String(a.validtime).localeCompare(String(b.validtime)))
-    .map(t => ({ basetime: t.basetime, validtime: t.validtime, member: t.member || "none", dataset: "wdist" }));
-}
-
-// 気温分布(実況)の時刻一覧。suikeikishouのtargetTimes.jsonはbasetime=validtimeの
-// 1時間おきエントリで、過去48時間分(予報は含まない)。天気(wthr)・日照(suns1h)も
-// 混ざっているため、気温(temp)を含むものだけを拾う(考え方はloadWdistFramesと同じ)。
-async function loadSuikeiFrames() {
-  const url = `${SUIKEI_DATA_BASE}/targetTimes.json`;
-  let raw;
-  try {
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    raw = await res.json();
-  } catch (err) {
-    console.warn(`気温分布(実況): 時刻一覧の取得に失敗 url=${url}`, err);
-    throw err;
-  }
-  if (!Array.isArray(raw) || raw.length === 0) {
-    console.warn(`気温分布(実況): 時刻一覧が空、または想定外の形式です url=${url}`, raw);
-    return [];
-  }
-  const filtered = raw.filter(t => t && t.basetime && t.validtime);
-  const withTemp = filtered.filter(t => Array.isArray(t.elements) && t.elements.includes("temp"));
-  if (filtered.length > 0 && withTemp.length === 0) {
-    console.warn(`気温分布(実況): elements="temp"を含むエントリが1件も無かった。実際のエントリ例:`, filtered[0]);
-  }
-  const result = withTemp.length > 0 ? withTemp : filtered;
-  return result
-    .sort((a, b) => String(a.validtime).localeCompare(String(b.validtime)))
-    .map(t => ({ basetime: t.basetime, validtime: t.validtime, member: t.member || "none", dataset: "suikei" }));
-}
-
-// 気温分布の統合タイムライン。過去48時間(実況・suikeikishou)〜翌日24時
-// (予報・wdist)を1本のvalidtime昇順配列にマージする。スライダーはこの1本を
-// なぞるだけで、境目より前は実況・後は予報のタイルへ自動的に切り替わる。
-// 同じvalidtimeが両方に存在した場合は実況側を優先する。片方の取得にだけ
-// 失敗した場合は、もう片方だけで表示を継続する(両方失敗した場合は空配列)。
-async function loadTemperatureTimeline() {
-  const [suikeiFrames, forecastFrames] = await Promise.all([
-    loadSuikeiFrames().catch(err => {
-      console.warn("気温分布: 実況側の取得に失敗、予報のみで表示します", err);
-      return [];
-    }),
-    loadWdistFrames("temperature").catch(err => {
-      console.warn("気温分布: 予報側の取得に失敗、実況のみで表示します", err);
-      return [];
-    }),
-  ]);
-  const merged = new Map();
-  for (const f of suikeiFrames) merged.set(f.validtime, f);
-  for (const f of forecastFrames) if (!merged.has(f.validtime)) merged.set(f.validtime, f);
-  return Array.from(merged.values()).sort((a, b) => String(a.validtime).localeCompare(String(b.validtime)));
+    .map(t => ({ basetime: t.basetime, validtime: t.validtime, member: t.member || "none" }));
 }
 
 // 天気分布予報のスライダー用ラベル。翌日24時まで予報があるため、雨雲レーダー・
@@ -1257,19 +1185,6 @@ function formatWdistFrameLabel(frame) {
   const day = jst.getUTCDate();
   const hour = jst.getUTCHours();
   return `${day}日${hour}時`;
-}
-
-// 気温分布(統合タイムライン)のスライダー用ラベル。実況/予報どちらのコマかを
-// frame.datasetで判定して末尾に付ける(雨雲レーダーのkind実況/予測表示と同じ考え方)。
-function formatTemperatureFrameLabel(frame) {
-  if (!frame) return "";
-  const ms = nowcastValidtimeToMs(frame.validtime);
-  if (ms == null) return "";
-  const jst = new Date(ms + 9 * 60 * 60 * 1000);
-  const day = jst.getUTCDate();
-  const hour = jst.getUTCHours();
-  const kind = frame.dataset === "suikei" ? "実況" : "予報";
-  return `${day}日${hour}時 ${kind}`;
 }
 
 /* ─────────────────────────────────────────────────────
@@ -1791,9 +1706,9 @@ function registerWdistProtocol(maplibregl) {
   if (wdistProtocolRegistered) return;
   wdistProtocolRegistered = true;
   maplibregl.addProtocol("jmawdist", async (params, abortController) => {
-    const m = params.url.match(/^jmawdist:\/\/([a-z]+)\/([a-z]+)\/([a-z]+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)\/(-?\d+)$/);
+    const m = params.url.match(/^jmawdist:\/\/([a-z]+)\/([a-z]+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)\/(-?\d+)$/);
     if (!m) return { data: null };
-    const [, dataset, mode, member, basetime, validtime, zStr, xStr, yStr] = m;
+    const [, mode, member, basetime, validtime, zStr, xStr, yStr] = m;
     let z = Number(zStr), x = Number(xStr), y = Number(yStr);
 
     // 奇数ズームは1段階粗い偶数ズームのタイルを取得し、該当する象限だけを
@@ -1807,7 +1722,7 @@ function registerWdistProtocol(maplibregl) {
       x = Math.floor(x / 2);
       y = Math.floor(y / 2);
     }
-    const url = wdistTileUrl(dataset, mode, member, basetime, validtime, z, x, y);
+    const url = wdistTileUrl(mode, member, basetime, validtime, z, x, y);
     if (wdistFailedTileUrls.has(url)) return { data: null };
 
     let res;
@@ -1820,8 +1735,7 @@ function registerWdistProtocol(maplibregl) {
     if (!res.ok) {
       if (res.status === 404) {
         wdistFailedTileUrls.add(url);
-        const label = DIST_SOURCE_CONFIG[dataset]?.modeConfig[mode]?.label || mode;
-        console.warn(`${label}タイル 404(要素名・URL構造の推測が外れている可能性があります): ${url}`);
+        console.warn(`${WDIST_MODE_CONFIG[mode]?.label || mode}タイル 404(要素名・URL構造の推測が外れている可能性があります): ${url}`);
       }
       return { data: null };
     }
@@ -3671,10 +3585,10 @@ function MapCanvas({
     if (!map.getSource(srcId)) {
       map.addSource(srcId, {
         type: "raster",
-        tiles: [wdistProtocolUrl(wdistFrame.dataset || "wdist", wdistMode, wdistFrame.member, wdistFrame.basetime, wdistFrame.validtime)],
+        tiles: [wdistProtocolUrl(wdistMode, wdistFrame.member, wdistFrame.basetime, wdistFrame.validtime)],
         tileSize: 256,
         minzoom: 4,
-        maxzoom: 10, // suikei(実況)側もwdistと同じズーム範囲・boundsという前提。要実機確認。
+        maxzoom: 10,
         bounds: NOWCAST_BOUNDS,
         attribution: "気象庁",
       });
@@ -10212,13 +10126,6 @@ function BottomDock({
      1日3回(5時・11時・17時)だが、一覧の取得ロジックは降水量と揃えて
      5分おきの再確認にしている(新しい発表を取りこぼさないようにするための
      ポーリングであり、実際に中身が変わるのは1日3回だけ)。
-
-     気温分布(temperature)だけは、上記の予報(wdist)に加えて実況値
-     (suikeikishou、過去48時間・1時間おき)もマージした1本のタイムラインを
-     使う(loadTemperatureTimeline)。実況側は1時間おきに中身が更新されるが、
-     一覧の再取得は他と同じ5分おきのポーリングに乗せている。各フレームは
-     dataset("wdist"予報|"suikei"実況)を持ち、スライダーで移動するだけで
-     表示元(≒タイルの取得先)が自動的に切り替わる。
      ───────────────────────────────────────────────────── */
   const [wdistMode, setWdistMode] = useState(null);
   const [wdistFrames, setWdistFrames] = useState(null);
@@ -10238,8 +10145,7 @@ function BottomDock({
     }
     let cancelled = false;
     const fetchAndApply = () => {
-      const load = wdistMode === "temperature" ? loadTemperatureTimeline() : loadWdistFrames(wdistMode);
-      load
+      loadWdistFrames(wdistMode)
         .then((frames) => {
           if (cancelled) return;
           setWdistLoadError(false);
@@ -11845,7 +11751,7 @@ function BottomDock({
                 frames={wdistFrames}
                 frameIndex={wdistFrameIndex ?? 0}
                 onChangeFrameIndex={setWdistFrameIndex}
-                formatLabel={wdistMode === "temperature" ? formatTemperatureFrameLabel : formatWdistFrameLabel}
+                formatLabel={formatWdistFrameLabel}
               />
             </div>
           )}
@@ -11888,7 +11794,7 @@ function BottomDock({
               frames={wdistFrames}
               frameIndex={wdistFrameIndex ?? 0}
               onChangeFrameIndex={setWdistFrameIndex}
-              formatLabel={wdistMode === "temperature" ? formatTemperatureFrameLabel : formatWdistFrameLabel}
+              formatLabel={formatWdistFrameLabel}
             />
           )}
           {selectedTyphoonInfo ? (
@@ -12792,14 +12698,11 @@ const WDIST_WEATHER_CATEGORIES = [
   { label: "雨または雪", color: "#B48EAD" },
   { label: "雪", color: "#E8EEF5" },
 ];
-// 気温分布用の配色・区分値(℃)。ユーザー提供のJMA凡例画像(天気分布予報=wdist側)
-// から採取した実際のスケール。画像は縦方向(下=寒い/薄紫〜上=暑い/濃い臙脂)なので、
-// 横一列のバーに直す際は「左=寒い、右=暑い」の向きにしている(雨雲レーダー・降水量の
+// 気温分布用の配色・区分値(℃)。ユーザー提供のJMA凡例画像から採取した実際の
+// スケール。画像は縦方向(下=寒い/薄紫〜上=暑い/濃い臙脂)なので、横一列の
+// バーに直す際は「左=寒い、右=暑い」の向きにしている(雨雲レーダー・降水量の
 // 凡例と同じ、弱い/低い方を左に置く向き)。
 // 色は画像から目視で採取した近似値。
-// ⚠️ 気温分布は予報(wdist)と実況(suikei)を1本のタイムラインにマージしたため、
-// この凡例は両方のコマで共通に使っている。実況側(suikeikishou)が同じ配色か
-// どうかは未検証。実機で色がずれて見える場合はここを実況用に分離すること。
 const WDIST_TEMP_LEGEND_COLORS = [
   [216, 214, 227], // 〜-25(パレット画像の一番下、パステル紫)
   [178, 175, 201], // -25〜-20
