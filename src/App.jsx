@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.8.3";
+const APP_VERSION = "1.8.4";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -2007,6 +2007,8 @@ function MapCanvas({
   typhoonGeojson = null,        // fetchTyphoonData()が返すgeojson({type:"FeatureCollection"})| null
   onSelectTyphoonCenter,        // 台風の中心点/予報円をタップした時にpropertiesを渡すコールバック
   typhoonFlyToRequest = null,   // {lon, lat, nonce} | null。台風一覧の項目をタップした時のflyTo先
+  warningVisible = false,       // 警報タブ: 警報・注意報レイヤーを表示するか(警報タブがアクティブな間だけtrue)
+  warningLevelMap = {},         // 警報タブ: regioncode → {level, kinds} のマップ(App側でポーリング取得)
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -2396,6 +2398,33 @@ function MapCanvas({
             paint: {
               "line-color": "rgba(0,0,0,0)",
               "line-width": 6,
+            },
+          }, "station-points-symbol");
+
+          // 警報タブ: 気象警報・注意報レイヤー(市区町村単位の塗り分け)。
+          // データ自体は警報タブを開いた時だけ遅延読み込みするため、ここでは
+          // 空のソースだけ用意する(下方の専用useEffect参照)。
+          map.addSource("warning-areas", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "warning-areas-fill-layer",
+            type: "fill",
+            source: "warning-areas",
+            layout: { visibility: "none" },
+            paint: {
+              "fill-color": buildWarningAreaColorExpr(0.55),
+            },
+          }, "station-points-symbol");
+          map.addLayer({
+            id: "warning-areas-line-layer",
+            type: "line",
+            source: "warning-areas",
+            layout: { visibility: "none", "line-cap": "round", "line-join": "round" },
+            paint: {
+              "line-color": buildWarningAreaColorExpr(0.9),
+              "line-width": 1,
             },
           }, "station-points-symbol");
 
@@ -3175,6 +3204,42 @@ function MapCanvas({
         });
     }
   }, [tsunamiAreas, tsunamiAreaPickActive, status]);
+
+  // 警報タブ: 警報・注意報レイヤー。境界データ(warning_areas.json、1,821件)は
+  // 警報タブを一度でも開いた時だけ遅延読み込みする(断層・津波予報区と同じ方式)。
+  // warningLevelMapが更新されるたび(Appの定期ポーリング)、色だけを塗り直す。
+  const warningAreasLoadedRef = useRef(false);
+  const warningAreasBaseGeoJsonRef = useRef(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    if (!map.getLayer("warning-areas-fill-layer")) return;
+
+    map.setLayoutProperty("warning-areas-fill-layer", "visibility", warningVisible ? "visible" : "none");
+    map.setLayoutProperty("warning-areas-line-layer", "visibility", warningVisible ? "visible" : "none");
+    if (!warningVisible) return;
+
+    if (!warningAreasLoadedRef.current) {
+      warningAreasLoadedRef.current = true;
+      loadWarningAreasFullGeoJson()
+        .then((geojson) => {
+          warningAreasBaseGeoJsonRef.current = geojson;
+          const merged = buildWarningAreasGeoJson(geojson, warningLevelMap);
+          const source = map.getSource("warning-areas");
+          if (source) source.setData(merged);
+        })
+        .catch((err) => {
+          console.error("警報・注意報の境界データの読み込みに失敗しました:", err);
+          warningAreasLoadedRef.current = false; // 失敗時は次回表示された時に再試行できるようにする
+        });
+    } else if (warningAreasBaseGeoJsonRef.current) {
+      // 境界データは既にある状態でwarningLevelMapだけ更新された場合(ポーリング更新)は
+      // setDataし直すだけでよい(再取得は不要)。
+      const merged = buildWarningAreasGeoJson(warningAreasBaseGeoJsonRef.current, warningLevelMap);
+      const source = map.getSource("warning-areas");
+      if (source) source.setData(merged);
+    }
+  }, [warningVisible, warningLevelMap, status]);
 
   // 緊急地震速報テスト配信「地図をタップして震源を指定」モード用。ONになったら
   // カーソルをcrosshairにし、震央地名データをこの時点で先読みしておく
@@ -6999,6 +7064,185 @@ async function findMunicipalityAtPoint(lat, lon) {
     if (pointInGeoJsonGeometry(lon, lat, f.geometry)) return f.properties;
   }
   return null;
+}
+
+/* ─────────────────────────────────────────────────────
+   警報タブ: 気象警報・注意報レイヤー
+   気象庁の警報・注意報API(bosai/warning/data/r8/{都道府県コード}.json、全国)と
+   洪水警報API(bosai/warning/data/l_flood/{都道府県コード}.json)を取得し、
+   市区町村コード(regioncode。warning_areas.jsonのproperties.regioncodeと同じ単位)
+   ごとに発表中の警報・注意報種別をまとめる。
+   地図側は既存のwarning-areas境界(WARNING_AREAS_URL)をそのまま塗り分けに使う
+   (逆引き用のloadWarningAreas()とは別に、フルGeoJSONをそのままsetDataできる
+    形でも読み込む → loadWarningAreasGeoJson()参照)。
+   ───────────────────────────────────────────────────── */
+
+// 気象庁 offices コード(warning_areas.jsonのregioncodeとは別の、都道府県予報区単位のコード)
+const WARNING_OFFICE_CODES = [
+  "011000", "012000", "013000", "014030", "014100", "015000", "016000", "017000", // 北海道
+  "020000", "030000", "040000", "050000", "060000", "070000",                     // 東北
+  "080000", "090000", "100000", "110000", "120000", "130000", "140000", "190000", "200000", // 関東甲信
+  "210000", "220000", "230000", "240000",                                          // 東海
+  "150000", "160000", "170000", "180000",                                          // 北陸
+  "250000", "260000", "270000", "280000", "290000", "300000",                     // 近畿
+  "310000", "320000", "330000", "340000", "350000",                               // 中国
+  "360000", "370000", "380000", "390000",                                         // 四国
+  "400000", "410000", "420000", "430000", "440000",                               // 九州北部
+  "450000", "460040", "460100",                                                    // 九州南部・奄美
+  "471000", "472000", "473000", "474000",                                         // 沖縄
+];
+
+// 新API(r8)の警報種別コード(2桁文字列) → {name, level}
+// level: "chui"(注意報) < "keiho"(警報) < "kiken"(危険警報) < "tokubetsu"(特別警報)
+const WARNING_KIND_MAP = {
+  // 注意報
+  "10": { name: "大雨注意報",     level: "chui" },
+  "12": { name: "大雪注意報",     level: "chui" },
+  "13": { name: "風雪注意報",     level: "chui" },
+  "14": { name: "雷注意報",       level: "chui" },
+  "15": { name: "強風注意報",     level: "chui" },
+  "16": { name: "波浪注意報",     level: "chui" },
+  "17": { name: "融雪注意報",     level: "chui" },
+  "18": { name: "洪水注意報",     level: "chui" },
+  "19": { name: "高潮注意報",     level: "chui" },
+  "20": { name: "濃霧注意報",     level: "chui" },
+  "21": { name: "乾燥注意報",     level: "chui" },
+  "22": { name: "なだれ注意報",   level: "chui" },
+  "23": { name: "低温注意報",     level: "chui" },
+  "24": { name: "霜注意報",       level: "chui" },
+  "25": { name: "着氷注意報",     level: "chui" },
+  "26": { name: "着雪注意報",     level: "chui" },
+  "27": { name: "その他の注意報", level: "chui" },
+  "29": { name: "土砂災害注意報", level: "chui" },
+  // 警報
+  "02": { name: "暴風雪警報",     level: "keiho" },
+  "03": { name: "大雨警報",       level: "keiho" },
+  "04": { name: "洪水警報",       level: "keiho" },
+  "05": { name: "暴風警報",       level: "keiho" },
+  "06": { name: "大雪警報",       level: "keiho" },
+  "07": { name: "波浪警報",       level: "keiho" },
+  "08": { name: "高潮警報",       level: "keiho" },
+  "09": { name: "土砂災害警報",   level: "keiho" },
+  // 危険警報(2026年5月新設)
+  "43": { name: "大雨危険警報",     level: "kiken" },
+  "48": { name: "高潮危険警報",     level: "kiken" },
+  "49": { name: "土砂災害危険警報", level: "kiken" },
+  // 特別警報
+  "32": { name: "暴風雪特別警報",   level: "tokubetsu" },
+  "33": { name: "大雨特別警報",     level: "tokubetsu" },
+  "35": { name: "暴風特別警報",     level: "tokubetsu" },
+  "36": { name: "大雪特別警報",     level: "tokubetsu" },
+  "37": { name: "波浪特別警報",     level: "tokubetsu" },
+  "38": { name: "高潮特別警報",     level: "tokubetsu" },
+  "39": { name: "土砂災害特別警報", level: "tokubetsu" },
+};
+// 洪水警報API(l_flood)のcode → 対応するWARNING_KIND_MAPのキー
+const FLOOD_WARNING_CODE_MAP = { "1": "04", "2": "18" }; // 1:洪水警報 2:洪水注意報 ※実データのcode体系に応じて要確認
+
+const WARNING_LEVEL_PRIORITY = { chui: 1, keiho: 2, kiken: 3, tokubetsu: 4 };
+const WARNING_LEVEL_LABEL = { chui: "注意報", keiho: "警報", kiken: "危険警報", tokubetsu: "特別警報" };
+const WARNING_LEVEL_COLOR = {
+  tokubetsu: "#1A1A1A",
+  kiken:     "#AA00AA",
+  keiho:     "#FF2800",
+  chui:      "#FFEF00",
+};
+
+// regioncode(市区町村コード) → { level, kinds:[{code,name,level}] } のマージ処理。
+// 複数ソース(警報・注意報API/洪水API)から同じ地域に複数種別が来る前提でマージする。
+function mergeWarningKind(map, regioncode, kindCode) {
+  const kind = WARNING_KIND_MAP[kindCode];
+  if (!kind || !regioncode) return;
+  const existing = map[regioncode];
+  const kinds = existing ? [...existing.kinds] : [];
+  if (!kinds.some(k => k.code === kindCode)) {
+    kinds.push({ code: kindCode, name: kind.name, level: kind.level });
+  }
+  const topLevel = kinds.reduce(
+    (best, k) => (WARNING_LEVEL_PRIORITY[k.level] > WARNING_LEVEL_PRIORITY[best] ? k.level : best),
+    kinds[0].level
+  );
+  map[regioncode] = { level: topLevel, kinds };
+}
+
+// 全都道府県分の警報・注意報+洪水警報を取得し、regioncode(市区町村コード)単位の
+// マップにまとめる。ライブデータのため cachedFetchJSON(Cache API長期保存)は使わず、
+// no-storeの素のfetchにする(warning_areas.json等の静的境界データとは性質が違う)。
+async function fetchWarningLevelMap() {
+  const map = {};
+  const results = await Promise.allSettled(
+    WARNING_OFFICE_CODES.map(code =>
+      fetch(`https://www.jma.go.jp/bosai/warning/data/warning/${code}.json`, { cache: "no-store" })
+        .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
+    )
+  );
+  results.forEach((r, i) => {
+    if (r.status !== "fulfilled") {
+      console.warn(`[警報] ${WARNING_OFFICE_CODES[i]} の取得に失敗しました:`, r.reason);
+      return;
+    }
+    // r8形式: entry.areaTypes[].areas[].warnings[] を想定。実際のAPIレスポンス構造は
+    // 気象庁側の仕様変更があり得るため、取得できたらまずconsole.logで実構造を確認し、
+    // 必要ならここのパース部分だけを直すこと(warningMapへの反映ロジックは変えなくてよい)。
+    const areaTypes = r.value?.areaTypes ?? [];
+    for (const areaType of areaTypes) {
+      for (const area of (areaType.areas ?? [])) {
+        const regioncode = area.code;
+        for (const w of (area.warnings ?? [])) {
+          if (w.status === "解除") continue;
+          mergeWarningKind(map, regioncode, w.code);
+        }
+      }
+    }
+  });
+  console.log(`[警報] warningLevelMap件数: ${Object.keys(map).length}`);
+  return map;
+}
+
+// 境界データ(public/map/warning_areas.json)をそのままGeoJSONとして読み込む。
+// loadWarningAreas()(逆引き・五十音ピッカー用の軽量版)とは別に、地図のsetDataに
+// そのまま渡せるフル形式で1回だけ取得してキャッシュする。
+let warningAreasFullGeoJsonPromise = null;
+function loadWarningAreasFullGeoJson() {
+  if (!warningAreasFullGeoJsonPromise) {
+    warningAreasFullGeoJsonPromise = cachedFetchJSON(WARNING_AREAS_URL);
+  }
+  return warningAreasFullGeoJsonPromise;
+}
+
+// warningLevelMapを使って、warning-areasの各featureにwarnLevelプロパティを
+// 埋め込んだGeoJSONを作る(mapのpaintはこのプロパティをmatch式で参照する)。
+function buildWarningAreasGeoJson(baseGeoJson, warningLevelMap) {
+  if (!baseGeoJson) return { type: "FeatureCollection", features: [] };
+  return {
+    ...baseGeoJson,
+    features: baseGeoJson.features.map(f => {
+      const entry = warningLevelMap[f.properties.regioncode];
+      return {
+        ...f,
+        properties: { ...f.properties, warnLevel: entry ? entry.level : null },
+      };
+    }),
+  };
+}
+
+// warnLevelプロパティ(chui/keiho/kiken/tokubetsu/null)→色のmatch式。
+// 該当なしは透明にする(faultsやtsunami-areasと同じ考え方)。
+function buildWarningAreaColorExpr(opacity = 0.55) {
+  return [
+    "match", ["get", "warnLevel"],
+    "tokubetsu", withAlpha(WARNING_LEVEL_COLOR.tokubetsu, opacity),
+    "kiken",     withAlpha(WARNING_LEVEL_COLOR.kiken, opacity),
+    "keiho",     withAlpha(WARNING_LEVEL_COLOR.keiho, opacity),
+    "chui",      withAlpha(WARNING_LEVEL_COLOR.chui, opacity),
+    "rgba(0,0,0,0)",
+  ];
+}
+// #RRGGBB + 0-1の不透明度 → "rgba(r,g,b,a)" 文字列
+function withAlpha(hex, alpha) {
+  const n = parseInt(hex.replace("#", ""), 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return `rgba(${r},${g},${b},${alpha})`;
 }
 
 // 五十音(あかさたなはまやらわ)の行・段の定義。「あかさたなはまやらわ」の
@@ -18658,6 +18902,23 @@ export default function App() {
     }
   }
 
+  // 警報タブ: 気象警報・注意報。regioncode → {level, kinds} のマップ。
+  // 警報タブを開いている間だけ10分おきにポーリングする(EEW等の常時監視系と違い、
+  // 警報・注意報は数分単位で急変するものではないため)。
+  const [warningLevelMap, setWarningLevelMap] = useState({});
+  useEffect(() => {
+    if (activeNav !== "alert") return;
+    let cancelled = false;
+    const refresh = () => {
+      fetchWarningLevelMap()
+        .then((map) => { if (!cancelled) setWarningLevelMap(map); })
+        .catch((err) => console.error("警報・注意報データの取得に失敗しました:", err));
+    };
+    refresh();
+    const intervalId = setInterval(refresh, 10 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(intervalId); };
+  }, [activeNav]);
+
   // 断層(faults.geojson)の表示ON/OFF。設定タブ「地震」内のトグルで操作し、
   // localStorageに永続化する。ファイルサイズが大きいためデフォルトはOFF。
   const [faultsEnabled, setFaultsEnabledState] = useState(loadStoredFaultsEnabled);
@@ -20460,6 +20721,8 @@ export default function App() {
           typhoonGeojson={typhoonGeojson}
           onSelectTyphoonCenter={handleSelectTyphoonCenter}
           typhoonFlyToRequest={typhoonFlyToRequest}
+          warningVisible={activeNav === "alert"}
+          warningLevelMap={warningLevelMap}
           stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
           tideStationPoints={
