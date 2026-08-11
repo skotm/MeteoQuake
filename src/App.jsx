@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.0.1";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -19407,10 +19407,14 @@ export default function App() {
   const warningAreaByRegioncode = useMemo(() => {
     const map = {};
     if (!warningAreaNameIndex) return map;
-    for (const regioncode of Object.keys(warningLevelMap)) {
+    // 名称は全1,821件分マップしておく(地図タップは発表の有無を問わず全国が
+    // 対象になったため、発表なしのエリアでも名前だけは詳細カードで出したい)。
+    // centroid計算(polygonRoughCentroid)は依然として重いので、一覧・flyToで
+    // 実際に必要になる「発表中」の分だけに絞って計算する。
+    for (const regioncode of Object.keys(warningAreaNameIndex)) {
       const entry = warningAreaNameIndex[regioncode];
       if (!entry) continue;
-      const centroid = polygonRoughCentroid(entry.geometry);
+      const centroid = warningLevelMap[regioncode] ? polygonRoughCentroid(entry.geometry) : null;
       map[regioncode] = { name: entry.name, regionname: entry.regionname, lat: centroid?.lat ?? null, lon: centroid?.lon ?? null };
     }
     return map;
@@ -19425,12 +19429,12 @@ export default function App() {
   // 一覧の項目をタップした時のflyTo先。{lon, lat, nonce} | null
   // (nonceは同じエリアを連続でタップしても再度flyToが発火するようにするため)。
   const [warningAreaFlyToRequest, setWarningAreaFlyToRequest] = useState(null);
-  // 地図の塗り分けをタップした時。
+  // 地図の塗り分けをタップした時。地図タップは警報レイヤーの全ポリゴン
+  // (発表の有無を問わず日本全国)に対して判定される。以前は発表中でない
+  // エリアのタップを無視していたが、warningAreaByRegioncodeが名称だけは
+  // 全件分持つようになったため、発表なしのエリアもそのまま選択して
+  // 詳細カード側で「発表中の警報・注意報はありません」と出す。
   function handleSelectWarningArea(regioncode) {
-    // 地図タップは警報レイヤーの全ポリゴン(発表の有無を問わず日本全国)に対して
-    // 判定されるが、実際に発表中でないエリアは名称マスタ(発表中の分だけ遅延計算)
-    // にも載っておらず見せられる情報が無いため、タップを無視する。
-    if (!warningLevelMap[regioncode]) return;
     setSelectedWarningArea(regioncode);
   }
   // 一覧の項目をタップした時。選択に加えて、代表座標が分かっていればflyToする。
