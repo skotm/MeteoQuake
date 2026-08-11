@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.8.0";
+const APP_VERSION = "1.8.1";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -3651,9 +3651,17 @@ function MapCanvas({
     };
 
     if (!wdistVisible || !wdistMode || !wdistFrame) {
+      if (wdistMode) {
+        // ONにしたはずなのにレイヤーが出せていない場合の切り分け用。
+        console.info(
+          `天気分布予報レイヤー: 表示条件を満たしていないためスキップ`,
+          `wdistVisible=${wdistVisible} wdistMode=${wdistMode} wdistFrame=${wdistFrame ? "あり" : "なし"}`
+        );
+      }
       removeAllWdistLayers();
       return;
     }
+    console.info(`天気分布予報レイヤー: 追加/更新します`, JSON.stringify(wdistFrame));
 
     const keyOf = (mode, validtime) => `${mode}-${validtime}`;
     const knownValidtimeSet = new Set(wdistKnownValidtimes);
@@ -10275,6 +10283,17 @@ function BottomDock({
               if (sameIdx >= 0) nextIndex = sameIdx;
             }
           }
+
+          // 表示されない不具合の切り分け用。ここで件数・選択インデックスが
+          // 正常なら問題はタイル取得側、frames=0件やnextIndex=nullならここより
+          // 手前(取得・マージ)の問題だと判断できる。
+          console.info(
+            `天気分布予報[${wdistMode}]: 取得したコマ数=${frames.length}件`,
+            `(推計気象分布=${frames.filter(f => f.source === "suikei").length}件,`,
+            `天気分布予報=${frames.filter(f => f.source === "wdist").length}件)`,
+            `選択インデックス=${nextIndex}`,
+            nextIndex != null ? `選択コマ=${JSON.stringify(frames[nextIndex])}` : ""
+          );
 
           setWdistFrames(frames);
           setWdistFrameIndex(nextIndex);
