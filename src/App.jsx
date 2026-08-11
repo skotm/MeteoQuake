@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.0.3";
+const APP_VERSION = "2.0.4";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -11073,6 +11073,11 @@ function BottomDock({
   // 地図へ土砂/洪水キキクルのタイルを重ねる処理は、onAlertLayerChange経由で
   // 親(App)側に伝えて、そちらの地図レイヤーuseEffectで行う。
   const [alertMenuOpen, setAlertMenuOpen] = useState(false);
+  useEffect(() => {
+    // 気象タブのweatherMenuOpenと全く同じ考え方。警報タブに入るたびに開いた
+    // 状態にする(離れたら閉じる)。
+    setAlertMenuOpen(active === "alert");
+  }, [active]);
   const [alertLayerMode, setAlertLayerMode] = useState(null); // "doshaKikkuru" | "floodKikkuru" | null
   function handleToggleAlertMenuItem(id) {
     setAlertLayerMode(prev => (prev === id ? null : id));
