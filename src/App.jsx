@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.0.9";
+const APP_VERSION = "2.1.0";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1896,8 +1896,12 @@ function riverLevelInfo(stgOvlvl) {
 }
 
 // kawabouのgetDatePath()と同じ考え方(YYYYMMDD/HHmm/)。10分刻みに切り捨てる。
+// Date.getTime()は元々タイムゾーンに関係ない絶対時刻(UTC epoch ms)なので、
+// ローカルタイムゾーン分の補正(getTimezoneOffset())は不要かつ有害
+// (端末のタイムゾーンがJSTだと9時間分が二重に足されてしまうバグの元だった)。
+// 単純に+9時間してUTC getterでJSTの日時として読み出せば良い。
 function riverDatePath(date) {
-  const d = new Date(date.getTime() - date.getTimezoneOffset() * 60000 + 9 * 60 * 60000); // JST化
+  const d = new Date(date.getTime() + 9 * 60 * 60000); // JST化
   const yyyy = d.getUTCFullYear();
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   const dd = String(d.getUTCDate()).padStart(2, "0");
