@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.0.6";
+const APP_VERSION = "2.0.7";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -2557,8 +2557,10 @@ function MapCanvas({
             layout: { visibility: "none" },
             paint: {
               // 移植元ツールと同じく、境界線は警報レベルで色分けせず、
-              // 市区町村境界を示すだけの固定の薄い白線にする。
-              "line-color": "rgba(255,255,255,0.25)",
+              // 市区町村境界を示すだけの固定の線にする。ライトモードは警報の
+              // 塗り分け(黄〜赤)の上で白だと見えづらいので黒、ダークモードは
+              // 従来通り薄い白にする(下方のテーマ切り替えeffectでも同期する)。
+              "line-color": mode === "light" ? "rgba(0,0,0,0.35)" : "rgba(255,255,255,0.25)",
               "line-width": 0.6,
               "line-opacity": 1,
             },
@@ -3443,7 +3445,7 @@ function MapCanvas({
     if (!map || status !== "ready" || !warningAreaFlyToRequest) return;
     const { lon, lat } = warningAreaFlyToRequest;
     if (lon == null || lat == null) return;
-    map.flyTo({ center: [lon, lat], zoom: 7, duration: 800 });
+    map.flyTo({ center: [lon, lat], zoom: 8, duration: 800 });
   }, [status, warningAreaFlyToRequest]);
 
   // 緊急地震速報テスト配信「地図をタップして震源を指定」モード用。ONになったら
@@ -4093,7 +4095,16 @@ function MapCanvas({
     map.setPaintProperty("world-line", "line-color", themeTokens.mapWorldLine);
     map.setPaintProperty("prefectures-fill", "fill-color", themeTokens.mapPrefFill);
     map.setPaintProperty("prefectures-line", "line-color", themeTokens.mapPrefLine);
-  }, [themeTokens, status]);
+    // 警報タブの市区町村境界線 — ライトモードは警報の塗り分け(黄〜赤)の上で
+    // 白線だと見えづらいので黒にする。ダークモードは従来通り薄い白のまま。
+    if (map.getLayer("warning-areas-line-layer")) {
+      map.setPaintProperty(
+        "warning-areas-line-layer",
+        "line-color",
+        mode === "light" ? "rgba(0,0,0,0.35)" : "rgba(255,255,255,0.25)"
+      );
+    }
+  }, [themeTokens, mode, status]);
 
   // 断層・プレート境界の「枠内の色」を、設定で選んだ色に合わせて塗り替える。
   // 縁取り(halo)は基本的にライト/ダーク・設定を問わず固定色だが、
