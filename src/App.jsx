@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.0.5";
+const APP_VERSION = "2.0.6";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -13630,11 +13630,11 @@ function WdistLegend({ mode }) {
    レベル1(無色)は背景に馴染んで見えなくなるので、薄い枠線を付ける。
    ───────────────────────────────────────────────────── */
 const RISK_LEGEND_LEVELS = [
-  { level: 5, color: "#0c000c" }, // 災害切迫
-  { level: 4, color: "#aa00aa" }, // 極めて危険
-  { level: 3, color: "#ff2800" }, // 非常に危険
-  { level: 2, color: "#f2e700" }, // 警戒
   { level: 1, color: "rgba(255,255,255,0.08)", border: true }, // 注意(無色)
+  { level: 2, color: "#f2e700" }, // 警戒
+  { level: 3, color: "#ff2800" }, // 非常に危険
+  { level: 4, color: "#aa00aa" }, // 極めて危険
+  { level: 5, color: "#0c000c" }, // 災害切迫
 ];
 function RiskLegend({ mode }) {
   const { tokens } = useContext(ThemeContext);
