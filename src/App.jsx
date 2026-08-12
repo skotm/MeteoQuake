@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.0.8";
+const APP_VERSION = "2.0.9";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1970,7 +1970,8 @@ async function loadRiverStationSeries(obsFcd, obsCd) {
   return null;
 }
 
-
+/* ─────────────────────────────────────────────────────
+   MAPLIBREスタイル生成
    ローカルのworld.json(GeometryCollection)・prefectures.json(FeatureCollection)を
    そのままGeoJSONソースとしてMapLibreに渡し、ダークテーマで塗り分ける。
    外部タイルサーバー・外部スタイルには一切依存しない。
@@ -13969,6 +13970,8 @@ function RiverLegend() {
 }
 
 
+/* ─────────────────────────────────────────────────────
+   WARNING LEGEND — 警報タブの気象警報・注意報レイヤーの凡例。
    TsunamiGradeLegend/QuakeIntensityLegendと全く同じ見た目(横一列の隙間の
    詰まった色バー)で、実際に発表されている中の最も低いレベルから最も高い
    レベルまでをラダー表示する(例: 注意報と警報が両方出ていれば2段、
@@ -15288,7 +15291,8 @@ function RiverLevelSparkline({ points, thresholds }) {
   );
 }
 
- — 気象タブ「地点(ピン)」モードの中身。フローティング
+/* ─────────────────────────────────────────────────────
+   WEATHER LOCATION PANEL — 気象タブ「地点(ピン)」モードの中身。フローティング
    の小さなカードではなく、既存の「現在開発中です」プレースホルダーが出ていた
    パネル枠(設定メニュー・地図レイヤー一覧と同じ場所)に、現在地(GPS)または
    登録地点(1件)の天気予報を表示する。
