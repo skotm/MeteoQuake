@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.0.4";
+const APP_VERSION = "2.0.5";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1753,6 +1753,123 @@ function registerWdistProtocol(maplibregl) {
 }
 
 /* ─────────────────────────────────────────────────────
+   キキクル(危険度分布) — 土砂キキクル(land)・浸水キキクル(inund)。
+   雨雲レーダー・降水量・天気分布予報と全く同じ考え方(独自プロトコルで
+   奇数ズームを1段階粗い偶数ズームタイルの象限切り出しで代用)。JMAのPNGは
+   既に危険度に応じて色分け済みなので、天気分布予報と同じく配色変換
+   (remapImageDataColors)は行わない。
+   ───────────────────────────────────────────────────── */
+const RISK_DATA_BASE = "https://www.jma.go.jp/bosai/jmatile/data/risk";
+const RISK_MODE_CONFIG = {
+  doshaKikkuru: { element: "land",  label: "土砂キキクル", targetTimesUrl: `${RISK_DATA_BASE}/targetTimes.json` },
+  inundKikkuru: { element: "inund", label: "浸水キキクル", targetTimesUrl: `${RISK_DATA_BASE}/targetTimes_N1.json` },
+};
+function riskTileUrl(mode, basetime, validtime, z, x, y) {
+  const element = RISK_MODE_CONFIG[mode]?.element || "land";
+  return `${RISK_DATA_BASE}/${basetime}/none/${validtime}/surf/${element}/${z}/${x}/${y}.png`;
+}
+function riskProtocolUrl(mode, basetime, validtime) {
+  return `jmarisk://${mode}/${basetime}/${validtime}/{z}/{x}/{y}`;
+}
+
+// modeの時刻一覧を取得する。[{ basetime, validtime }, ...] を時系列昇順で返す。
+// 浸水(inund)はtargetTimes_N1.jsonが本来のエンドポイントだが、無ければ
+// targetTimes.json(土砂と同じ)にフォールバックする(旧ツールと同じ考え方)。
+async function loadRiskFrames(mode) {
+  const config = RISK_MODE_CONFIG[mode] || RISK_MODE_CONFIG.doshaKikkuru;
+  const label = config.label;
+  let url = config.targetTimesUrl;
+  let raw;
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    raw = await res.json();
+  } catch (err) {
+    if (url !== RISK_MODE_CONFIG.doshaKikkuru.targetTimesUrl) {
+      console.warn(`${label}: 時刻一覧の取得に失敗、targetTimes.jsonにフォールバックします url=${url}`, err);
+      url = RISK_MODE_CONFIG.doshaKikkuru.targetTimesUrl;
+      try {
+        const res = await fetch(url, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        raw = await res.json();
+      } catch (err2) {
+        console.warn(`${label}: フォールバック先の時刻一覧取得にも失敗 url=${url}`, err2);
+        throw err2;
+      }
+    } else {
+      console.warn(`${label}: 時刻一覧の取得に失敗 url=${url}`, err);
+      throw err;
+    }
+  }
+  if (!Array.isArray(raw) || raw.length === 0) {
+    console.warn(`${label}: 時刻一覧が空、または想定外の形式です url=${url}`, raw);
+    return [];
+  }
+  return raw
+    .filter(t => t && t.basetime && t.validtime)
+    .sort((a, b) => String(a.validtime).localeCompare(String(b.validtime)))
+    .map(t => ({ basetime: t.basetime, validtime: t.validtime }));
+}
+
+function formatRiskFrameLabel(frame) {
+  if (!frame) return "";
+  const time = parseNowcastValidTime(frame.validtime);
+  if (!time) return "";
+  return `${time} 実況`;
+}
+
+// 404だったタイルURLの記録(キキクル用)。
+const riskFailedTileUrls = new Set();
+
+let riskProtocolRegistered = false;
+function registerRiskProtocol(maplibregl) {
+  if (riskProtocolRegistered) return;
+  riskProtocolRegistered = true;
+  maplibregl.addProtocol("jmarisk", async (params, abortController) => {
+    const m = params.url.match(/^jmarisk:\/\/([a-zA-Z]+)\/(\d+)\/(\d+)\/(-?\d+)\/(-?\d+)\/(-?\d+)$/);
+    if (!m) return { data: null };
+    const [, mode, basetime, validtime, zStr, xStr, yStr] = m;
+    let z = Number(zStr), x = Number(xStr), y = Number(yStr);
+
+    // 奇数ズームは1段階粗い偶数ズームのタイルを取得し、該当する象限だけを
+    // 切り出して代用する(雨雲レーダー・降水量・天気分布予報と同じ方式)。
+    let cropQuadrant = null;
+    if (z % 2 !== 0) {
+      cropQuadrant = { qx: x % 2, qy: y % 2 };
+      z = z - 1;
+      x = Math.floor(x / 2);
+      y = Math.floor(y / 2);
+    }
+    const url = riskTileUrl(mode, basetime, validtime, z, x, y);
+    if (riskFailedTileUrls.has(url)) return { data: null };
+
+    let res;
+    try {
+      res = await fetch(url, { signal: abortController.signal });
+    } catch (err) {
+      if (err.name === "AbortError") throw err;
+      return { data: null };
+    }
+    if (!res.ok) {
+      if (res.status === 404) riskFailedTileUrls.add(url);
+      return { data: null };
+    }
+    const blob = await res.blob();
+
+    if (!cropQuadrant) return { data: await blob.arrayBuffer() };
+
+    const bitmap = await createImageBitmap(blob);
+    const canvas = new OffscreenCanvas(256, 256);
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(bitmap, cropQuadrant.qx * 128, cropQuadrant.qy * 128, 128, 128, 0, 0, 256, 256);
+    const outBlob = await canvas.convertToBlob({ type: "image/png" });
+    return { data: await outBlob.arrayBuffer() };
+  });
+}
+
+
+/* ─────────────────────────────────────────────────────
    MAPLIBREスタイル生成
    ローカルのworld.json(GeometryCollection)・prefectures.json(FeatureCollection)を
    そのままGeoJSONソースとしてMapLibreに渡し、ダークテーマで塗り分ける。
@@ -2012,6 +2129,10 @@ function MapCanvas({
   selectedWarningArea = null,   // 警報タブ: タップ/一覧選択中のregioncode | null。選択中のエリアを地図上で強調する
   onSelectWarningArea,          // 警報タブ: 地図の塗り分けをタップした時に呼ぶコールバック(regioncodeを渡す)
   warningAreaFlyToRequest = null, // 警報タブ: {lon, lat, nonce} | null。一覧の項目をタップした時のflyTo先
+  riskVisible = false,          // 警報タブ: キキクル(土砂/浸水)レイヤーを表示するか
+  riskMode = null,              // "doshaKikkuru" | "inundKikkuru" | null
+  riskFrame = null,             // { basetime, validtime } | null。表示中の時刻コマ
+  riskKnownValidtimes = [],     // 現在のモードの全validtime一覧。この一覧に無くなったキャッシュ済みレイヤーの掃除に使う
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -2106,6 +2227,7 @@ function MapCanvas({
         registerNowcastProtocol(maplibregl);
         registerPrecipProtocol(maplibregl);
         registerWdistProtocol(maplibregl);
+        registerRiskProtocol(maplibregl);
 
         let map;
         try {
@@ -2438,6 +2560,7 @@ function MapCanvas({
               // 市区町村境界を示すだけの固定の薄い白線にする。
               "line-color": "rgba(255,255,255,0.25)",
               "line-width": 0.6,
+              "line-opacity": 1,
             },
           }, "station-points-symbol");
 
@@ -3260,6 +3383,12 @@ function MapCanvas({
 
     map.setLayoutProperty("warning-areas-fill-layer", "visibility", warningVisible ? "visible" : "none");
     map.setLayoutProperty("warning-areas-line-layer", "visibility", warningVisible ? "visible" : "none");
+    // キキクル表示中は警報の塗り分けを見た目上だけ消す(visibilityではなく
+    // opacityを0にする)。visibility:noneにするとMapLibreのクリック判定
+    // (queryRenderedFeatures)も効かなくなり、キキクル表示中に市区町村を
+    // タップできなくなってしまうため。
+    map.setPaintProperty("warning-areas-fill-layer", "fill-opacity", riskVisible ? 0 : 0.55);
+    map.setPaintProperty("warning-areas-line-layer", "line-opacity", riskVisible ? 0 : 1);
     if (!warningVisible) return;
 
     if (!warningAreasLoadedRef.current) {
@@ -3288,7 +3417,7 @@ function MapCanvas({
       const source = map.getSource("warning-areas");
       if (source) source.setData(merged);
     }
-  }, [warningVisible, warningLevelMap, status]);
+  }, [warningVisible, warningLevelMap, riskVisible, status]);
 
   // 警報タブ: タップ/一覧選択中のエリアを強調するレイヤーの表示切り替え。
   // 選択が無い間は("__none__"は実在しないregioncodeなので)何も塗られない状態にしておく。
@@ -3656,6 +3785,99 @@ function MapCanvas({
     // 返さない(雨雲レーダーと同じ考え方)。OFF時の後片付けは上の早期returnで、
     // マウント解除時の後片付けは地図本体の破棄(map.remove())で行われる。
   }, [precipVisible, precipMode, precipFrame?.basetime, precipFrame?.validtime, nowcastColorSchemeId, status, precipKnownValidtimesKey]);
+
+  // 警報タブ: キキクル(土砂/浸水)。雨雲レーダー・降水量と全く同じキャッシュ方式
+  // (一度読み込んだコマのレイヤーは残しておき、表示中のコマだけopacityを
+  // 上げる)。配色は固定(JMAのPNGが既に危険度で色分け済み)なので、
+  // nowcastColorSchemeIdには依存しない。
+  const riskKnownValidtimesKey = riskKnownValidtimes.join(",");
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+
+    const removeAllRiskLayers = () => {
+      const style = map.getStyle();
+      if (!style) return;
+      (style.layers || []).forEach(l => {
+        if (l.id.startsWith("risk-layer-")) map.removeLayer(l.id);
+      });
+      Object.keys(style.sources || {}).forEach(id => {
+        if (id.startsWith("risk-src-")) map.removeSource(id);
+      });
+    };
+
+    if (!riskVisible || !riskMode || !riskFrame) {
+      removeAllRiskLayers();
+      return;
+    }
+
+    // レイヤーid/sourceidの名前空間にmode(土砂/浸水)を含めることで、
+    // 切り替えた時は「別物」として扱われ、古いキャッシュとは混ざらない。
+    const keyOf = (mode, validtime) => `${mode}-${validtime}`;
+    const knownValidtimeSet = new Set(riskKnownValidtimes);
+
+    // 掃除するのは、(1)モードが変わって別物になったもの、
+    // (2)一覧の再取得でもう存在しなくなったコマ、の2種類だけ。
+    const style = map.getStyle();
+    if (style) {
+      (style.layers || []).forEach(l => {
+        if (!l.id.startsWith("risk-layer-")) return;
+        const [mode, validtime] = l.id.slice("risk-layer-".length).split("-");
+        const stale = mode !== riskMode || !knownValidtimeSet.has(validtime);
+        if (stale) map.removeLayer(l.id);
+      });
+      Object.keys(style.sources || {}).forEach(srcId => {
+        if (!srcId.startsWith("risk-src-")) return;
+        const [mode, validtime] = srcId.slice("risk-src-".length).split("-");
+        const stale = mode !== riskMode || !knownValidtimeSet.has(validtime);
+        if (stale) map.removeSource(srcId);
+      });
+    }
+
+    // 選択中エリアの強調リング(warning-areas-highlight-layer)より下、
+    // 警報の塗り分け(fill/line。キキクル表示中はopacity:0)より上に挿入する。
+    const beforeId = map.getLayer("warning-areas-highlight-layer") ? "warning-areas-highlight-layer" : undefined;
+
+    // 既にキャッシュ済みのレイヤーは、現在のコマだけ不透明にし、それ以外は
+    // 透明に戻す(既存レイヤーのopacityを直接切り替えるだけなので瞬時)。
+    const currentKey = keyOf(riskMode, riskFrame.validtime);
+    if (style) {
+      (style.layers || []).forEach(l => {
+        if (!l.id.startsWith("risk-layer-")) return;
+        const key = l.id.slice("risk-layer-".length);
+        if (!map.getLayer(l.id)) return;
+        map.setPaintProperty(l.id, "raster-opacity", key === currentKey ? 0.8 : 0);
+      });
+    }
+
+    // 現在のコマがまだキャッシュに無ければ、新たにsource/layerを追加する。
+    const srcId = `risk-src-${currentKey}`;
+    const layerId = `risk-layer-${currentKey}`;
+    if (!map.getSource(srcId)) {
+      map.addSource(srcId, {
+        type: "raster",
+        tiles: [riskProtocolUrl(riskMode, riskFrame.basetime, riskFrame.validtime)],
+        tileSize: 256,
+        minzoom: 4, // 土砂・浸水キキクルも雨雲レーダーと同じく偶数ズーム(2,4,6,8,10)にしか
+                    // 実データが無いため、確実に存在する4にする
+        maxzoom: 10,
+        bounds: NOWCAST_BOUNDS,
+        attribution: "<a href='https://www.jma.go.jp/bosai/risk/' target='_blank'>気象庁 危険度分布（キキクル）</a>",
+      });
+    }
+    if (!map.getLayer(layerId)) {
+      map.addLayer({
+        id: layerId,
+        type: "raster",
+        source: srcId,
+        paint: { "raster-opacity": 0.8 },
+      }, beforeId);
+    }
+    // このeffectは既存レイヤーのopacity書き換え・不足分の追加だけで完結しており、
+    // コマが変わるたびに全部作り直す必要は無いので、ここではクリーンアップ関数を
+    // 返さない(雨雲レーダー・降水量と同じ考え方)。OFF時の後片付けは上の早期returnで、
+    // マウント解除時の後片付けは地図本体の破棄(map.remove())で行われる。
+  }, [riskVisible, riskMode, riskFrame?.basetime, riskFrame?.validtime, status, riskKnownValidtimesKey]);
 
   // 天気分布予報(天気分布・気温分布)。雨雲レーダー・降水量とは排他。
   // 配色スキームには依存しない(色は固定)が、モード(天気/気温)によって
@@ -10253,7 +10475,7 @@ function BottomDock({
   selectedWarningArea, // 警報タブ: タップ/一覧選択中のregioncode | null
   onSelectWarningAreaFromList, // 警報タブ: 一覧の項目をタップした時に呼ぶ(選択+flyTo)
   onBackFromWarningArea, // 警報タブ: 詳細カードの「戻る」ボタンを押した時に呼ぶ
-  onAlertLayerChange, // 警報タブ: くの字メニューでキキクル(土砂/洪水)を切り替えた時にApp側(地図のキキクルレイヤー表示用)に伝える。"doshaKikkuru" | "floodKikkuru" | null
+  onAlertLayerChange, // 警報タブ: くの字メニューでキキクル(土砂/浸水)を切り替えた時にApp側(地図のキキクルレイヤー表示用)に伝える。"doshaKikkuru" | "inundKikkuru" | null
 }) {
   const { tokens, mode } = useContext(ThemeContext);
   const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
@@ -11068,27 +11290,89 @@ function BottomDock({
     weatherDistribution: wdistMode === "weather",
     temperatureDistribution: wdistMode === "temperature",
   };
-  // 警報タブの「くの字」メニュー(キキクル)版。考え方は気象メニューと同じで、
-  // ここではUIの開閉・選択状態(ラジオボタン的に1つだけON)だけを持つ。実際に
-  // 地図へ土砂/洪水キキクルのタイルを重ねる処理は、onAlertLayerChange経由で
-  // 親(App)側に伝えて、そちらの地図レイヤーuseEffectで行う。
+  // 警報タブの「くの字」メニュー(キキクル)版。開閉・選択状態(ラジオボタン的に
+  // 1つだけON)に加えて、選択中モードの時刻一覧(riskFrames)・現在のコマ
+  // (riskFrameIndex)も持つ。考え方は1/3/24時間降水量(precipMode)と全く同じで、
+  // 10分おきに一覧を再取得して追従させる(JMAのキキクルは10分更新)。
   const [alertMenuOpen, setAlertMenuOpen] = useState(false);
   useEffect(() => {
     // 気象タブのweatherMenuOpenと全く同じ考え方。警報タブに入るたびに開いた
     // 状態にする(離れたら閉じる)。
     setAlertMenuOpen(active === "alert");
   }, [active]);
-  const [alertLayerMode, setAlertLayerMode] = useState(null); // "doshaKikkuru" | "floodKikkuru" | null
+  const [alertLayerMode, setAlertLayerMode] = useState(null); // "doshaKikkuru" | "inundKikkuru" | null
+  const [riskFrames, setRiskFrames] = useState(null); // null=未読込
+  const [riskFrameIndex, setRiskFrameIndex] = useState(null);
+  const [riskLoadError, setRiskLoadError] = useState(false);
+  const riskFramesRef = useRef(null);
+  const riskFrameIndexRef = useRef(null);
+  useEffect(() => { riskFramesRef.current = riskFrames; }, [riskFrames]);
+  useEffect(() => { riskFrameIndexRef.current = riskFrameIndex; }, [riskFrameIndex]);
+
   function handleToggleAlertMenuItem(id) {
     setAlertLayerMode(prev => (prev === id ? null : id));
   }
   const alertMenuItemStates = {
     doshaKikkuru: alertLayerMode === "doshaKikkuru",
-    floodKikkuru: alertLayerMode === "floodKikkuru",
+    inundKikkuru: alertLayerMode === "inundKikkuru",
   };
+
   useEffect(() => {
-    onAlertLayerChange?.(alertLayerMode);
-  }, [alertLayerMode, onAlertLayerChange]);
+    if (!alertLayerMode) {
+      setRiskFrames(null);
+      setRiskFrameIndex(null);
+      setRiskLoadError(false);
+      return;
+    }
+    let cancelled = false;
+    const fetchAndApply = () => {
+      loadRiskFrames(alertLayerMode)
+        .then((frames) => {
+          if (cancelled) return;
+          setRiskLoadError(false);
+          if (frames.length === 0) { setRiskFrames(frames); setRiskFrameIndex(null); return; }
+          // 初期選択・「追従」の基準は常に最新フレーム(旧ツールと同じ)。
+          let nextIndex = frames.length - 1;
+
+          const prevFrames = riskFramesRef.current;
+          const prevIndex = riskFrameIndexRef.current;
+          if (prevFrames && prevIndex != null) {
+            const wasFollowingLatest = prevIndex === prevFrames.length - 1;
+            // 過去のコマを手動で選んで見ていた場合は、更新後の一覧に同じ
+            // validtimeのコマがあればそこへ選択を維持する。無くなっていれば
+            // 最新へ戻す。
+            if (!wasFollowingLatest) {
+              const prevFrame = prevFrames[prevIndex];
+              const sameIdx = prevFrame ? frames.findIndex(f => f.validtime === prevFrame.validtime) : -1;
+              if (sameIdx >= 0) nextIndex = sameIdx;
+            }
+          }
+
+          setRiskFrames(frames);
+          setRiskFrameIndex(nextIndex);
+        })
+        .catch((err) => {
+          console.error(`キキクル[${alertLayerMode}]の時刻一覧の取得に失敗:`, err);
+          if (!cancelled) setRiskLoadError(true);
+        });
+    };
+    fetchAndApply();
+    const intervalId = setInterval(fetchAndApply, 10 * 60 * 1000); // 10分おきに追従(JMAの更新周期と同じ)
+    return () => { cancelled = true; clearInterval(intervalId); };
+  }, [alertLayerMode]);
+
+  const currentRiskFrame =
+    riskFrames && riskFrameIndex != null ? riskFrames[riskFrameIndex] : null;
+
+  useEffect(() => {
+    onAlertLayerChange?.(
+      alertLayerMode && currentRiskFrame
+        ? { mode: alertLayerMode, frame: currentRiskFrame, knownValidtimes: riskFrames.map(f => f.validtime) }
+        : null
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alertLayerMode, currentRiskFrame?.basetime, currentRiskFrame?.validtime, riskFrames, onAlertLayerChange]);
+
   // 台風タブ版の「戻る」— 詳細カードから一覧表示に戻す。フローティング自体は
   // 閉じない(閉じた時の選択解除は別のuseEffectで扱う)。
   function handleBackFromTyphoon() {
@@ -12121,9 +12405,10 @@ function BottomDock({
           設定タブと全く同じ「戻るボタンの枠」(フローティング外部、right:16・
           bottom:backButtonBottom。横画面ではパネル右上の外側)に戻るボタンを浮かべる。
           選択していない(一覧表示中の)間は、気象タブと全く同じ考え方で、
-          同じ枠にキキクル(土砂/洪水)を切り替えるくの字メニューを浮かべる。 */}
+          同じ枠にキキクル(土砂/浸水)を切り替えるくの字メニューを浮かべる。 */}
       {!eewDetailOpen && active === "alert" && (
         isWide && wideAnchorRect ? createPortal(
+          <>
           <div style={{
             position: "fixed",
             left: wideAnchorRect.right + 12,
@@ -12144,16 +12429,52 @@ function BottomDock({
                 onToggleItem={handleToggleAlertMenuItem}
               />
             )}
-          </div>,
+          </div>
+          {/* キキクルの時刻スライダー(横画面) — 気象タブの各時刻スライダーと同じく、
+              展開メニューが閉じている間だけ、パネルの右側・画面下端に沿って
+              横いっぱいに浮かべる。1/3/24時間降水量と全く同じPrecipTimeSliderを
+              流用し、ラベルの出し方(formatLabel)だけキキクル用に差し替える。 */}
+          {alertLayerMode && riskFrames && riskFrameIndex != null && !alertMenuOpen && (
+            <div style={{
+              position: "fixed",
+              left: wideAnchorRect.right + 12,
+              right: 16,
+              bottom: 16,
+              zIndex: 50,
+            }}>
+              <PrecipTimeSlider
+                frames={riskFrames}
+                frameIndex={riskFrameIndex}
+                onChangeFrameIndex={setRiskFrameIndex}
+                formatLabel={formatRiskFrameLabel}
+              />
+            </div>
+          )}
+          </>,
           document.body
         ) : (
         <div style={{
           position: "absolute",
+          left: 16,
           right: 16,
           bottom: backButtonBottom,
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "flex-end",
+          gap: 8,
           transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
+          {/* キキクルの時刻スライダー — 展開メニューが閉じている間だけ、
+              ボタンの左側いっぱいに表示する(気象タブの各時刻スライダーと同じ考え方)。 */}
+          {alertLayerMode && riskFrames && riskFrameIndex != null && !alertMenuOpen && (
+            <PrecipTimeSlider
+              frames={riskFrames}
+              frameIndex={riskFrameIndex}
+              onChangeFrameIndex={setRiskFrameIndex}
+              formatLabel={formatRiskFrameLabel}
+            />
+          )}
           {selectedWarningArea != null ? (
             <BackToListButton
               onClick={onBackFromWarningArea}
@@ -13303,6 +13624,68 @@ function WdistLegend({ mode }) {
 }
 
 /* ─────────────────────────────────────────────────────
+   RISK LEGEND — 警報タブのキキクル(土砂/浸水)レイヤーの凡例。PrecipLegendと
+   全く同じ見た目・仕組み(Glassカード+隙間の詰まった横一列の色バー)。
+   区分値ではなく危険度レベル(5〜1)なので、目盛りは1〜5の数字にする。
+   レベル1(無色)は背景に馴染んで見えなくなるので、薄い枠線を付ける。
+   ───────────────────────────────────────────────────── */
+const RISK_LEGEND_LEVELS = [
+  { level: 5, color: "#0c000c" }, // 災害切迫
+  { level: 4, color: "#aa00aa" }, // 極めて危険
+  { level: 3, color: "#ff2800" }, // 非常に危険
+  { level: 2, color: "#f2e700" }, // 警戒
+  { level: 1, color: "rgba(255,255,255,0.08)", border: true }, // 注意(無色)
+];
+function RiskLegend({ mode }) {
+  const { tokens } = useContext(ThemeContext);
+  const title = RISK_MODE_CONFIG[mode]?.label || "キキクル";
+  const SWATCH_WIDTH = 22; // PrecipLegendと同じ幅
+
+  return (
+    <Glass
+      radius={12}
+      style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", padding: "6px 8px 0" }}>
+        <div style={{
+          fontSize: 10, lineHeight: "11px", fontWeight: 700,
+          color: `rgba(${tokens.ink},0.6)`, marginBottom: 3, whiteSpace: "nowrap",
+        }}>
+          {title}
+        </div>
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
+          {RISK_LEGEND_LEVELS.map((item, i) => (
+            <div
+              key={item.level}
+              style={{
+                width: SWATCH_WIDTH, height: 9, boxSizing: "border-box",
+                borderRadius: i === 0 ? "2px 0 0 2px" : i === RISK_LEGEND_LEVELS.length - 1 ? "0 2px 2px 0" : 0,
+                background: item.color,
+                border: item.border ? `1px solid rgba(${tokens.ink},0.3)` : "none",
+                flexShrink: 0,
+              }}
+            />
+          ))}
+        </div>
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", paddingBottom: 5 }}>
+          {RISK_LEGEND_LEVELS.map((item) => (
+            <div
+              key={item.level}
+              style={{
+                width: SWATCH_WIDTH, flexShrink: 0, textAlign: "left", paddingLeft: 1,
+                fontSize: 9, lineHeight: "9px", fontWeight: 600, color: `rgba(${tokens.ink},0.55)`,
+              }}
+            >
+              {item.level}
+            </div>
+          ))}
+        </div>
+      </div>
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    WARNING LEGEND — 警報タブの気象警報・注意報レイヤーの凡例。
    TsunamiGradeLegend/QuakeIntensityLegendと全く同じ見た目(横一列の隙間の
    詰まった色バー)で、実際に発表されている中の最も低いレベルから最も高い
@@ -13882,12 +14265,12 @@ function WeatherMenuFloating({
    ALERT MENU FLOATING — 警報タブの一覧表示中に使う、キキクル(危険度分布)を
    切り替えるくの字メニュー。WeatherMenuFloatingと全く同じ見た目・アニメーション
    (ボタン自体が丸→帯へ連続的に広がる、閉:上向き⌃/開:下向き⌄)を踏襲しつつ、
-   項目がページ送り不要な2つ(土砂キキクル・洪水キキクル)だけなのでページ送り行は
+   項目がページ送り不要な2つ(土砂キキクル・浸水キキクル)だけなのでページ送り行は
    持たない、簡略版。
    ───────────────────────────────────────────────────── */
 const ALERT_MENU_ITEMS = [
   { id: "doshaKikkuru", label: "土砂キキクル" },
-  { id: "floodKikkuru", label: "洪水キキクル" },
+  { id: "inundKikkuru", label: "浸水キキクル" },
 ];
 
 function AlertMenuFloating({ open, onToggle, growUp = true, itemStates = {}, onToggleItem }) {
@@ -20350,12 +20733,17 @@ export default function App() {
   const handleTyphoonChange = useCallback((geojson) => {
     setTyphoonGeojson(geojson);
   }, []);
-  // 警報タブのくの字メニューで選択中のキキクル。BottomDock側から伝わってくる。
-  // "doshaKikkuru" | "floodKikkuru" | null。現時点ではUIの選択状態を保持するのみで、
-  // 実際に地図へタイルを重ねる部分(MapCanvas側のレイヤー追加)はまだ未実装。
+  // 警報タブのくの字メニューで選択中のキキクル(土砂/浸水)。BottomDock側から
+  // {mode, frame, knownValidtimes} | null で伝わってくる(1/3/24時間降水量と
+  // 全く同じ形)。MapCanvas側のriskVisible/riskMode/riskFrame/riskKnownValidtimes
+  // に振り分ける。
   const [alertLayerMode, setAlertLayerMode] = useState(null);
-  const handleAlertLayerChange = useCallback((mode) => {
-    setAlertLayerMode(mode);
+  const [alertLayerFrame, setAlertLayerFrame] = useState(null);
+  const [alertLayerKnownValidtimes, setAlertLayerKnownValidtimes] = useState([]);
+  const handleAlertLayerChange = useCallback((payload) => {
+    setAlertLayerMode(payload ? payload.mode : null);
+    setAlertLayerFrame(payload ? payload.frame : null);
+    setAlertLayerKnownValidtimes(payload ? payload.knownValidtimes : []);
   }, []);
   // 台風の中心点/予報円をタップした時のproperties。BottomDock側のTyphoonDetailCardで
   // 表示する(時刻チップ=予報円タップ、台風一覧タップの両方でここに入る)。
@@ -21433,6 +21821,10 @@ export default function App() {
           selectedWarningArea={selectedWarningArea}
           onSelectWarningArea={handleSelectWarningArea}
           warningAreaFlyToRequest={warningAreaFlyToRequest}
+          riskVisible={activeNav === "alert" && !!alertLayerFrame}
+          riskMode={alertLayerMode}
+          riskFrame={alertLayerFrame}
+          riskKnownValidtimes={alertLayerKnownValidtimes}
           stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
           tideStationPoints={
@@ -21662,8 +22054,10 @@ export default function App() {
         )}
 
         {/* 警報凡例 — 警報タブで警報・注意報レイヤーを地図に塗っている間だけ、
-            画面右上に浮かぶ(震度凡例・津波凡例と対の構成)。 */}
-        {activeNav === "alert" && Object.keys(warningLevelMap).length > 0 && (
+            画面右上に浮かぶ(震度凡例・津波凡例と対の構成)。キキクル表示中は
+            警報の塗り分け自体を非表示にしているので、この凡例も出さない
+            (代わりにRiskLegendを出す)。 */}
+        {activeNav === "alert" && !alertLayerMode && Object.keys(warningLevelMap).length > 0 && (
           <div style={{
             position: "absolute",
             top: "calc(16px + env(safe-area-inset-top))",
@@ -21671,6 +22065,19 @@ export default function App() {
             zIndex: 30,
           }}>
             <WarningLegend warningLevelMap={warningLevelMap}/>
+          </div>
+        )}
+
+        {/* キキクル(土砂/浸水)凡例 — 警報タブでキキクルレイヤーを表示している間、
+            画面右上に浮かぶ(警報凡例と排他)。 */}
+        {activeNav === "alert" && alertLayerMode && alertLayerFrame && (
+          <div style={{
+            position: "absolute",
+            top: "calc(16px + env(safe-area-inset-top))",
+            right: 16,
+            zIndex: 30,
+          }}>
+            <RiskLegend mode={alertLayerMode}/>
           </div>
         )}
 
