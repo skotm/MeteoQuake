@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.0.7";
+const APP_VERSION = "2.0.8";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1870,7 +1870,107 @@ function registerRiskProtocol(maplibregl) {
 
 
 /* ─────────────────────────────────────────────────────
-   MAPLIBREスタイル生成
+   河川水位観測所(国管理・主要河川、stg)。国交省「川の防災情報」
+   (kawabou)アプリ自身が使っている静的生成JSONを直接叩く(プロキシ不要、
+   キキクルと同じ「事前生成された静的ファイルを定期ポーリング」方式と推測)。
+   実機で未確認のURLパターンは、失敗時にconsole.warnで分かるようにしておく。
+   ───────────────────────────────────────────────────── */
+const RIVER_DATA_BASE = "https://www.river.go.jp/kawabou/file/gjson";
+
+// 危険度レベル(stg_ovlvl、10刻み想定)→ ラベル・色。他の危険度分布(キキクル・
+// 警報)と統一感を持たせつつ、6段階に対応させる。
+const RIVER_LEVEL_STEPS = [
+  { level: 90, label: "氾濫発生",   color: "#140014" },
+  { level: 80, label: "氾濫危険",   color: "#aa00aa" },
+  { level: 40, label: "避難判断",   color: "#ff2800" },
+  { level: 20, label: "氾濫注意",   color: "#f2e700" },
+  { level: 10, label: "水防団待機", color: "#35a86b" },
+  { level: 0,  label: "通常",       color: "#66ccff" },
+];
+function riverLevelInfo(stgOvlvl) {
+  if (stgOvlvl == null) return { label: "欠測", color: "#c8c8cb" };
+  for (const step of RIVER_LEVEL_STEPS) {
+    if (stgOvlvl >= step.level) return step;
+  }
+  return RIVER_LEVEL_STEPS[RIVER_LEVEL_STEPS.length - 1];
+}
+
+// kawabouのgetDatePath()と同じ考え方(YYYYMMDD/HHmm/)。10分刻みに切り捨てる。
+function riverDatePath(date) {
+  const d = new Date(date.getTime() - date.getTimezoneOffset() * 60000 + 9 * 60 * 60000); // JST化
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const roundedMin = Math.floor(d.getUTCMinutes() / 10) * 10;
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mi = String(roundedMin).padStart(2, "0");
+  return { ymd: `${yyyy}${mm}${dd}`, hm: `${hh}${mi}` };
+}
+
+// 全国・基準超過(水防団待機水位以上)のみの概観一覧。生成が数分遅れることが
+// あるため、現在時刻から10分刻みで最大6コマ(1時間分)遡って最初に成功した
+// ものを使う。
+async function loadRiverOverview() {
+  const now = new Date();
+  for (let back = 0; back < 6; back++) {
+    const t = new Date(now.getTime() - back * 10 * 60000);
+    const { ymd, hm } = riverDatePath(t);
+    const url = `${RIVER_DATA_BASE}/overobs/stg/${ymd}/${hm}/over-obs-create.json`;
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) continue;
+      const geojson = await res.json();
+      if (geojson && Array.isArray(geojson.features)) return geojson;
+    } catch (err) {
+      if (back === 0) console.warn("河川水位(概観)の取得に失敗:", url, err);
+    }
+  }
+  console.warn("河川水位(概観)の取得に失敗: 直近1時間分すべてダメでした");
+  return { type: "FeatureCollection", features: [] };
+}
+
+// 市区町村単位・全件(通常水位の地点も含む)。twnCdは警報タブで既に持っている
+// 市区町村コードをそのまま使う想定(桁数が違う場合は要調整、実機未確認)。
+async function loadRiverStationsByTown(twnCd) {
+  const now = new Date();
+  for (let back = 0; back < 6; back++) {
+    const t = new Date(now.getTime() - back * 10 * 60000);
+    const { ymd, hm } = riverDatePath(t);
+    const url = `${RIVER_DATA_BASE}/obs/${ymd}/${hm}/stg/${twnCd}.json`;
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) continue;
+      const geojson = await res.json();
+      if (geojson && Array.isArray(geojson.features)) return geojson;
+    } catch {
+      // 次のコマにフォールバック
+    }
+  }
+  return { type: "FeatureCollection", features: [] };
+}
+
+// 個別観測所の時系列(水位グラフ用)。URLパターン・obs_fcd/obs_cdどちらを
+// 使うかは実機未確認のため、両方試して先に成功した方を使う。
+async function loadRiverStationSeries(obsFcd, obsCd) {
+  const { ymd } = riverDatePath(new Date());
+  const candidates = [
+    `${RIVER_DATA_BASE}/tmlist/past/stg/${ymd}/${obsFcd}.json`,
+    `${RIVER_DATA_BASE}/tmlist/past/stg/${ymd}/${obsCd}.json`,
+  ];
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) continue;
+      return await res.json();
+    } catch {
+      // 次の候補へ
+    }
+  }
+  console.warn("河川水位の時系列取得に失敗(両方のURLパターンで404/エラー):", candidates);
+  return null;
+}
+
+
    ローカルのworld.json(GeometryCollection)・prefectures.json(FeatureCollection)を
    そのままGeoJSONソースとしてMapLibreに渡し、ダークテーマで塗り分ける。
    外部タイルサーバー・外部スタイルには一切依存しない。
@@ -2133,6 +2233,10 @@ function MapCanvas({
   riskMode = null,              // "doshaKikkuru" | "inundKikkuru" | null
   riskFrame = null,             // { basetime, validtime } | null。表示中の時刻コマ
   riskKnownValidtimes = [],     // 現在のモードの全validtime一覧。この一覧に無くなったキャッシュ済みレイヤーの掃除に使う
+  riverVisible = false,         // 警報タブ: 河川水位観測所レイヤーを表示するか
+  riverStations = null,         // GeoJSON FeatureCollection(river.go.jpのstg概観)| null
+  selectedRiverStation = null,  // タップ中の観測所のproperties | null。地図上で強調表示に使う
+  onSelectRiverStation,         // 河川水位観測所のピンをタップした時に呼ぶコールバック(propertiesを渡す)
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -2168,6 +2272,8 @@ function MapCanvas({
   // refで最新の関数を参照できるようにしておく。
   const onSelectWarningAreaRef = useRef(onSelectWarningArea);
   onSelectWarningAreaRef.current = onSelectWarningArea;
+  const onSelectRiverStationRef = useRef(onSelectRiverStation);
+  onSelectRiverStationRef.current = onSelectRiverStation;
   const tideStationsInteractiveRef = useRef(tideStationsInteractive);
   tideStationsInteractiveRef.current = tideStationsInteractive;
   // 台風の中心点/予報円をタップした時のコールバック。map.on("load")内の登録は
@@ -2581,6 +2687,50 @@ function MapCanvas({
             },
           }, "station-points-symbol");
 
+          // 河川水位観測所(国管理・主要河川)。stg_ovlvl(危険度、10刻み)で
+          // 6段階に色分けした丸ポイント。警報の塗り分け・キキクルより上、
+          // 選択中の市区町村ハイライトより下に置く(下方のuseEffectでデータ・
+          // 表示状態を管理)。
+          map.addSource("river-stations", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "river-stations-layer",
+            type: "circle",
+            source: "river-stations",
+            layout: { visibility: "none" },
+            paint: {
+              "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 3, 10, 6, 14, 9],
+              "circle-color": [
+                "step", ["coalesce", ["get", "stg_ovlvl"], -1],
+                "#c8c8cb", // 欠測(stg_ovlvlが無い)
+                0, "#66ccff",   // 通常
+                10, "#35a86b",  // 水防団待機
+                20, "#f2e700",  // 氾濫注意
+                40, "#ff2800",  // 避難判断
+                80, "#aa00aa",  // 氾濫危険
+                90, "#140014",  // 氾濫発生
+              ],
+              "circle-stroke-color": "#ffffff",
+              "circle-stroke-width": 1.2,
+            },
+          }, "station-points-symbol");
+          // タップ中の観測所を強調する専用レイヤー(選択中の1件だけをsetFilterで絞る)。
+          map.addLayer({
+            id: "river-stations-highlight-layer",
+            type: "circle",
+            source: "river-stations",
+            layout: { visibility: "none" },
+            filter: ["==", ["get", "obs_fcd"], "__none__"],
+            paint: {
+              "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 6, 10, 10, 14, 14],
+              "circle-color": "rgba(0,0,0,0)",
+              "circle-stroke-color": "#0A84FF",
+              "circle-stroke-width": 3,
+            },
+          }, "station-points-symbol");
+
           // 震央分布(P2P地震一覧・近傍地震検索・データベース検索の結果を、
           // 震度配色の丸として地図上に重ねて表示する)。
           // 独自のcanvasレイヤーではなくMapLibre標準のcircleレイヤーにすることで、
@@ -2758,6 +2908,16 @@ function MapCanvas({
           });
           map.on("mouseenter", "warning-areas-fill-layer", () => map.getCanvas().style.cursor = "pointer");
           map.on("mouseleave", "warning-areas-fill-layer", () => map.getCanvas().style.cursor = "");
+
+          // 警報タブ: 河川水位観測所のピンをタップした時、properties一式を
+          // そのまま親(App)に渡す(名称・水位・観測時刻など全部featureに
+          // 入っているため、regioncodeのように別マスタを引く必要が無い)。
+          map.on("click", "river-stations-layer", (e) => {
+            if (!e.features || !e.features.length) return;
+            onSelectRiverStationRef.current?.(e.features[0].properties);
+          });
+          map.on("mouseenter", "river-stations-layer", () => map.getCanvas().style.cursor = "pointer");
+          map.on("mouseleave", "river-stations-layer", () => map.getCanvas().style.cursor = "");
 
           // 津波テスト配信「地図タップで選択」モード中だけ有効になる、地図全体を対象と
           // したクリック(レイヤー指定なし)。タップ地点から一番近い予報区(海岸線)の
@@ -3420,6 +3580,30 @@ function MapCanvas({
       if (source) source.setData(merged);
     }
   }, [warningVisible, warningLevelMap, riskVisible, status]);
+
+  // 警報タブ: 河川水位観測所。riverStations(BottomDock側で10分おきに取得した
+  // GeoJSON)をそのままsetDataし、riverVisibleでON/OFFする。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    if (!map.getLayer("river-stations-layer")) return;
+
+    map.setLayoutProperty("river-stations-layer", "visibility", riverVisible ? "visible" : "none");
+    map.setLayoutProperty("river-stations-highlight-layer", "visibility", riverVisible ? "visible" : "none");
+    const source = map.getSource("river-stations");
+    if (source) source.setData(riverStations || { type: "FeatureCollection", features: [] });
+  }, [riverVisible, riverStations, status]);
+
+  // 警報タブ: タップ中の河川水位観測所を強調表示する。obs_fcdで絞り込む。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    if (!map.getLayer("river-stations-highlight-layer")) return;
+    map.setFilter("river-stations-highlight-layer", [
+      "==", ["get", "obs_fcd"], selectedRiverStation?.obs_fcd ?? "__none__",
+    ]);
+  }, [selectedRiverStation, status]);
+
 
   // 警報タブ: タップ/一覧選択中のエリアを強調するレイヤーの表示切り替え。
   // 選択が無い間は("__none__"は実在しないregioncodeなので)何も塗られない状態にしておく。
@@ -10487,6 +10671,9 @@ function BottomDock({
   onSelectWarningAreaFromList, // 警報タブ: 一覧の項目をタップした時に呼ぶ(選択+flyTo)
   onBackFromWarningArea, // 警報タブ: 詳細カードの「戻る」ボタンを押した時に呼ぶ
   onAlertLayerChange, // 警報タブ: くの字メニューでキキクル(土砂/浸水)を切り替えた時にApp側(地図のキキクルレイヤー表示用)に伝える。"doshaKikkuru" | "inundKikkuru" | null
+  onRiverLayerChange, // 警報タブ: くの字メニューで「河川水位」を選択した時にApp側(地図の河川水位レイヤー表示用)に伝える。GeoJSON FeatureCollection | null
+  selectedRiverStation = null, // 警報タブ: タップ中の河川水位観測所のproperties | null
+  onSelectRiverStation, // 警報タブ: 河川水位観測所のピンをタップ/選択解除した時に呼ぶ(App側のstateを更新)
 }) {
   const { tokens, mode } = useContext(ThemeContext);
   const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
@@ -11326,10 +11513,13 @@ function BottomDock({
   const alertMenuItemStates = {
     doshaKikkuru: alertLayerMode === "doshaKikkuru",
     inundKikkuru: alertLayerMode === "inundKikkuru",
+    riverLevel: alertLayerMode === "riverLevel",
   };
 
   useEffect(() => {
-    if (!alertLayerMode) {
+    // 河川水位はラスタータイル(キキクル)と仕組みが全く違う(GeoJSON点+別effectで
+    // 扱う)ので、このeffectでは何もしない(既存のriskFramesはクリアしておく)。
+    if (!alertLayerMode || alertLayerMode === "riverLevel") {
       setRiskFrames(null);
       setRiskFrameIndex(null);
       setRiskLoadError(false);
@@ -11383,6 +11573,40 @@ function BottomDock({
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [alertLayerMode, currentRiskFrame?.basetime, currentRiskFrame?.validtime, riskFrames, onAlertLayerChange]);
+
+  // 河川水位(国管理・主要河川)。キキクルと違いラスタータイルではなく
+  // GeoJSONの点データなので、専用のstate・専用のコールバック(onRiverLayerChange)
+  // で親(App)に伝える。まずは全国・基準超過(水防団待機水位以上)のみの概観を
+  // 10分おきに取得する(市区町村単位の全件表示・観測所詳細は今後の拡張)。
+  const [riverStations, setRiverStations] = useState(null); // null=未読込
+  const [riverLoadError, setRiverLoadError] = useState(false);
+  useEffect(() => {
+    if (alertLayerMode !== "riverLevel") {
+      setRiverStations(null);
+      setRiverLoadError(false);
+      return;
+    }
+    let cancelled = false;
+    const fetchAndApply = () => {
+      loadRiverOverview()
+        .then((geojson) => {
+          if (cancelled) return;
+          setRiverLoadError(false);
+          setRiverStations(geojson);
+        })
+        .catch((err) => {
+          console.error("河川水位(概観)の取得に失敗:", err);
+          if (!cancelled) setRiverLoadError(true);
+        });
+    };
+    fetchAndApply();
+    const intervalId = setInterval(fetchAndApply, 10 * 60 * 1000); // 10分おきに追従
+    return () => { cancelled = true; clearInterval(intervalId); };
+  }, [alertLayerMode]);
+
+  useEffect(() => {
+    onRiverLayerChange?.(alertLayerMode === "riverLevel" ? riverStations : null);
+  }, [alertLayerMode, riverStations, onRiverLayerChange]);
 
   // 台風タブ版の「戻る」— 詳細カードから一覧表示に戻す。フローティング自体は
   // 閉じない(閉じた時の選択解除は別のuseEffectで扱う)。
@@ -11975,6 +12199,15 @@ function BottomDock({
     lastSelectedWarningArea.current = selectedWarningArea;
   }, [selectedWarningArea]);
 
+  // 河川水位観測所のピンをタップした時も同様に「中高」に揃える。
+  const lastSelectedRiverStation = useRef(selectedRiverStation);
+  useEffect(() => {
+    if (lastSelectedRiverStation.current == null && selectedRiverStation != null) {
+      setSnapIndex(3);
+    }
+    lastSelectedRiverStation.current = selectedRiverStation;
+  }, [selectedRiverStation]);
+
   // 設定タブを開いた瞬間は、常にパネルの高さを「中高」にする
   // (トップメニューがスクロールなしで丸ごと見える高さのため)。
   // 設定タブから抜ける時も、行き先のタブに関わらず同じく「中高」にする
@@ -12426,10 +12659,10 @@ function BottomDock({
             top: wideAnchorRect.top + 16,
             zIndex: 50,
           }}>
-            {selectedWarningArea != null ? (
+            {selectedWarningArea != null || selectedRiverStation != null ? (
               <BackToListButton
-                onClick={onBackFromWarningArea}
-                label="警報一覧に戻る"
+                onClick={selectedRiverStation != null ? () => onSelectRiverStation?.(null) : onBackFromWarningArea}
+                label={selectedRiverStation != null ? "一覧に戻る" : "警報一覧に戻る"}
               />
             ) : (
               <AlertMenuFloating
@@ -12486,10 +12719,10 @@ function BottomDock({
               formatLabel={formatRiskFrameLabel}
             />
           )}
-          {selectedWarningArea != null ? (
+          {selectedWarningArea != null || selectedRiverStation != null ? (
             <BackToListButton
-              onClick={onBackFromWarningArea}
-              label="警報一覧に戻る"
+              onClick={selectedRiverStation != null ? () => onSelectRiverStation?.(null) : onBackFromWarningArea}
+              label={selectedRiverStation != null ? "一覧に戻る" : "警報一覧に戻る"}
             />
           ) : (
             <AlertMenuFloating
@@ -13076,6 +13309,8 @@ function BottomDock({
                     }}
                   />
                   )
+                ) : selectedRiverStation ? (
+                  <RiverStationDetailCard properties={selectedRiverStation} />
                 ) : selectedWarningArea ? (
                   <WarningAreaDetailCard
                     regioncode={selectedWarningArea}
@@ -13697,7 +13932,43 @@ function RiskLegend({ mode }) {
 }
 
 /* ─────────────────────────────────────────────────────
-   WARNING LEGEND — 警報タブの気象警報・注意報レイヤーの凡例。
+   RIVER LEGEND — 警報タブの河川水位観測所レイヤーの凡例。RiskLegendと同じ
+   Glassカードだが、区分値がレベル(5段階+通常)ではなく、色付きの丸+ラベルを
+   縦に並べる形にする(河川水位は「通常」も含めて意味のある名前が付いているため、
+   RiskLegendの数字だけの目盛りよりラベルを出した方が分かりやすい)。
+   ───────────────────────────────────────────────────── */
+function RiverLegend() {
+  const { tokens } = useContext(ThemeContext);
+  return (
+    <Glass
+      radius={12}
+      style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", padding: "6px 8px 7px", gap: 3 }}>
+        <div style={{
+          fontSize: 10, lineHeight: "11px", fontWeight: 700,
+          color: `rgba(${tokens.ink},0.6)`, marginBottom: 1, whiteSpace: "nowrap",
+        }}>
+          河川水位
+        </div>
+        {[...RIVER_LEVEL_STEPS].reverse().map((step) => (
+          <div key={step.level} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{
+              width: 8, height: 8, borderRadius: 999, flexShrink: 0,
+              background: step.color,
+              border: step.level === 0 ? `1px solid rgba(${tokens.ink},0.3)` : "none",
+            }}/>
+            <span style={{ fontSize: 9.5, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, whiteSpace: "nowrap" }}>
+              {step.label}
+            </span>
+          </div>
+        ))}
+      </div>
+    </Glass>
+  );
+}
+
+
    TsunamiGradeLegend/QuakeIntensityLegendと全く同じ見た目(横一列の隙間の
    詰まった色バー)で、実際に発表されている中の最も低いレベルから最も高い
    レベルまでをラダー表示する(例: 注意報と警報が両方出ていれば2段、
@@ -14282,6 +14553,7 @@ function WeatherMenuFloating({
 const ALERT_MENU_ITEMS = [
   { id: "doshaKikkuru", label: "土砂キキクル" },
   { id: "inundKikkuru", label: "浸水キキクル" },
+  { id: "riverLevel", label: "河川水位" },
 ];
 
 function AlertMenuFloating({ open, onToggle, growUp = true, itemStates = {}, onToggleItem }) {
@@ -14869,7 +15141,154 @@ function WarningKindBadge({ level, label }) {
 }
 
 /* ─────────────────────────────────────────────────────
-   WEATHER LOCATION PANEL — 気象タブ「地点(ピン)」モードの中身。フローティング
+   RIVER STATION DETAIL CARD — 警報タブで河川水位観測所のピンをタップした時の
+   詳細カード。WarningAreaDetailCardと同じ枠を使い回す(戻るボタンはBottomDock
+   側の共通フローティングで持つので、ここでは中身だけ)。
+   observed_atはproperties(タップ時点のスナップショット)からそのまま出し、
+   水位グラフだけ別途fetchする(タップのたびに取り直す)。
+   ───────────────────────────────────────────────────── */
+function RiverStationDetailCard({ properties }) {
+  const { tokens } = useContext(ThemeContext);
+  const [series, setSeries] = useState(null); // null=読込中, []=空, {series:[...]}=成功
+  const [seriesError, setSeriesError] = useState(false);
+  const [rangeDays, setRangeDays] = useState(1); // 1 | 3
+
+  const obsFcd = properties?.obs_fcd;
+  const obsCd = properties?.obs_cd;
+
+  useEffect(() => {
+    if (!obsFcd && obsCd == null) return;
+    let cancelled = false;
+    setSeries(null);
+    setSeriesError(false);
+    loadRiverStationSeries(obsFcd, obsCd)
+      .then((data) => {
+        if (cancelled) return;
+        if (!data) { setSeriesError(true); return; }
+        setSeries(data);
+      })
+      .catch(() => { if (!cancelled) setSeriesError(true); });
+    return () => { cancelled = true; };
+  }, [obsFcd, obsCd]);
+
+  if (!properties) return null;
+  const info = riverLevelInfo(properties.stg_ovlvl);
+  const name = properties.obs_nm || "観測所";
+  const points = Array.isArray(series?.series) ? series.series : null;
+  const cutoffPoints = points
+    ? points.filter(p => {
+        if (!p?.time) return true;
+        const t = new Date(p.time.replace(/\//g, "-"));
+        return Date.now() - t.getTime() <= rangeDays * 24 * 60 * 60 * 1000;
+      })
+    : null;
+
+  return (
+    <div style={{ margin: "0 14px 2px" }}>
+      <div style={{ padding: "2px 4px 6px" }}>
+        <div style={{
+          fontSize: 17, fontWeight: 800, color: tokens.text, lineHeight: 1.15,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          {name}
+        </div>
+        {properties.rvr_cd != null && (
+          <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.5)`, marginTop: 2 }}>
+            河川コード {properties.rvr_cd}
+            {properties.bnk_sct ? ` ・ ${properties.bnk_sct}` : ""}
+            {properties.rvr_mouth_dst != null ? ` ・ 河口から${properties.rvr_mouth_dst}m` : ""}
+          </div>
+        )}
+      </div>
+
+      <div style={{
+        display: "flex", alignItems: "center", gap: 10,
+        padding: "8px 10px", margin: "4px 4px 10px",
+        borderRadius: 10, background: `rgba(${tokens.ink},0.05)`,
+      }}>
+        <span style={{
+          display: "inline-block", fontSize: 11, fontWeight: 700,
+          padding: "3px 8px", borderRadius: 5, whiteSpace: "nowrap",
+          background: info.color, color: info.color === "#f2e700" ? "#000" : "#fff",
+        }}>
+          {info.label}
+        </span>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <span style={{ fontSize: 20, fontWeight: 800, color: tokens.text, lineHeight: 1.1 }}>
+            {properties.stg_ovdeg != null ? `${properties.stg_ovdeg} m` : "-- m"}
+          </span>
+          <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.5)` }}>
+            {properties.obs_time || ""} 観測
+          </span>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "0 4px 4px" }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: `rgba(${tokens.ink},0.55)` }}>水位の推移</span>
+        <div style={{ display: "flex", gap: 4 }}>
+          {[{ id: 1, label: "1日" }, { id: 3, label: "3日" }].map(opt => (
+            <PressableButton
+              key={opt.id}
+              onClick={() => setRangeDays(opt.id)}
+              style={{
+                fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 999,
+                background: rangeDays === opt.id ? "#0A84FF" : `rgba(${tokens.ink},0.06)`,
+                color: rangeDays === opt.id ? "#fff" : tokens.text,
+              }}
+            >
+              {opt.label}
+            </PressableButton>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ margin: "0 4px 16px", padding: "10px", borderRadius: 10, background: `rgba(${tokens.ink},0.05)` }}>
+        {seriesError ? (
+          <div style={{ padding: "16px 4px", fontSize: 12, color: `rgba(${tokens.ink},0.5)`, textAlign: "center" }}>
+            水位の推移データを取得できませんでした。
+          </div>
+        ) : !cutoffPoints ? (
+          <div style={{ padding: "16px 4px", fontSize: 12, color: `rgba(${tokens.ink},0.5)`, textAlign: "center" }}>
+            読み込み中...
+          </div>
+        ) : cutoffPoints.length < 2 ? (
+          <div style={{ padding: "16px 4px", fontSize: 12, color: `rgba(${tokens.ink},0.5)`, textAlign: "center" }}>
+            表示できるデータがありません。
+          </div>
+        ) : (
+          <RiverLevelSparkline points={cutoffPoints} thresholds={series?.thresholds}/>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// 水位の推移を表す簡易SVK折れ線グラフ。旧タブの潮位計チャートと同じく、
+// 外部chartライブラリを使わない自前SVG(この規模のミニグラフには十分)。
+function RiverLevelSparkline({ points, thresholds }) {
+  const { tokens } = useContext(ThemeContext);
+  const W = 280, H = 90, PAD = 6;
+  const values = points.map(p => Number(p.value)).filter(v => !Number.isNaN(v));
+  if (values.length < 2) return null;
+  const minV = Math.min(...values);
+  const maxV = Math.max(...values);
+  const range = maxV - minV || 1;
+  const stepX = (W - PAD * 2) / (points.length - 1);
+  const toY = (v) => H - PAD - ((v - minV) / range) * (H - PAD * 2);
+  const path = points
+    .map((p, i) => `${i === 0 ? "M" : "L"} ${(PAD + i * stepX).toFixed(1)} ${toY(Number(p.value)).toFixed(1)}`)
+    .join(" ");
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
+      <path d={path} fill="none" stroke="#0A84FF" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
+      <text x={PAD} y={12} fontSize="10" fill={`rgba(${tokens.ink},0.5)`}>{maxV.toFixed(2)}m</text>
+      <text x={PAD} y={H - PAD} fontSize="10" fill={`rgba(${tokens.ink},0.5)`}>{minV.toFixed(2)}m</text>
+    </svg>
+  );
+}
+
+ — 気象タブ「地点(ピン)」モードの中身。フローティング
    の小さなカードではなく、既存の「現在開発中です」プレースホルダーが出ていた
    パネル枠(設定メニュー・地図レイヤー一覧と同じ場所)に、現在地(GPS)または
    登録地点(1件)の天気予報を表示する。
@@ -20756,6 +21175,20 @@ export default function App() {
     setAlertLayerFrame(payload ? payload.frame : null);
     setAlertLayerKnownValidtimes(payload ? payload.knownValidtimes : []);
   }, []);
+  // 警報タブのくの字メニューで選択中の「河川水位」。BottomDock側からGeoJSON
+  // FeatureCollection | null で伝わってくる。MapCanvas側のriverVisible/
+  // riverStationsに振り分ける。タップ中の観測所(詳細カード用)もここで持つ。
+  const [riverStations, setRiverStations] = useState(null);
+  const handleRiverLayerChange = useCallback((geojson) => {
+    setRiverStations(geojson);
+  }, []);
+  const [selectedRiverStation, setSelectedRiverStation] = useState(null); // properties | null
+  const handleSelectRiverStation = useCallback((properties) => {
+    setSelectedRiverStation(properties || null);
+  }, []);
+  useEffect(() => {
+    if (alertLayerMode !== "riverLevel") setSelectedRiverStation(null);
+  }, [alertLayerMode]);
   // 台風の中心点/予報円をタップした時のproperties。BottomDock側のTyphoonDetailCardで
   // 表示する(時刻チップ=予報円タップ、台風一覧タップの両方でここに入る)。
   const [selectedTyphoonInfo, setSelectedTyphoonInfo] = useState(null);
@@ -21836,6 +22269,10 @@ export default function App() {
           riskMode={alertLayerMode}
           riskFrame={alertLayerFrame}
           riskKnownValidtimes={alertLayerKnownValidtimes}
+          riverVisible={activeNav === "alert" && alertLayerMode === "riverLevel" && !!riverStations}
+          riverStations={riverStations}
+          selectedRiverStation={selectedRiverStation}
+          onSelectRiverStation={handleSelectRiverStation}
           stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
           tideStationPoints={
@@ -22065,9 +22502,9 @@ export default function App() {
         )}
 
         {/* 警報凡例 — 警報タブで警報・注意報レイヤーを地図に塗っている間だけ、
-            画面右上に浮かぶ(震度凡例・津波凡例と対の構成)。キキクル表示中は
-            警報の塗り分け自体を非表示にしているので、この凡例も出さない
-            (代わりにRiskLegendを出す)。 */}
+            画面右上に浮かぶ(震度凡例・津波凡例と対の構成)。キキクル・河川水位
+            表示中は警報の塗り分け自体を非表示にしているので、この凡例も出さない
+            (代わりにRiskLegend/RiverLegendを出す)。 */}
         {activeNav === "alert" && !alertLayerMode && Object.keys(warningLevelMap).length > 0 && (
           <div style={{
             position: "absolute",
@@ -22080,8 +22517,8 @@ export default function App() {
         )}
 
         {/* キキクル(土砂/浸水)凡例 — 警報タブでキキクルレイヤーを表示している間、
-            画面右上に浮かぶ(警報凡例と排他)。 */}
-        {activeNav === "alert" && alertLayerMode && alertLayerFrame && (
+            画面右上に浮かぶ(警報凡例・河川水位凡例と排他)。 */}
+        {activeNav === "alert" && alertLayerMode && alertLayerMode !== "riverLevel" && alertLayerFrame && (
           <div style={{
             position: "absolute",
             top: "calc(16px + env(safe-area-inset-top))",
@@ -22089,6 +22526,19 @@ export default function App() {
             zIndex: 30,
           }}>
             <RiskLegend mode={alertLayerMode}/>
+          </div>
+        )}
+
+        {/* 河川水位凡例 — 警報タブで河川水位レイヤーを表示している間、
+            画面右上に浮かぶ(警報凡例・キキクル凡例と排他)。 */}
+        {activeNav === "alert" && alertLayerMode === "riverLevel" && (
+          <div style={{
+            position: "absolute",
+            top: "calc(16px + env(safe-area-inset-top))",
+            right: 16,
+            zIndex: 30,
+          }}>
+            <RiverLegend/>
           </div>
         )}
 
@@ -22191,6 +22641,9 @@ export default function App() {
                   onSelectWarningAreaFromList={handleSelectWarningAreaFromList}
                   onBackFromWarningArea={handleBackFromWarningArea}
                   onAlertLayerChange={handleAlertLayerChange}
+                  onRiverLayerChange={handleRiverLayerChange}
+                  selectedRiverStation={selectedRiverStation}
+                  onSelectRiverStation={handleSelectRiverStation}
                   tideStations={tideStationsWithGrade}
                   tideStationsStatus={tideStationsStatus}
                   selectedTideStationCode={selectedTideStationCode}
@@ -22301,6 +22754,9 @@ export default function App() {
                   onSelectWarningAreaFromList={handleSelectWarningAreaFromList}
                   onBackFromWarningArea={handleBackFromWarningArea}
                   onAlertLayerChange={handleAlertLayerChange}
+                  onRiverLayerChange={handleRiverLayerChange}
+                  selectedRiverStation={selectedRiverStation}
+                  onSelectRiverStation={handleSelectRiverStation}
               tideStations={tideStationsWithGrade}
               tideStationsStatus={tideStationsStatus}
               selectedTideStationCode={selectedTideStationCode}
