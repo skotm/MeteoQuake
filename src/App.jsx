@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.1.3";
+const APP_VERSION = "2.1.4";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1875,8 +1875,12 @@ function registerRiskProtocol(maplibregl) {
    取得する(www.river.go.jpは直接fetchするとCORSでブロックされるため、実機
    検証で判明済み)。プロキシはエッジキャッシュ(5分)を効かせており、複数端末
    からの同時アクセスでもriver.go.jp側への実リクエストは最小限に抑えている。
+   実機検証の結果、概観・市区町村単位一覧は/kawabou/file/gjson配下だが、
+   時系列(tmlist)だけ/kawabou/file/files配下だったため、ベースを分けている。
    ───────────────────────────────────────────────────── */
-const RIVER_DATA_BASE = "https://meteoquake-river-proxy.meteoquake-river.workers.dev";
+const RIVER_PROXY_BASE = "https://meteoquake-river-proxy.meteoquake-river.workers.dev";
+const RIVER_GJSON_BASE = `${RIVER_PROXY_BASE}/kawabou/file/gjson`;
+const RIVER_FILES_BASE = `${RIVER_PROXY_BASE}/kawabou/file/files`;
 
 // 危険度レベル(stg_ovlvl、10刻み想定)→ ラベル・色。他の危険度分布(キキクル・
 // 警報)と統一感を持たせつつ、6段階に対応させる。
@@ -1922,7 +1926,7 @@ async function loadRiverOverview() {
   for (let back = 0; back < 6; back++) {
     const t = new Date(now.getTime() - back * 10 * 60000);
     const { ymd, hm } = riverDatePath(t);
-    const url = `${RIVER_DATA_BASE}/overobs/stg/${ymd}/${hm}/over-obs-create.json`;
+    const url = `${RIVER_GJSON_BASE}/overobs/stg/${ymd}/${hm}/over-obs-create.json`;
     try {
       const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) continue;
@@ -1944,7 +1948,7 @@ async function loadRiverStationsByTown(twnCd) {
   for (let back = 0; back < 6; back++) {
     const t = new Date(now.getTime() - back * 10 * 60000);
     const { ymd, hm } = riverDatePath(t);
-    const url = `${RIVER_DATA_BASE}/obs/${ymd}/${hm}/stg/${twnCd}.json`;
+    const url = `${RIVER_GJSON_BASE}/obs/${ymd}/${hm}/stg/${twnCd}.json`;
     try {
       const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) continue;
@@ -1958,24 +1962,18 @@ async function loadRiverStationsByTown(twnCd) {
 }
 
 
-// 個別観測所の時系列(水位グラフ用)。URLパターン・obs_fcd/obs_cdどちらを
-// 使うかは実機未確認のため、両方試して先に成功した方を使う。
+// 個別観測所の時系列(水位グラフ用)。実機検証で、ベースは/kawabou/file/files
+// (gjsonではない)、引数はobs_fcd(13桁のフルコード)と判明済み。
 async function loadRiverStationSeries(obsFcd, obsCd) {
   const { ymd } = riverDatePath(new Date());
-  const candidates = [
-    `${RIVER_DATA_BASE}/tmlist/past/stg/${ymd}/${obsFcd}.json`,
-    `${RIVER_DATA_BASE}/tmlist/past/stg/${ymd}/${obsCd}.json`,
-  ];
-  for (const url of candidates) {
-    try {
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) continue;
-      return await res.json();
-    } catch {
-      // 次の候補へ
-    }
+  const url = `${RIVER_FILES_BASE}/tmlist/past/stg/${ymd}/${obsFcd}.json`;
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (res.ok) return await res.json();
+    console.warn("河川水位の時系列取得に失敗(HTTPエラー):", url, res.status);
+  } catch (err) {
+    console.warn("河川水位の時系列取得に失敗:", url, err);
   }
-  console.warn("河川水位の時系列取得に失敗(両方のURLパターンで404/エラー):", candidates);
   return null;
 }
 
@@ -15171,7 +15169,7 @@ function WarningKindBadge({ level, label }) {
    ───────────────────────────────────────────────────── */
 function RiverStationDetailCard({ properties }) {
   const { tokens } = useContext(ThemeContext);
-  const [series, setSeries] = useState(null); // null=読込中, []=空, {series:[...]}=成功
+  const [series, setSeries] = useState(null); // null=読込中, {dspFlg, pastValues:[...]}=成功
   const [seriesError, setSeriesError] = useState(false);
   const [rangeDays, setRangeDays] = useState(1); // 1 | 3
 
@@ -15196,11 +15194,12 @@ function RiverStationDetailCard({ properties }) {
   if (!properties) return null;
   const info = riverLevelInfo(properties.stg_ovlvl);
   const name = properties.obs_nm || "観測所";
-  const points = Array.isArray(series?.series) ? series.series : null;
+  // 実機検証で判明した実際のスキーマ: { dspFlg, pastValues: [{ stg, obsTime, ... }] }
+  const points = Array.isArray(series?.pastValues) ? series.pastValues : null;
   const cutoffPoints = points
     ? points.filter(p => {
-        if (!p?.time) return true;
-        const t = new Date(p.time.replace(/\//g, "-"));
+        if (!p?.obsTime) return true;
+        const t = new Date(p.obsTime.replace(/\//g, "-"));
         return Date.now() - t.getTime() <= rangeDays * 24 * 60 * 60 * 1000;
       })
     : null;
@@ -15278,19 +15277,20 @@ function RiverStationDetailCard({ properties }) {
             表示できるデータがありません。
           </div>
         ) : (
-          <RiverLevelSparkline points={cutoffPoints} thresholds={series?.thresholds}/>
+          <RiverLevelSparkline points={cutoffPoints}/>
         )}
       </div>
     </div>
   );
 }
 
-// 水位の推移を表す簡易SVK折れ線グラフ。旧タブの潮位計チャートと同じく、
+// 水位の推移を表す簡易SVG折れ線グラフ。旧タブの潮位計チャートと同じく、
 // 外部chartライブラリを使わない自前SVG(この規模のミニグラフには十分)。
-function RiverLevelSparkline({ points, thresholds }) {
+// pastValuesの各要素は { stg: 水位(m), obsTime: "YYYY/MM/DD HH:mm", ... }。
+function RiverLevelSparkline({ points }) {
   const { tokens } = useContext(ThemeContext);
   const W = 280, H = 90, PAD = 6;
-  const values = points.map(p => Number(p.value)).filter(v => !Number.isNaN(v));
+  const values = points.map(p => Number(p.stg)).filter(v => !Number.isNaN(v));
   if (values.length < 2) return null;
   const minV = Math.min(...values);
   const maxV = Math.max(...values);
@@ -15298,7 +15298,7 @@ function RiverLevelSparkline({ points, thresholds }) {
   const stepX = (W - PAD * 2) / (points.length - 1);
   const toY = (v) => H - PAD - ((v - minV) / range) * (H - PAD * 2);
   const path = points
-    .map((p, i) => `${i === 0 ? "M" : "L"} ${(PAD + i * stepX).toFixed(1)} ${toY(Number(p.value)).toFixed(1)}`)
+    .map((p, i) => `${i === 0 ? "M" : "L"} ${(PAD + i * stepX).toFixed(1)} ${toY(Number(p.stg)).toFixed(1)}`)
     .join(" ");
 
   return (
