@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.1.1";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1870,12 +1870,13 @@ function registerRiskProtocol(maplibregl) {
 
 
 /* ─────────────────────────────────────────────────────
-   河川水位観測所(国管理・主要河川、stg)。国交省「川の防災情報」
-   (kawabou)アプリ自身が使っている静的生成JSONを直接叩く(プロキシ不要、
-   キキクルと同じ「事前生成された静的ファイルを定期ポーリング」方式と推測)。
-   実機で未確認のURLパターンは、失敗時にconsole.warnで分かるようにしておく。
+   河川水位観測所(国管理・主要河川、stg)。国交省「川の防災情報」(kawabou)
+   アプリ自身が使っている静的生成JSONを、Cloudflare Workersのプロキシ経由で
+   取得する(www.river.go.jpは直接fetchするとCORSでブロックされるため、実機
+   検証で判明済み)。プロキシはエッジキャッシュ(5分)を効かせており、複数端末
+   からの同時アクセスでもriver.go.jp側への実リクエストは最小限に抑えている。
    ───────────────────────────────────────────────────── */
-const RIVER_DATA_BASE = "https://www.river.go.jp/kawabou/file/gjson";
+const RIVER_DATA_BASE = "https://meteoquake-river-proxy.meteoquake-river.workers.dev";
 
 // 危険度レベル(stg_ovlvl、10刻み想定)→ ラベル・色。他の危険度分布(キキクル・
 // 警報)と統一感を持たせつつ、6段階に対応させる。
@@ -1915,7 +1916,9 @@ function riverDatePath(date) {
 // あるため、現在時刻から10分刻みで最大6コマ(1時間分)遡って最初に成功した
 // ものを使う。
 async function loadRiverOverview() {
-  const now = new Date();
+  // 直近のコマはまだファイルが生成されていない(サイト側の生成タイミングに
+  // ラグがある)可能性が高いため、最初から10分遅れのコマから試す。
+  const now = new Date(Date.now() - 10 * 60000);
   for (let back = 0; back < 6; back++) {
     const t = new Date(now.getTime() - back * 10 * 60000);
     const { ymd, hm } = riverDatePath(t);
@@ -1936,7 +1939,8 @@ async function loadRiverOverview() {
 // 市区町村単位・全件(通常水位の地点も含む)。twnCdは警報タブで既に持っている
 // 市区町村コードをそのまま使う想定(桁数が違う場合は要調整、実機未確認)。
 async function loadRiverStationsByTown(twnCd) {
-  const now = new Date();
+  // 概観と同じく、最初から10分遅れのコマから試す。
+  const now = new Date(Date.now() - 10 * 60000);
   for (let back = 0; back < 6; back++) {
     const t = new Date(now.getTime() - back * 10 * 60000);
     const { ymd, hm } = riverDatePath(t);
@@ -1952,6 +1956,7 @@ async function loadRiverStationsByTown(twnCd) {
   }
   return { type: "FeatureCollection", features: [] };
 }
+
 
 // 個別観測所の時系列(水位グラフ用)。URLパターン・obs_fcd/obs_cdどちらを
 // 使うかは実機未確認のため、両方試して先に成功した方を使う。
