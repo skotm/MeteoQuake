@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.1.1";
+const APP_VERSION = "2.1.2";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -3602,6 +3602,7 @@ function MapCanvas({
     map.setLayoutProperty("river-stations-highlight-layer", "visibility", riverVisible ? "visible" : "none");
     const source = map.getSource("river-stations");
     if (source) source.setData(riverStations || { type: "FeatureCollection", features: [] });
+    console.log(`[河川水位/地図] visible=${riverVisible} features=${riverStations?.features?.length ?? 0}`);
   }, [riverVisible, riverStations, status]);
 
   // 警報タブ: タップ中の河川水位観測所を強調表示する。obs_fcdで絞り込む。
@@ -11602,6 +11603,7 @@ function BottomDock({
         .then((geojson) => {
           if (cancelled) return;
           setRiverLoadError(false);
+          console.log(`[河川水位] ${geojson?.features?.length ?? 0}件取得`, geojson?.features?.[0]?.properties);
           setRiverStations(geojson);
         })
         .catch((err) => {
