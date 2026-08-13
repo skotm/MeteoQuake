@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.1.2";
+const APP_VERSION = "2.1.3";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -10682,6 +10682,7 @@ function BottomDock({
   onSelectWarningAreaFromList, // 警報タブ: 一覧の項目をタップした時に呼ぶ(選択+flyTo)
   onBackFromWarningArea, // 警報タブ: 詳細カードの「戻る」ボタンを押した時に呼ぶ
   onAlertLayerChange, // 警報タブ: くの字メニューでキキクル(土砂/浸水)を切り替えた時にApp側(地図のキキクルレイヤー表示用)に伝える。"doshaKikkuru" | "inundKikkuru" | null
+  onAlertModeChange, // 警報タブ: 「今どの項目が選ばれているか」を常に伝える("doshaKikkuru" | "inundKikkuru" | "riverLevel" | null)。キキクルの時刻コマ通知(onAlertLayerChange)とは独立していて、river水位選択中にnullで巻き戻されたりしない。
   onRiverLayerChange, // 警報タブ: くの字メニューで「河川水位」を選択した時にApp側(地図の河川水位レイヤー表示用)に伝える。GeoJSON FeatureCollection | null
   selectedRiverStation = null, // 警報タブ: タップ中の河川水位観測所のproperties | null
   onSelectRiverStation, // 警報タブ: 河川水位観測所のピンをタップ/選択解除した時に呼ぶ(App側のstateを更新)
@@ -11526,6 +11527,13 @@ function BottomDock({
     inundKikkuru: alertLayerMode === "inundKikkuru",
     riverLevel: alertLayerMode === "riverLevel",
   };
+
+  // 「今どの項目が選ばれているか」をApp側に常に伝える。alertLayerMode(この
+  // BottomDock内のstate)が変わったら即座に、他のeffectの都合(時刻コマの
+  // 有無など)に関係なく通知する。
+  useEffect(() => {
+    onAlertModeChange?.(alertLayerMode);
+  }, [alertLayerMode, onAlertModeChange]);
 
   useEffect(() => {
     // 河川水位はラスタータイル(キキクル)と仕組みが全く違う(GeoJSON点+別effectで
@@ -21182,14 +21190,21 @@ export default function App() {
   // {mode, frame, knownValidtimes} | null で伝わってくる(1/3/24時間降水量と
   // 全く同じ形)。MapCanvas側のriskVisible/riskMode/riskFrame/riskKnownValidtimes
   // に振り分ける。
+  // 「今どの項目が選ばれているか」(alertLayerMode)は、キキクルの時刻コマの
+  // 有無に関係なく常に正しく分かる必要がある(河川水位選択中は時刻コマが
+  // そもそも存在しないため)。そのため、キキクルの時刻コマ通知
+  // (handleAlertLayerChange)とは別経路(handleAlertModeChange)で管理する。
   const [alertLayerMode, setAlertLayerMode] = useState(null);
   const [alertLayerFrame, setAlertLayerFrame] = useState(null);
   const [alertLayerKnownValidtimes, setAlertLayerKnownValidtimes] = useState([]);
+  const handleAlertModeChange = useCallback((mode) => {
+    setAlertLayerMode(mode);
+  }, []);
   const handleAlertLayerChange = useCallback((payload) => {
-    setAlertLayerMode(payload ? payload.mode : null);
     setAlertLayerFrame(payload ? payload.frame : null);
     setAlertLayerKnownValidtimes(payload ? payload.knownValidtimes : []);
   }, []);
+
   // 警報タブのくの字メニューで選択中の「河川水位」。BottomDock側からGeoJSON
   // FeatureCollection | null で伝わってくる。MapCanvas側のriverVisible/
   // riverStationsに振り分ける。タップ中の観測所(詳細カード用)もここで持つ。
@@ -22656,6 +22671,7 @@ export default function App() {
                   onSelectWarningAreaFromList={handleSelectWarningAreaFromList}
                   onBackFromWarningArea={handleBackFromWarningArea}
                   onAlertLayerChange={handleAlertLayerChange}
+                  onAlertModeChange={handleAlertModeChange}
                   onRiverLayerChange={handleRiverLayerChange}
                   selectedRiverStation={selectedRiverStation}
                   onSelectRiverStation={handleSelectRiverStation}
@@ -22769,6 +22785,7 @@ export default function App() {
                   onSelectWarningAreaFromList={handleSelectWarningAreaFromList}
                   onBackFromWarningArea={handleBackFromWarningArea}
                   onAlertLayerChange={handleAlertLayerChange}
+                  onAlertModeChange={handleAlertModeChange}
                   onRiverLayerChange={handleRiverLayerChange}
                   selectedRiverStation={selectedRiverStation}
                   onSelectRiverStation={handleSelectRiverStation}
