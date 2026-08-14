@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.1.7";
+const APP_VERSION = "2.2.8";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1961,6 +1961,46 @@ async function loadRiverStationsByTown(twnCd) {
   return { type: "FeatureCollection", features: [] };
 }
 
+// 河川水位観測所の基準水位(氾濫注意水位・避難判断水位・氾濫危険水位・氾濫水位
+// など)は、全国概観(over-obs-create.json)には含まれておらず、市区町村単位の
+// エンドポイント(obs/.../stg/{twnCd}.json)にしか無いと実機検証で判明した。
+// ただしそちらのtwn_cdは、タップした観測所(全国概観由来)からは直接分からない
+// ため、座標から警報タブで既に読み込んでいる市区町村境界(1,821件)に対して
+// 点内判定を行い、regioncode(=twn_cdと同じ全国地方公共団体コード体系のはず、
+// 実機未確認)を逆引きする。
+async function findTwnCdForPoint(lon, lat) {
+  if (lon == null || lat == null) return null;
+  const areas = await loadWarningAreas();
+  for (const area of areas) {
+    const [minLon, minLat, maxLon, maxLat] = area.bbox || [];
+    if (lon < minLon || lon > maxLon || lat < minLat || lat > maxLat) continue;
+    if (pointInGeoJsonGeometry(lon, lat, area.geometry)) return area.properties.regioncode;
+  }
+  return null;
+}
+
+// 観測所の基準水位一式(あれば)を取得する。twn_cdの逆引き→市区町村単位一覧の
+// 取得→obs_fcdが一致する地点の抽出、という3段構え。どこかで失敗してもnullを
+// 返すだけで例外は投げない(グラフ自体は基準水位が無くても表示できるため)。
+async function loadRiverStationThresholds(properties) {
+  const twnCd = await findTwnCdForPoint(properties.__lon, properties.__lat);
+  if (!twnCd) return null;
+  const geojson = await loadRiverStationsByTown(twnCd);
+  const match = (geojson.features || []).find(f => f.properties?.obs_fcd === properties.obs_fcd);
+  if (!match) return null;
+  const p = match.properties;
+  // 実機検証で判明したフィールド名。水防法の基準水位5段階に相当すると推測:
+  // rsrv_stg=水防団待機水位, warn_stg=氾濫注意水位, spcl_warn_stg=避難判断水位,
+  // dng_stg=氾濫危険水位, fld_stg=氾濫水位(氾濫開始水位)。
+  return {
+    rsrv_stg: p.rsrv_stg ?? null,
+    warn_stg: p.warn_stg ?? null,
+    spcl_warn_stg: p.spcl_warn_stg ?? null,
+    dng_stg: p.dng_stg ?? null,
+    fld_stg: p.fld_stg ?? null,
+  };
+}
+
 
 // 個別観測所の時系列(水位グラフ用)。実機検証で、ベースは/kawabou/file/files
 // (gjsonではない)、引数はobs_fcd(13桁のフルコード)と判明済み。
@@ -2917,12 +2957,19 @@ function MapCanvas({
           map.on("mouseenter", "warning-areas-fill-layer", () => map.getCanvas().style.cursor = "pointer");
           map.on("mouseleave", "warning-areas-fill-layer", () => map.getCanvas().style.cursor = "");
 
-          // 警報タブ: 河川水位観測所のピンをタップした時、properties一式を
-          // そのまま親(App)に渡す(名称・水位・観測時刻など全部featureに
-          // 入っているため、regioncodeのように別マスタを引く必要が無い)。
+          // 警報タブ: 河川水位観測所のピンをタップした時、properties一式に加えて
+          // 座標(__lon/__lat)も一緒に親(App)に渡す。全国概観データ(over-obs-create)
+          // のpropertiesには緯度経度が入っていないため、基準水位を市区町村単位
+          // エンドポイントから逆引きする時に別途座標が必要になる。
           map.on("click", "river-stations-layer", (e) => {
             if (!e.features || !e.features.length) return;
-            onSelectRiverStationRef.current?.(e.features[0].properties);
+            const f = e.features[0];
+            const coords = f.geometry?.coordinates;
+            onSelectRiverStationRef.current?.({
+              ...f.properties,
+              __lon: coords ? coords[0] : null,
+              __lat: coords ? coords[1] : null,
+            });
           });
           map.on("mouseenter", "river-stations-layer", () => map.getCanvas().style.cursor = "pointer");
           map.on("mouseleave", "river-stations-layer", () => map.getCanvas().style.cursor = "");
@@ -15172,6 +15219,7 @@ function RiverStationDetailCard({ properties }) {
   const [series, setSeries] = useState(null); // null=読込中, {dspFlg, pastValues:[...]}=成功
   const [seriesError, setSeriesError] = useState(false);
   const [rangeDays, setRangeDays] = useState(1); // 1 | 3
+  const [thresholds, setThresholds] = useState(null); // null=読込中/失敗, {rsrv_stg,warn_stg,...}=成功
 
   const obsFcd = properties?.obs_fcd;
   const obsCd = properties?.obs_cd;
@@ -15190,6 +15238,17 @@ function RiverStationDetailCard({ properties }) {
       .catch(() => { if (!cancelled) setSeriesError(true); });
     return () => { cancelled = true; };
   }, [obsFcd, obsCd]);
+
+  useEffect(() => {
+    if (!obsFcd) { setThresholds(null); return; }
+    let cancelled = false;
+    setThresholds(null);
+    loadRiverStationThresholds(properties)
+      .then((t) => { if (!cancelled) setThresholds(t); })
+      .catch(() => { if (!cancelled) setThresholds(null); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obsFcd, properties?.__lon, properties?.__lat]);
 
   if (!properties) return null;
   const info = riverLevelInfo(properties.stg_ovlvl);
@@ -15289,7 +15348,7 @@ function RiverStationDetailCard({ properties }) {
             表示できるデータがありません。
           </div>
         ) : (
-          <RiverLevelSparkline points={cutoffPoints}/>
+          <RiverLevelSparkline points={cutoffPoints} thresholds={thresholds}/>
         )}
       </div>
     </div>
@@ -15300,7 +15359,7 @@ function RiverStationDetailCard({ properties }) {
 // ライブラリを使わない自前SVG。日付軸ラベル・面グラフ塗り・現在値ドットを
 // 加えて、値だけのシンプルな折れ線より状況が掴みやすいようにしている。
 // pastValuesの各要素は { stg: 水位(m), obsTime: "YYYY/MM/DD HH:mm", ... }。
-function RiverLevelSparkline({ points }) {
+function RiverLevelSparkline({ points, thresholds }) {
   const { tokens } = useContext(ThemeContext);
   const W = 280, H = 150;
   const PAD_L = 34, PAD_R = 8, PAD_TOP = 10, PAD_BOTTOM = 30;
@@ -15312,9 +15371,27 @@ function RiverLevelSparkline({ points }) {
     .filter(p => !Number.isNaN(p.v) && !Number.isNaN(p.t.getTime()));
   if (parsed.length < 2) return null;
 
+  // 基準水位(あれば)を低い順に並べる。水防法の基準水位5段階に相当。
+  const THRESHOLD_DEFS = [
+    { key: "rsrv_stg",      label: "待機",   color: "#35a86b" },
+    { key: "warn_stg",      label: "注意",   color: "#f2e700" },
+    { key: "spcl_warn_stg", label: "避難判断", color: "#ff2800" },
+    { key: "dng_stg",       label: "危険",   color: "#aa00aa" },
+    { key: "fld_stg",       label: "氾濫",   color: "#140014" },
+  ];
+  const activeThresholds = THRESHOLD_DEFS
+    .map(d => ({ ...d, value: thresholds?.[d.key] }))
+    .filter(d => typeof d.value === "number");
+
   const values = parsed.map(p => p.v);
-  const minV = Math.min(...values);
-  const maxV = Math.max(...values);
+  let minV = Math.min(...values);
+  let maxV = Math.max(...values);
+  // 基準水位が実測値の範囲より外にある場合(まだ全然届いていない等)も、
+  // グラフ内に収まるよう範囲を広げる。
+  for (const th of activeThresholds) {
+    if (th.value < minV) minV = th.value;
+    if (th.value > maxV) maxV = th.value;
+  }
   // 値の範囲が全く無い(水位が一定)場合でも線がつぶれないよう、上下に余白を持たせる。
   const range = (maxV - minV) || Math.max(0.1, maxV * 0.05);
   const padV = range * 0.15;
@@ -15353,6 +15430,20 @@ function RiverLevelSparkline({ points }) {
         </linearGradient>
       </defs>
       <path d={areaPath} fill="url(#riverSparklineFill)" stroke="none"/>
+
+      {/* 基準水位の破線(実測より先に描いて、実測ラインが上に重なるようにする) */}
+      {activeThresholds.map(th => (
+        <g key={th.key}>
+          <line
+            x1={PAD_L} x2={W - PAD_R} y1={toY(th.value)} y2={toY(th.value)}
+            stroke={th.color} strokeWidth="1.2" strokeDasharray="3,2" opacity="0.85"
+          />
+          <text x={W - PAD_R} y={toY(th.value) - 2} fontSize="8.5" textAnchor="end" fill={th.color} fontWeight="700">
+            {th.label} {th.value.toFixed(2)}
+          </text>
+        </g>
+      ))}
+
       <path d={linePath} fill="none" stroke="#0A84FF" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
 
       {/* 現在値(最新点)を強調するドット */}
@@ -15379,6 +15470,7 @@ function RiverLevelSparkline({ points }) {
     </svg>
   );
 }
+
 
 /* ─────────────────────────────────────────────────────
    WEATHER LOCATION PANEL — 気象タブ「地点(ピン)」モードの中身。フローティング
