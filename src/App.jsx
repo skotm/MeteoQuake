@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.1.4";
+const APP_VERSION = "2.1.5";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -15263,7 +15263,7 @@ function RiverStationDetailCard({ properties }) {
         </div>
       </div>
 
-      <div style={{ margin: "0 4px 16px", padding: "10px", borderRadius: 10, background: `rgba(${tokens.ink},0.05)` }}>
+      <div style={{ margin: "0 4px 16px", padding: "10px 10px 4px", borderRadius: 10, background: `rgba(${tokens.ink},0.05)` }}>
         {seriesError ? (
           <div style={{ padding: "16px 4px", fontSize: 12, color: `rgba(${tokens.ink},0.5)`, textAlign: "center" }}>
             水位の推移データを取得できませんでした。
@@ -15284,28 +15284,84 @@ function RiverStationDetailCard({ properties }) {
   );
 }
 
-// 水位の推移を表す簡易SVG折れ線グラフ。旧タブの潮位計チャートと同じく、
-// 外部chartライブラリを使わない自前SVG(この規模のミニグラフには十分)。
+// 水位の推移を表す簡易SVGグラフ。旧タブの潮位計チャートと同じく、外部chart
+// ライブラリを使わない自前SVG。日付軸ラベル・面グラフ塗り・現在値ドットを
+// 加えて、値だけのシンプルな折れ線より状況が掴みやすいようにしている。
 // pastValuesの各要素は { stg: 水位(m), obsTime: "YYYY/MM/DD HH:mm", ... }。
 function RiverLevelSparkline({ points }) {
   const { tokens } = useContext(ThemeContext);
-  const W = 280, H = 90, PAD = 6;
-  const values = points.map(p => Number(p.stg)).filter(v => !Number.isNaN(v));
-  if (values.length < 2) return null;
+  const W = 280, H = 140;
+  const PAD_L = 34, PAD_R = 8, PAD_TOP = 10, PAD_BOTTOM = 20;
+  const plotW = W - PAD_L - PAD_R;
+  const plotH = H - PAD_TOP - PAD_BOTTOM;
+
+  const parsed = points
+    .map(p => ({ v: Number(p.stg), t: new Date(p.obsTime.replace(/\//g, "-")), lvl: p.stgOvlvl }))
+    .filter(p => !Number.isNaN(p.v) && !Number.isNaN(p.t.getTime()));
+  if (parsed.length < 2) return null;
+
+  const values = parsed.map(p => p.v);
   const minV = Math.min(...values);
   const maxV = Math.max(...values);
-  const range = maxV - minV || 1;
-  const stepX = (W - PAD * 2) / (points.length - 1);
-  const toY = (v) => H - PAD - ((v - minV) / range) * (H - PAD * 2);
-  const path = points
-    .map((p, i) => `${i === 0 ? "M" : "L"} ${(PAD + i * stepX).toFixed(1)} ${toY(Number(p.stg)).toFixed(1)}`)
+  // 値の範囲が全く無い(水位が一定)場合でも線がつぶれないよう、上下に余白を持たせる。
+  const range = (maxV - minV) || Math.max(0.1, maxV * 0.05);
+  const padV = range * 0.15;
+  const yMin = minV - padV, yMax = maxV + padV;
+
+  const stepX = plotW / (parsed.length - 1);
+  const toX = (i) => PAD_L + i * stepX;
+  const toY = (v) => PAD_TOP + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+  const linePath = parsed
+    .map((p, i) => `${i === 0 ? "M" : "L"} ${toX(i).toFixed(1)} ${toY(p.v).toFixed(1)}`)
     .join(" ");
+  const areaPath =
+    `M ${toX(0).toFixed(1)} ${(PAD_TOP + plotH).toFixed(1)} ` +
+    parsed.map((p, i) => `L ${toX(i).toFixed(1)} ${toY(p.v).toFixed(1)}`).join(" ") +
+    ` L ${toX(parsed.length - 1).toFixed(1)} ${(PAD_TOP + plotH).toFixed(1)} Z`;
+
+  // 横軸のラベルは、データ範囲を3等分した位置(始点・中間・終点)に日付だけ出す。
+  const tickIdxs = [0, Math.floor((parsed.length - 1) / 2), parsed.length - 1];
+  const formatTick = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+
+  const last = parsed[parsed.length - 1];
+  const lastColor = riverLevelInfo(last.lvl).color;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
-      <path d={path} fill="none" stroke="#0A84FF" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
-      <text x={PAD} y={12} fontSize="10" fill={`rgba(${tokens.ink},0.5)`}>{maxV.toFixed(2)}m</text>
-      <text x={PAD} y={H - PAD} fontSize="10" fill={`rgba(${tokens.ink},0.5)`}>{minV.toFixed(2)}m</text>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H}>
+      {/* 横方向のグリッド線(最大・最小の目安) */}
+      <line x1={PAD_L} y1={PAD_TOP} x2={W - PAD_R} y2={PAD_TOP} stroke={`rgba(${tokens.ink},0.1)`} strokeWidth="1"/>
+      <line x1={PAD_L} y1={PAD_TOP + plotH} x2={W - PAD_R} y2={PAD_TOP + plotH} stroke={`rgba(${tokens.ink},0.1)`} strokeWidth="1"/>
+
+      <defs>
+        <linearGradient id="riverSparklineFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#0A84FF" stopOpacity="0.28"/>
+          <stop offset="100%" stopColor="#0A84FF" stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill="url(#riverSparklineFill)" stroke="none"/>
+      <path d={linePath} fill="none" stroke="#0A84FF" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
+
+      {/* 現在値(最新点)を強調するドット */}
+      <circle cx={toX(parsed.length - 1)} cy={toY(last.v)} r="4" fill={lastColor} stroke="#fff" strokeWidth="1.5"/>
+
+      {/* 縦軸(最大値・最小値) */}
+      <text x={PAD_L - 4} y={PAD_TOP + 4} fontSize="9.5" textAnchor="end" fill={`rgba(${tokens.ink},0.5)`}>{maxV.toFixed(2)}</text>
+      <text x={PAD_L - 4} y={PAD_TOP + plotH + 3} fontSize="9.5" textAnchor="end" fill={`rgba(${tokens.ink},0.5)`}>{minV.toFixed(2)}</text>
+
+      {/* 横軸(日付) */}
+      {tickIdxs.map((i, k) => (
+        <text
+          key={i}
+          x={toX(i)}
+          y={H - 5}
+          fontSize="9.5"
+          textAnchor={k === 0 ? "start" : k === tickIdxs.length - 1 ? "end" : "middle"}
+          fill={`rgba(${tokens.ink},0.5)`}
+        >
+          {formatTick(parsed[i].t)}
+        </text>
+      ))}
     </svg>
   );
 }
