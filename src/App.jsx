@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.1.5";
+const APP_VERSION = "2.1.6";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -15290,8 +15290,8 @@ function RiverStationDetailCard({ properties }) {
 // pastValuesの各要素は { stg: 水位(m), obsTime: "YYYY/MM/DD HH:mm", ... }。
 function RiverLevelSparkline({ points }) {
   const { tokens } = useContext(ThemeContext);
-  const W = 280, H = 140;
-  const PAD_L = 34, PAD_R = 8, PAD_TOP = 10, PAD_BOTTOM = 20;
+  const W = 280, H = 150;
+  const PAD_L = 34, PAD_R = 8, PAD_TOP = 10, PAD_BOTTOM = 30;
   const plotW = W - PAD_L - PAD_R;
   const plotH = H - PAD_TOP - PAD_BOTTOM;
 
@@ -15320,9 +15320,10 @@ function RiverLevelSparkline({ points }) {
     parsed.map((p, i) => `L ${toX(i).toFixed(1)} ${toY(p.v).toFixed(1)}`).join(" ") +
     ` L ${toX(parsed.length - 1).toFixed(1)} ${(PAD_TOP + plotH).toFixed(1)} Z`;
 
-  // 横軸のラベルは、データ範囲を3等分した位置(始点・中間・終点)に日付だけ出す。
+  // 横軸のラベルは、データ範囲を3等分した位置(始点・中間・終点)に日付+時刻を出す。
   const tickIdxs = [0, Math.floor((parsed.length - 1) / 2), parsed.length - 1];
-  const formatTick = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+  const formatTickDate = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+  const formatTickTime = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 
   const last = parsed[parsed.length - 1];
   const lastColor = riverLevelInfo(last.lvl).color;
@@ -15349,19 +15350,20 @@ function RiverLevelSparkline({ points }) {
       <text x={PAD_L - 4} y={PAD_TOP + 4} fontSize="9.5" textAnchor="end" fill={`rgba(${tokens.ink},0.5)`}>{maxV.toFixed(2)}</text>
       <text x={PAD_L - 4} y={PAD_TOP + plotH + 3} fontSize="9.5" textAnchor="end" fill={`rgba(${tokens.ink},0.5)`}>{minV.toFixed(2)}</text>
 
-      {/* 横軸(日付) */}
-      {tickIdxs.map((i, k) => (
-        <text
-          key={i}
-          x={toX(i)}
-          y={H - 5}
-          fontSize="9.5"
-          textAnchor={k === 0 ? "start" : k === tickIdxs.length - 1 ? "end" : "middle"}
-          fill={`rgba(${tokens.ink},0.5)`}
-        >
-          {formatTick(parsed[i].t)}
-        </text>
-      ))}
+      {/* 横軸(日付+時刻の2行) */}
+      {tickIdxs.map((i, k) => {
+        const anchor = k === 0 ? "start" : k === tickIdxs.length - 1 ? "end" : "middle";
+        return (
+          <g key={i}>
+            <text x={toX(i)} y={H - 17} fontSize="9.5" textAnchor={anchor} fill={`rgba(${tokens.ink},0.5)`}>
+              {formatTickDate(parsed[i].t)}
+            </text>
+            <text x={toX(i)} y={H - 5} fontSize="9.5" textAnchor={anchor} fill={`rgba(${tokens.ink},0.5)`}>
+              {formatTickTime(parsed[i].t)}
+            </text>
+          </g>
+        );
+      })}
     </svg>
   );
 }
