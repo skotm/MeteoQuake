@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.2.8";
+const APP_VERSION = "2.2.9";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -1969,13 +1969,17 @@ async function loadRiverStationsByTown(twnCd) {
 // 点内判定を行い、regioncode(=twn_cdと同じ全国地方公共団体コード体系のはず、
 // 実機未確認)を逆引きする。
 async function findTwnCdForPoint(lon, lat) {
-  if (lon == null || lat == null) return null;
+  if (lon == null || lat == null) {
+    console.warn("[河川/基準水位] 座標が無いため逆引きできません", { lon, lat });
+    return null;
+  }
   const areas = await loadWarningAreas();
   for (const area of areas) {
     const [minLon, minLat, maxLon, maxLat] = area.bbox || [];
     if (lon < minLon || lon > maxLon || lat < minLat || lat > maxLat) continue;
     if (pointInGeoJsonGeometry(lon, lat, area.geometry)) return area.properties.regioncode;
   }
+  console.warn("[河川/基準水位] 座標から市区町村を特定できませんでした", { lon, lat, areasCount: areas.length });
   return null;
 }
 
@@ -1986,9 +1990,18 @@ async function loadRiverStationThresholds(properties) {
   const twnCd = await findTwnCdForPoint(properties.__lon, properties.__lat);
   if (!twnCd) return null;
   const geojson = await loadRiverStationsByTown(twnCd);
+  console.log(`[河川/基準水位] twnCd=${twnCd} ${geojson.features?.length ?? 0}件取得、obs_fcd=${properties.obs_fcd}を探索中`);
   const match = (geojson.features || []).find(f => f.properties?.obs_fcd === properties.obs_fcd);
-  if (!match) return null;
+  if (!match) {
+    console.warn("[河川/基準水位] 市区町村単位一覧の中にobs_fcdが見つかりませんでした", {
+      obs_fcd: properties.obs_fcd,
+      twnCd,
+      sampleFcds: (geojson.features || []).slice(0, 5).map(f => f.properties?.obs_fcd),
+    });
+    return null;
+  }
   const p = match.properties;
+  console.log("[河川/基準水位] 一致した地点のproperties:", p);
   // 実機検証で判明したフィールド名。水防法の基準水位5段階に相当すると推測:
   // rsrv_stg=水防団待機水位, warn_stg=氾濫注意水位, spcl_warn_stg=避難判断水位,
   // dng_stg=氾濫危険水位, fld_stg=氾濫水位(氾濫開始水位)。
@@ -15244,8 +15257,12 @@ function RiverStationDetailCard({ properties }) {
     let cancelled = false;
     setThresholds(null);
     loadRiverStationThresholds(properties)
-      .then((t) => { if (!cancelled) setThresholds(t); })
-      .catch(() => { if (!cancelled) setThresholds(null); });
+      .then((t) => {
+        if (cancelled) return;
+        console.log("[河川/基準水位] 最終結果:", t);
+        setThresholds(t);
+      })
+      .catch((err) => { console.warn("[河川/基準水位] エラー:", err); if (!cancelled) setThresholds(null); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [obsFcd, properties?.__lon, properties?.__lat]);
