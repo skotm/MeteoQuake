@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "2.1.6";
+const APP_VERSION = "2.1.7";
 
 /* ─────────────────────────────────────────────────────
    IN-APP DEBUG LOG
@@ -15194,8 +15194,20 @@ function RiverStationDetailCard({ properties }) {
   if (!properties) return null;
   const info = riverLevelInfo(properties.stg_ovlvl);
   const name = properties.obs_nm || "観測所";
-  // 実機検証で判明した実際のスキーマ: { dspFlg, pastValues: [{ stg, obsTime, ... }] }
-  const points = Array.isArray(series?.pastValues) ? series.pastValues : null;
+  // 実機検証で判明した実際のスキーマ: { dspFlg, pastValues: [{ stg, obsTime, ... }] }。
+  // ただしpastValuesは「確定済みの過去データ」のアーカイブのようで、当日分の
+  // 最新の値が含まれていないことがある(前日24時までで止まる)。観測所ピンの
+  // properties(タップ時点の最新値)を末尾に補完して、グラフが実際の「今」まで
+  // 繋がるようにする。
+  const points = useMemo(() => {
+    const base = Array.isArray(series?.pastValues) ? series.pastValues.slice() : null;
+    if (!base) return null;
+    const latest = { stg: properties.stg_ovdeg, obsTime: properties.obs_time, stgOvlvl: properties.stg_ovlvl };
+    const lastInBase = base[base.length - 1];
+    const isNewer = !lastInBase?.obsTime || !latest.obsTime || latest.obsTime > lastInBase.obsTime;
+    if (latest.stg != null && latest.obsTime && isNewer) base.push(latest);
+    return base;
+  }, [series, properties.stg_ovdeg, properties.obs_time, properties.stg_ovlvl]);
   const cutoffPoints = points
     ? points.filter(p => {
         if (!p?.obsTime) return true;
