@@ -158,8 +158,8 @@ function pickThinnedForecastPoints(points, intervalHours) {
 // 1つにつながって描画されてしまっていた。
 // ここでは、
 //  1. arcから(中心,半径)が同じ円の重複を除き、予報点の時系列順に並べる
-//  2. 隣り合う円は、その2円をつなぐ接線(line)がある場合に限ってconvex hullでつなぐ
-//     (接線の両端点がそれぞれの円周上にあるかで判定する)
+//  2. 隣り合う円は、その切れ目をまたぐ接線(line)がある場合に限ってconvex hullでつなぐ
+//     (接線の端点を、円周に最も近い円に対応づけて判定する)
 //  3. 接線でつながらなかった円どうしは別の領域のまま、全体をunionする
 // とする。角度に依存しないので、従来どおり自己交差で壊れることもない。
 // orderedCenters: 予報点(時系列順)の中心[lon,lat]の配列。円の並び替えに使う。
@@ -197,30 +197,48 @@ function buildStormWarningAreaFeature(turf, stormWarningArea, orderedCenters = [
     turf.circle(c.center, c.radiusKm, { steps: 64, units: "kilometers" })
   );
 
-  // 接線(line)の端点が、ある円の円周上にあるか(JMAの座標は小数2桁丸めのため許容誤差つき)
+  // 接線(line)から、時系列順に並べた円の「どの切れ目(i と i+1 の間)を接線がまたぐか」を求める。
+  // 接線の各端点は、円周からの距離のずれが最小の円に対応づける(しきい値は使わない)。
+  // 隣り合う円どうしだけでなく、間の円を飛ばして結ぶ接線(間の円が外形に出ない場合)も
+  // またぐ切れ目として数えるので、本来つながっている箇所が分裂しない。
+  // どの接線もまたがない切れ目だけが「暴風域が途切れた箇所」として分離される。
   const lines = (stormWarningArea?.line || [])
     .map(seg => (Array.isArray(seg) ? seg.map(parseJMACoord) : []))
-    .filter(seg => seg.length >= 2 && seg[0] && seg[1]);
-  const onCircle = (pt, spec) => {
-    const dist = turf.distance(turf.point(pt), turf.point(spec.center), { units: "kilometers" });
-    return Math.abs(dist - spec.radiusKm) <= Math.max(3, spec.radiusKm * 0.03);
+    .filter(seg => seg.length >= 2 && seg[0] && seg[seg.length - 1])
+    .map(seg => [seg[0], seg[seg.length - 1]]);
+  const nearestCircleIndex = (pt) => {
+    let best = -1, bestErr = Infinity;
+    circleSpecs.forEach((spec, idx) => {
+      const dist = turf.distance(turf.point(pt), turf.point(spec.center), { units: "kilometers" });
+      const err = Math.abs(dist - spec.radiusKm);
+      if (err < bestErr) { bestErr = err; best = idx; }
+    });
+    return best;
   };
-  const isLinked = (a, b) => lines.some(([p1, p2]) =>
-    (onCircle(p1, a) && onCircle(p2, b)) || (onCircle(p1, b) && onCircle(p2, a))
-  );
+  const spans = new Array(Math.max(circles.length - 1, 0)).fill(false);
+  lines.forEach(([p1, p2]) => {
+    const i1 = nearestCircleIndex(p1), i2 = nearestCircleIndex(p2);
+    if (i1 < 0 || i2 < 0) return;
+    for (let k = Math.min(i1, i2); k < Math.max(i1, i2); k++) spans[k] = true;
+  });
 
   let result = circles[0];
   for (let i = 0; i < circles.length; i++) {
     if (i > 0) result = turf.union(result, circles[i]) || result;
     if (i + 1 < circles.length) {
       // lineが1本も無いデータ(想定外)では従来どおり隣り合う円をつなぐ
-      const linked = lines.length === 0 || isLinked(circleSpecs[i], circleSpecs[i + 1]);
+      const linked = lines.length === 0 || spans[i];
       if (linked) {
         const segment = turf.convex(turf.explode(turf.featureCollection([circles[i], circles[i + 1]])));
         if (segment) result = turf.union(result, segment) || result;
       }
     }
   }
+  console.info("[typhoon] stormWarningArea", {
+    circles: circleSpecs.length,
+    lines: lines.length,
+    linked: lines.length === 0 ? "all" : spans.map(v => (v ? 1 : 0)).join(""),
+  });
   result.properties = { type: "stormWarningArea" };
   return result;
 }
