@@ -264,6 +264,13 @@ export default function App() {
   const [shakeDetectionEnabled, setShakeDetectionEnabledState] = useState(loadStoredShakeDetectionEnabled);
   // カメラの動き(詳細設定 > カメラの動き)。緊急地震速報・揺れ検知での地図の自動ズームの設定。
   const [cameraSettings, setCameraSettings] = useState(loadStoredCameraSettings);
+  // 気象・警報タブを見ている間は、揺れ検知の視点追従と緊急地震速報の自動ズームを止める
+  // (地図の操作を邪魔しない)。気象・警報タブの間に届いた速報は「見た」扱いになるため、
+  // 地震タブなどへ戻った時に古い速報で急に動くこともない。
+  const mapCameraSettings = useMemo(
+    () => (inWeatherOrAlert ? { ...cameraSettings, eewFocus: false, shakeFollow: false } : cameraSettings),
+    [cameraSettings, inWeatherOrAlert],
+  );
   function handleChangeCameraSettings(patch) {
     setCameraSettings(prev => {
       const next = { ...prev, ...patch };
@@ -2571,10 +2578,10 @@ export default function App() {
           replayDataTimeMs={replayPlayer.loaded ? (replayPlayer.frames[replayPlayer.currentIndex]?.dataTime?.getTime() ?? null) : null}
           shakeDetectionEnabled={shakeDetectionEnabled && !inWeatherOrAlert}
           weakArrayDetectionEnabled={weakArrayDetectionEnabled}
-          cameraSettings={cameraSettings}
+          cameraSettings={mapCameraSettings}
           onShakeEventsChange={setShakeEvents}
           epicenterEstimationEnabled={epicenterEstimationEnabled}
-          gridDetectionEnabled={shakeDetectionEnabled && gridDetectionEnabled}
+          gridDetectionEnabled={shakeDetectionEnabled && !inWeatherOrAlert && gridDetectionEnabled}
           gridCellsVisible={gridCellsVisible}
           showLowConfidenceEstimates={showLowConfidenceEstimates}
           onEpicenterEstimateChange={setEpicenterEstimates}

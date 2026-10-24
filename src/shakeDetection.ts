@@ -469,6 +469,18 @@ export const DEFAULT_SHAKE_DETECTION_PARAMS = {
   // 4つのしきい値でレベル1〜4を区切る(この値未満はレベル0)。
   levelThresholds: [0.5, 2.0, 3.5, 5.0],
 
+  // 【地域別の検知しきい値】特定の地域の観測点だけ、「上昇量」の基準を厳しくする。
+  // 東京首都圏は交通・工事などの人為的な振動が多く、微小な揺れの誤検知が出やすいため、
+  // この範囲(緯度・経度の矩形)にある観測点は、前tickとの差・直近5秒平均との差を
+  // scale で割って(=scale倍の上昇を要求して)から、すべての上昇系しきい値
+  // (reactionRiseThreshold・riseThreshold・isolatedRiseThreshold・
+  // propagationRiseThreshold・broadRiseCandidateThreshold など)と比べる。
+  // 震度の値そのもの(latestIntensity)や、震度による段階分け(levelThresholds)は変えない。
+  // 複数の範囲が重なる観測点は、最も大きいscaleを使う。scale=1で無効。
+  regionalRiseScales: [
+    { name: "東京首都圏", minLat: 35.2, maxLat: 36.1, minLon: 138.9, maxLon: 140.5, scale: 1.5 },
+  ],
+
   // イベントの統合・寿命
   mergeDistanceKm: 40,             // これより近い2つのイベントは統合する
   eventDurationBaseMs: 45_000,     // イベントの基本持続時間(ms)
@@ -1375,6 +1387,19 @@ function isOceanBottomStationId(id) {
 // P波の初動からS波到達とみなせるまでの最短時間(ms)。上記sharpRiseのコメント参照。
 const S_ARRIVAL_MIN_DELAY_MS = 2000;
 
+// 観測点の位置から、上昇量に掛ける地域別の係数(regionalRiseScales)を求める。
+// どの範囲にも入らなければ1(補正なし)。
+export function regionalRiseScaleFor(lat, lon, regions = DEFAULT_SHAKE_DETECTION_PARAMS.regionalRiseScales) {
+  let scale = 1;
+  if (!Array.isArray(regions) || lat == null || lon == null) return scale;
+  for (const r of regions) {
+    if (lat >= r.minLat && lat <= r.maxLat && lon >= r.minLon && lon <= r.maxLon && r.scale > scale) {
+      scale = r.scale;
+    }
+  }
+  return scale;
+}
+
 export class ShakeDetectionEngine {
   constructor(params = {}) {
     this.params = { ...DEFAULT_SHAKE_DETECTION_PARAMS, ...params };
@@ -1482,6 +1507,7 @@ export class ShakeDetectionEngine {
         id: s.id,
         lat: s.lat,
         lon: s.lon,
+        riseScale: regionalRiseScaleFor(s.lat, s.lon, this.params.regionalRiseScales),
         prevIntensity: prev ? prev.prevIntensity : null,
         latestIntensity: prev ? prev.latestIntensity : null,
         intensityDiff: 0,
@@ -1610,9 +1636,11 @@ export class ShakeDetectionEngine {
       }
       point.prevIntensity = point.latestIntensity;
       point.latestIntensity = value;
-      point.intensityDiff = (value != null && point.prevIntensity != null) ? value - point.prevIntensity : 0;
+      // 地域別の係数(regionalRiseScales。東京首都圏など)で割って、上昇系のしきい値を実質的に引き上げる。
+      const riseScale = point.riseScale ?? 1;
+      point.intensityDiff = (value != null && point.prevIntensity != null) ? (value - point.prevIntensity) / riseScale : 0;
       const baselineAvg = value != null ? computeBaselineAvg(point.history) : null;
-      point.avgDiff = baselineAvg != null ? value - baselineAvg : null;
+      point.avgDiff = baselineAvg != null ? (value - baselineAvg) / riseScale : null;
 
       point.riseRateHistory.push(point.intensityDiff);
       if (point.riseRateHistory.length > params.riseRateHistoryLength) point.riseRateHistory.shift();
