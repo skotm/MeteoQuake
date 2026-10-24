@@ -1,31 +1,112 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Filters, Glass, GlassOpaqueContext, LAYERS, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride, useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./ui/glass.jsx";
-import { GlobalStyles } from "./ui/globalStyles.jsx";
-import { loadGeoData, loadTsunamiAreasData } from "./lib/loaders.js";
-import { NowcastColorSchemeContext, loadStoredNowcastColorScheme, saveNowcastColorScheme } from "./weather/nowcast.js";
-import { MapCanvas } from "./map/MapCanvas.jsx";
-import { QuakeColorSchemeContext, THEME_TOKENS, ThemeContext, clampQuakeFetchLimit, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeColorScheme, loadStoredQuakeFetchLimit, loadStoredStationListDisplayMode, loadStoredThemeModePref, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeColorScheme, saveQuakeFetchLimit, saveStationListDisplayMode, saveThemeModePref, useSystemThemeMode } from "./settings/prefs.js";
-import { TSUNAMI_FETCH_LIMIT, TSUNAMI_HISTORY_PAGE_SIZE, dedupeQuakeList, dedupeTsunamiList, fetchJmaTsunamiHistory, fetchRecentTsunamis, fetchTsunamiHistoryPage, mergeQuakeCards, mergeTsunamiSources, tsunamiGradeInfo, tsunamiHeightBandColor } from "./api/p2p.js";
-import { fetchRecentQuakes } from "./api/estimatedIntensity.js";
-import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./api/eew.js";
-import { EMPTY_EQDB_LIST, loadStations, polygonRoughCentroid, resolveStationPoints, toTideDateStr } from "./api/quakeData.js";
-import { buildTestQuakeStageCard, calcTestEewAreasByAttenuation, fetchWarningLevelMap_combined, findNearestTsunamiArea, isTestWarnLevel, loadWarningAreaNameIndex } from "./api/warnings.js";
-import { buildEqdbQuakeCard, computeMaxTsunamiHeightCm, daysBetweenDates, fetchTideObsForDateRange, fetchTideObsRange, fetchTideStations } from "./weather/location.jsx";
-import { SideNavRail, WIDE_RAIL_WIDTH } from "./components/nav.jsx";
-import { BottomDock } from "./components/BottomDock.jsx";
-import { NowcastLegend, PrecipLegend, QuakeIntensityLegend, RiskLegend, RiverLegend, TsunamiGradeLegend, WarningLegend, WdistLegend } from "./components/legends.jsx";
-import { TEST_TSUNAMI_GRADE_OPTIONS } from "./components/Settings.jsx";
-import { TermsConsentGate } from "./components/TermsGate.jsx";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useRealtimeStream } from "./useRealtimeStream";
+import { useReplayPlayer } from "./useReplayPlayer";
+import { prepareShakeTest, isShakeTestFinished, computeShakeTestValues } from "./shakeTestSimulation";
+import { setJmaTravelTimeTable, tableFromJSON } from "./jmaTravelTime";
+import { CONSENT_DOCS, isConsentUpToDate, loadStoredConsent, saveConsent } from "./app/consent";
+import { loadMarkdownFile } from "./app/settingsPanels";
+import { QuakeColorSchemeContext, REALTIME_API_BASE_URL, loadStoredQuakeColorScheme, saveQuakeColorScheme } from "./app/colorSchemes";
+import { Filters, LAYERS } from "./app/navigation";
+import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layoutHooks";
+import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
+import { THEME_TOKENS, ThemeContext, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
+import { clampQuakeFetchLimit, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, saveGridDetectionEnabled, saveGridCellsVisible, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
+import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
+import { loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
+import { buildTestQuakeStageCard, calcTestEewAreasByAttenuation, isTestWarnLevel } from "./app/testSimulation";
+import { dedupeQuakeList, fetchRecentQuakes, mergeQuakeCards } from "./app/quakeCards";
+import { TSUNAMI_FETCH_LIMIT, TSUNAMI_HISTORY_PAGE_SIZE, dedupeTsunamiList, fetchJmaTsunamiHistory, fetchRecentTsunamis, fetchTsunamiHistoryPage, mergeTsunamiSources, tsunamiGradeInfo, tsunamiHeightBandColor } from "./app/tsunamiData";
+import { TEST_TSUNAMI_GRADE_OPTIONS } from "./app/testPanels";
+import { EMPTY_EQDB_LIST, buildEqdbQuakeCard } from "./app/eqdb";
+import { computeMaxTsunamiHeightCm, daysBetweenDates, fetchTideObsForDateRange, fetchTideObsRange, fetchTideStations, toTideDateStr } from "./app/tideData";
+import { loadJmaTravelTimeTable, loadStations, resolveStationPoints } from "./app/stations";
+import { findNearestTsunamiArea, polygonRoughCentroid } from "./app/geo";
+import { GlobalStyles } from "./app/globalStyles";
+import { ConsentGate } from "./app/ConsentGate";
+import { MapCanvas } from "./app/MapCanvas";
+import { QuakeIntensityLegend, RealtimeIntensityThresholdBar, TsunamiGradeLegend } from "./app/mapOverlayUi";
+import { SideNavRail, WIDE_RAIL_WIDTH } from "./app/navUi";
+import { NowcastColorSchemeContext, loadStoredNowcastColorScheme, saveNowcastColorScheme } from "./app/weather/nowcast";
+import { NowcastLegend, PrecipLegend, RiskLegend, RiverLegend, WarningLegend, WdistLegend } from "./app/weatherLegends";
+import { fetchWarningLevelMap_combined, loadWarningAreaNameIndex } from "./app/warnings";
+import { BottomDock } from "./app/BottomDock";
+
 
 /* ─────────────────────────────────────────────────────
    APP ROOT
    ───────────────────────────────────────────────────── */
 export default function App() {
+  // 利用規約等の同意状態。localStorageに保存し、3文書のいずれかのバージョンが
+  // 現行(TERMS_VERSION等)と異なる(=未同意、または文書更新後の未再同意)場合は
+  // isConsentUpToDateがfalseになり、下のreturnでConsentGateを全画面表示する。
+  const [consent, setConsent] = useState(loadStoredConsent);
+  function handleAgreeConsent(nextConsent) {
+    setConsent(nextConsent);
+    saveConsent(nextConsent);
+  }
+
+  // アプリを開いたタイミングで、利用規約等の3文書をすぐにメモリキャッシュしておく
+  // (loadMarkdownFile自体が「一度取得したら使い回す」ため、ここでは結果を
+  // 使わずキックするだけでよい)。ConsentGateでのタブ切り替えや、後で設定画面
+  // から読み返す際に、待たされず即表示できるようにするための先読み。
+  useEffect(() => {
+    CONSENT_DOCS.forEach(doc => { loadMarkdownFile(doc.fileName).catch(() => {}); });
+  }, []);
+
   const [activeNav, setActiveNav] = useState("quake");
+  // 地震タブのフローティングバー(左から リアルタイム / 地震一覧 / 地震検索)の選択。
+  // 旧「リアルタイムタブ」は廃止し、バー左端の「リアルタイム」に統合した。
+  const [quakeViewMode, setQuakeViewMode] = useState("realtime"); // "realtime" | "recent" | "search"
+  // 実際に表示している内容。地震タブのバーが「リアルタイム」の間は"realtime"として扱い、
+  // 旧リアルタイムタブ向けの分岐(地図レイヤー・EEW表示・選択の反映範囲など)をそのまま使う。
+  const effectiveNav = (activeNav === "quake" && quakeViewMode === "realtime") ? "realtime" : activeNav;
+  // 気象タブで気象タブ・警報タブを見ている間は、リアルタイム検知(と地図上のリアルタイム表示)を止める。
+  const inWeatherOrAlert = activeNav === "weather" || activeNav === "alert";
+
+  // 雨雲レーダー配色。設定タブの「気象」→「雨雲レーダー配色」から切り替える。
+  // 選択したスキームはlocalStorageに保存し、次回起動時も復元する。
+  const [nowcastColorScheme, setNowcastColorScheme] = useState(loadStoredNowcastColorScheme); // "jma" | "yahoo"
+  function handleChangeNowcastColorScheme(schemeId) {
+    setNowcastColorScheme(schemeId);
+    saveNowcastColorScheme(schemeId);
+  }
   // WebSocketの受信ハンドラ(古いクロージャのまま生き続ける)から常に最新の
   // activeNavを参照できるようにするためのref。緊急地震速報の自動表示切り替えに使う。
   const activeNavRef = useRef(activeNav);
   useEffect(() => { activeNavRef.current = activeNav; }, [activeNav]);
+
+  // リアルタイムタブ(強震モニタ/S-net)は、一度開いたらアプリを閉じるまで
+  // 接続を維持する(他タブに移っても切断しない)。この state は一度trueに
+  // なったら二度とfalseへは戻さない(=「タブを開いた」という事実の記録)。
+  const [realtimeEverActivated, setRealtimeEverActivated] = useState(false);
+  useEffect(() => {
+    if (effectiveNav === "realtime" && !realtimeEverActivated) {
+      setRealtimeEverActivated(true);
+    }
+  }, [effectiveNav, realtimeEverActivated]);
+
+  // 【廃止】リアルタイムタブ(強震モニタ/S-net)配信APIのアクセストークン。
+  // 設定タブ「詳細設定」から入力・変更できた(トークン入力機能自体を廃止した
+  // ため、状態管理ごとコメントアウト。復元する場合はコメント解除の上、下の
+  // useRealtimeStream呼び出しも元の第3引数(realtimeApiToken)に戻すこと)。
+  // const [realtimeApiToken, setRealtimeApiToken] = useState(loadStoredRealtimeApiToken);
+  // const updateRealtimeApiToken = useCallback((token) => {
+  //   setRealtimeApiToken(token);
+  //   saveRealtimeApiToken(token);
+  // }, []);
+
+  // 上記の通り、一度リアルタイムタブを開けば以降はアプリを閉じる
+  // (このコンポーネントがアンマウントされる)までWS接続を維持し続ける。
+  // トークン入力機能廃止に伴い、第3引数は空文字固定(未設定扱い)にしている。
+  const realtimeStream = useRealtimeStream(REALTIME_API_BASE_URL, realtimeEverActivated, "");
+
+  // リプレイファイル(バックフィルサーバーで生成した過去データ)の再生。
+  // 読み込みは設定タブ「詳細設定」から行う。値の実際の合成(シミュレーションとの
+  // 優先順位含む)はeffectiveRealtimeValues側で行う。
+  const replayPlayer = useReplayPlayer();
+  const realtimeDataTimeForMap = replayPlayer.loaded
+    ? (replayPlayer.frames[replayPlayer.currentIndex]?.dataTime ?? null)
+    : realtimeStream.dataTime;
 
   // タブバーで、既にアクティブなタブをもう一度タップした時に、フローティングを
   // 開閉トグルさせるための信号。値そのものに意味は無く、変化すること自体を
@@ -141,15 +222,6 @@ export default function App() {
     saveQuakeColorScheme(schemeId);
   }
 
-  // 雨雲レーダー配色。設定タブの「気象」→「雨雲レーダー配色」から切り替える。
-  // 選択したスキームはlocalStorageに保存し、次回起動時も復元する。
-  const [nowcastColorScheme, setNowcastColorScheme] = useState(loadStoredNowcastColorScheme); // "jma" | "yahoo"
-
-  function handleChangeNowcastColorScheme(schemeId) {
-    setNowcastColorScheme(schemeId);
-    saveNowcastColorScheme(schemeId);
-  }
-
   // 推計震度分布の表示ON/OFF。地図レイヤーパネルの「推計震度分布」トグルと
   // 設定タブ「地震」内のトグルの、両方から操作できる単一の状態(localStorageに永続化)。
   const [estIntensityEnabled, setEstIntensityEnabledState] = useState(loadStoredEstIntensityEnabled);
@@ -158,6 +230,109 @@ export default function App() {
     setEstIntensityEnabledState(next);
     saveEstIntensityEnabled(next);
   }
+
+  // リアルタイム震度(強震モニタ/S-net)の表示しきい値。震度しきい値バーの
+  // 三角マーカーで操作し、推計震度分布と同じくlocalStorageに永続化する。
+  const [realtimeIntensityThreshold, setRealtimeIntensityThresholdState] = useState(loadStoredRealtimeIntensityThreshold);
+
+  function handleChangeRealtimeIntensityThreshold(next) {
+    setRealtimeIntensityThresholdState(next);
+    saveRealtimeIntensityThreshold(next);
+  }
+
+  // 震度上昇中レイヤー(前回の更新時点より震度が上がった観測点を黄色いリングで
+  // 強調表示する)の表示ON/OFF。設定タブ(タブ設定 > リアルタイム)で操作し、
+  // 推計震度分布と同じくlocalStorageに永続化する。
+  const [realtimeRisingEnabled, setRealtimeRisingEnabledState] = useState(loadStoredRealtimeRisingEnabled);
+
+  function handleChangeRealtimeRisingEnabled(next) {
+    setRealtimeRisingEnabledState(next);
+    saveRealtimeRisingEnabled(next);
+  }
+
+  // リプレイ再生中のみ選択できる、観測点の色を気象庁震度階級に換算して
+  // 表示する設定のON/OFF。localStorageに永続化する。
+  const [replayJmaColorEnabled, setReplayJmaColorEnabledState] = useState(loadStoredReplayJmaColorEnabled);
+
+  function handleChangeReplayJmaColorEnabled(next) {
+    setReplayJmaColorEnabledState(next);
+    saveReplayJmaColorEnabled(next);
+  }
+
+  // 揺れ検知エンジン(shakeDetection.ts)自体のON/OFF。設定タブ(タブ設定 >
+  // リアルタイム)で操作し、他の設定と同じくlocalStorageに永続化する。
+  const [shakeDetectionEnabled, setShakeDetectionEnabledState] = useState(loadStoredShakeDetectionEnabled);
+  // カメラの動き(詳細設定 > カメラの動き)。緊急地震速報・揺れ検知での地図の自動ズームの設定。
+  const [cameraSettings, setCameraSettings] = useState(loadStoredCameraSettings);
+  // 気象・警報タブを見ている間は、揺れ検知の視点追従と緊急地震速報の自動ズームを止める
+  // (地図の操作を邪魔しない)。気象・警報タブの間に届いた速報は「見た」扱いになるため、
+  // 地震タブなどへ戻った時に古い速報で急に動くこともない。
+  const mapCameraSettings = useMemo(
+    () => (inWeatherOrAlert ? { ...cameraSettings, eewFocus: false, shakeFollow: false } : cameraSettings),
+    [cameraSettings, inWeatherOrAlert],
+  );
+  function handleChangeCameraSettings(patch) {
+    setCameraSettings(prev => {
+      const next = { ...prev, ...patch };
+      saveCameraSettings(next);
+      return next;
+    });
+  }
+
+  // 配列型の微弱検知(ごく弱い揺れの検知)を使うか。リアルタイムタブの設定。デフォルトON。
+  const [weakArrayDetectionEnabled, setWeakArrayDetectionEnabledState] = useState(loadStoredWeakArrayDetectionEnabled);
+
+  function handleChangeWeakArrayDetectionEnabled(next) {
+    setWeakArrayDetectionEnabledState(next);
+    saveWeakArrayDetectionEnabled(next);
+  }
+
+  function handleChangeShakeDetectionEnabled(next) {
+    setShakeDetectionEnabledState(next);
+    saveShakeDetectionEnabled(next);
+    if (!next) setShakeEvents([]);
+  }
+
+  // 震源推定(epicenterEstimation.ts、実験的機能)自体のON/OFF。地震検知と
+  // 同じ設定タブで操作し、localStorageに永続化する。デフォルトOFF。
+  const [epicenterEstimationEnabled, setEpicenterEstimationEnabledState] = useState(false); // 一時的に無効化(設定UIはグレー表示でオンにできない。保存値は読まない)
+
+  // 信頼度が下限未満の震源推定も表示するか。リアルタイムタブの設定。デフォルトOFF。
+  const [showLowConfidenceEstimates, setShowLowConfidenceEstimatesState] = useState(loadStoredShowLowConfidenceEstimates);
+
+  function handleChangeShowLowConfidenceEstimates(next) {
+    setShowLowConfidenceEstimatesState(next);
+    saveShowLowConfidenceEstimates(next);
+  }
+
+  function handleChangeEpicenterEstimationEnabled(next) {
+    if (next) return; // 一時的にオンにできない
+    setEpicenterEstimationEnabledState(next);
+    saveEpicenterEstimationEnabled(next);
+  }
+
+  // グリッド(セル)方式の揺れ検知(gridDetection.ts)のON/OFFと、セル枠の表示のON/OFF。
+  // 既存の揺れ検知と併用でき、震源推定(ONの間)も、それぞれの検知結果に対して行う。
+  const [gridDetectionEnabled, setGridDetectionEnabledState] = useState(loadStoredGridDetectionEnabled);
+  const [gridCellsVisible, setGridCellsVisibleState] = useState(loadStoredGridCellsVisible);
+  function handleChangeGridDetectionEnabled(next) {
+    setGridDetectionEnabledState(next);
+    saveGridDetectionEnabled(next);
+  }
+  function handleChangeGridCellsVisible(next) {
+    setGridCellsVisibleState(next);
+    saveGridCellsVisible(next);
+  }
+
+  // 震源推定の最新結果(Map<eventId, estimateEpicenter()の戻り値>)。MapCanvas
+  // 側でtickごとに更新され、コールバック経由でここに渡される
+  // (現時点では地図上の表示のみに使用。他タブでの一覧表示は未実装)。
+  const [epicenterEstimates, setEpicenterEstimates] = useState(new Map());
+
+  // 揺れ検知エンジン(shakeDetection.ts)が検出したイベントの一覧。MapCanvas側
+  // でtickごとに更新され、コールバック経由でここに渡される。リアルタイムタブの
+  // フローティングでの一覧表示に使う。
+  const [shakeEvents, setShakeEvents] = useState([]);
 
   // 細分区域を震度の色で塗りつぶすかどうか。推計震度分布と同じく設定タブで操作し、localStorageに永続化する。
   const [areaFillEnabled, setAreaFillEnabledState] = useState(loadStoredAreaFillEnabled);
@@ -179,103 +354,10 @@ export default function App() {
       clearTestTsunami();
       setTsunamiAreaPickActive(false);
       setPickedTsunamiAreas([]);
+      // 地震検知テストのシミュレーションも同様に片付ける。
+      setShakeTests([]);
+      setShakeTestEpicenterPickActive(false);
     }
-  }
-
-  // 警報タブ: 気象警報・注意報。regioncode → {level, kinds} のマップ。
-  // 警報タブを開いている間だけ10分おきにポーリングする(EEW等の常時監視系と違い、
-  // 警報・注意報は数分単位で急変するものではないため)。
-  const [warningLevelMap, setWarningLevelMap] = useState({});
-  // 直近の取得時刻。タブを行ったり来たりするたびに毎回APIを叩き直さないよう、
-  // 直近1分以内に取得済みなら再取得をスキップする(定期ポーリングのタイマーは
-  // forceで無視する)。
-  const warningLevelMapFetchedAtRef = useRef(0);
-  useEffect(() => {
-    if (activeNav !== "alert") return;
-    let cancelled = false;
-    const refresh = (force = false) => {
-      if (!force && Date.now() - warningLevelMapFetchedAtRef.current < 60 * 1000) return;
-      fetchWarningLevelMap_combined()
-        .then((map) => {
-          if (cancelled) return;
-          warningLevelMapFetchedAtRef.current = Date.now();
-          setWarningLevelMap(map);
-        })
-        .catch((err) => console.error("警報・注意報データの取得に失敗しました:", err));
-    };
-    refresh();
-    const intervalId = setInterval(() => refresh(true), 10 * 60 * 1000);
-    return () => { cancelled = true; clearInterval(intervalId); };
-  }, [activeNav]);
-
-  // 警報タブ: 市区町村の名称インデックス(1,821件、regioncode→{name, geometry})。
-  // 以前はloadWarningAreaMunicipalities()(1,821件全部のcentroidを毎回計算する
-  // 重い版、五十音ピッカー専用)を流用していたが、警報タブを開いた瞬間に
-  // 発表の有無に関わらず全市区町村分の座標計算が走ってしまい、体感の重さの
-  // 原因になっていた。ここでは名称とジオメトリを受け渡すだけの軽量版
-  // loadWarningAreaNameIndex()を使い、座標(centroid)は下のuseMemoで
-  // 「実際に発表中の数件」だけ遅延計算する。
-  const [warningAreaNameIndex, setWarningAreaNameIndex] = useState(null);
-  const warningAreaNameIndexLoadedRef = useRef(false);
-  useEffect(() => {
-    if (activeNav !== "alert" || warningAreaNameIndexLoadedRef.current) return;
-    warningAreaNameIndexLoadedRef.current = true;
-    loadWarningAreaNameIndex()
-      .then(setWarningAreaNameIndex)
-      .catch((err) => {
-        console.error("警報エリアの名称マスタの読み込みに失敗しました:", err);
-        warningAreaNameIndexLoadedRef.current = false; // 失敗時は次回開いた時に再試行できるようにする
-      });
-  }, [activeNav]);
-  // regioncode → {name, lat, lon} の逆引きテーブル。一覧表示・詳細カードの
-  // 両方で使う。centroid計算は「現在warningLevelMapに載っている(=発表中の)
-  // regioncodeだけ」に絞ることで、全1,821件分の計算を避けている。
-  const warningAreaByRegioncode = useMemo(() => {
-    const map = {};
-    if (!warningAreaNameIndex) return map;
-    // 名称は全1,821件分マップしておく(地図タップは発表の有無を問わず全国が
-    // 対象になったため、発表なしのエリアでも名前だけは詳細カードで出したい)。
-    // centroid計算(polygonRoughCentroid)は依然として重いので、一覧・flyToで
-    // 実際に必要になる「発表中」の分だけに絞って計算する。
-    for (const regioncode of Object.keys(warningAreaNameIndex)) {
-      const entry = warningAreaNameIndex[regioncode];
-      if (!entry) continue;
-      const centroid = warningLevelMap[regioncode] ? polygonRoughCentroid(entry.geometry) : null;
-      map[regioncode] = { name: entry.name, regionname: entry.regionname, lat: centroid?.lat ?? null, lon: centroid?.lon ?? null };
-    }
-    return map;
-  }, [warningLevelMap, warningAreaNameIndex]);
-
-  // 警報タブ: タップ/一覧選択中のエリア(regioncode) | null。
-  // タブを離れたら選択解除する(津波タブの選択解除と同じ考え方)。
-  const [selectedWarningArea, setSelectedWarningArea] = useState(null);
-  useEffect(() => {
-    if (activeNav !== "alert") setSelectedWarningArea(null);
-  }, [activeNav]);
-  // 一覧の項目をタップした時のflyTo先。{lon, lat, nonce} | null
-  // (nonceは同じエリアを連続でタップしても再度flyToが発火するようにするため)。
-  const [warningAreaFlyToRequest, setWarningAreaFlyToRequest] = useState(null);
-  // 地図の塗り分けをタップした時。地図タップは警報レイヤーの全ポリゴン
-  // (発表の有無を問わず日本全国)に対して判定される。以前は発表中でない
-  // エリアのタップを無視していたが、warningAreaByRegioncodeが名称だけは
-  // 全件分持つようになったため、発表なしのエリアもそのまま選択して
-  // 詳細カード側で「発表中の警報・注意報はありません」と出す。
-  function handleSelectWarningArea(regioncode) {
-    setSelectedWarningArea(regioncode);
-  }
-  // 一覧の項目をタップした時。選択に加えて、代表座標が分かっていればflyToする。
-  // useCallbackで参照を安定させ、WarningAreaListPanel(memo化済み)がBottomDockの
-  // 再レンダー(ドラッグ中のアニメーション等)のたびに再レンダーされるのを防ぐ。
-  const handleSelectWarningAreaFromList = useCallback((regioncode) => {
-    setSelectedWarningArea(regioncode);
-    const area = warningAreaByRegioncode[regioncode];
-    if (area && area.lat != null && area.lon != null) {
-      setWarningAreaFlyToRequest({ lon: area.lon, lat: area.lat, nonce: Date.now() });
-    }
-  }, [warningAreaByRegioncode]);
-  // 詳細カードの「戻る」ボタン。
-  function handleBackFromWarningArea() {
-    setSelectedWarningArea(null);
   }
 
   // 断層(faults.geojson)の表示ON/OFF。設定タブ「地震」内のトグルで操作し、
@@ -347,10 +429,24 @@ export default function App() {
   //   このselectQuake()を通すことで、state更新と完全に同じタイミング(同期的)
   //   でrefも更新されるようにする。
   const selectedQuakeIdRef = useRef(null);
-  const selectQuake = useCallback((id) => {
+  // 地震タブの一覧と、リアルタイムタブの「直近の地震」一覧、どちらから選んだ
+  // かを覚えておく。地震タブで開いた地震をリアルタイムタブに、逆にリアルタイム
+  // タブで開いた地震を地震タブに、それぞれ反映させないため(要件により)。
+  // null(未指定)は「地震タブ相当」として扱う。地図クリックやEEWの関連地震
+  // カードなど、一覧経由でない選択(=このoriginの区別が本来関係ない選択)は
+  // すべてこちらのデフォルト挙動(地震タブ側)に倒す。
+  const [selectedQuakeOrigin, setSelectedQuakeOrigin] = useState(null); // "quake" | "realtime" | null
+  const selectQuake = useCallback((id, origin) => {
     console.log("[quake-select-diag][selectQuake]", { from: selectedQuakeIdRef.current, to: id });
     selectedQuakeIdRef.current = id;
     setSelectedQuakeId(id);
+    if (id == null) {
+      setSelectedQuakeOrigin(null);
+    } else if (origin !== undefined) {
+      // 続報での自動差し替え(successor更新)などorigin未指定の呼び出しでは、
+      // 元々どちらのタブが選んだ地震かをそのまま引き継ぐ。
+      setSelectedQuakeOrigin(origin);
+    }
   }, []);
 
   // 津波情報(P2P地震情報API)。地震情報と同じWebSocket接続を共有する(下のuseEffect参照)。
@@ -755,6 +851,152 @@ export default function App() {
     setQuakeEpicenterPickActive(false);
   }
 
+  /* ─────────────────────────────────────────────────────
+     実験的機能: 地震検知テスト
+     揺れ検知エンジン(shakeDetection.ts)の動作確認用に、実際の地震を待たずに
+     震源・M・深さを指定して仮想的な揺れを発生させる。EEW・地震情報のテスト
+     配信と同じ考え方で、地図タップによる震源指定(shakeTestEpicenterPickActive)
+     を持つ。
+     配信中のダミー地震(quakes)を差し込むテストとは異なり、こちらは観測点
+     ごとのリアルタイム震度値(realtimeValues)を差し込む必要があるため、
+     shakeTestSimulation.tsで事前計算した到達時刻・ピーク震度(perStation)を
+     元に、tickごとの経過時間から現在値を計算して合成する(下のuseEffect)。
+     ───────────────────────────────────────────────────── */
+  function defaultShakeTestForm() {
+    return {
+      place: "テスト震源(相模湾)",
+      latitude: 35.2,
+      longitude: 139.3,
+      depth: 20,
+      magnitude: 5.8,
+    };
+  }
+  const [shakeTestForm, setShakeTestForm] = useState(defaultShakeTestForm);
+  const [shakeTestEpicenterPickActive, setShakeTestEpicenterPickActive] = useState(false);
+  // 実行中のシミュレーション本体。複数同時実行に対応するため配列で持つ。
+  // 各要素: { id, startedAt, perStation, form }
+  const [shakeTests, setShakeTests] = useState([]);
+  // shakeTests実行中に一定間隔で値を再計算させるための、ただのカウンタ。
+  const [shakeTestTick, setShakeTestTick] = useState(0);
+
+  // 地震検知テスト実行中の「正解」の震源群(MapCanvasへ渡す用、複数同時
+  // 実行に対応)。実行中でなければ空配列。
+  const shakeTestTrueEpicenters = useMemo(() => shakeTests.map(t => ({
+    lat: t.form.latitude,
+    lon: t.form.longitude,
+    depthKm: t.form.depth,
+    magnitude: t.form.magnitude,
+  })), [shakeTests]);
+
+  function handleShakeTestAction(action, payload) {
+    if (action === "patchForm") {
+      setShakeTestForm(prev => ({ ...prev, ...payload }));
+      return;
+    }
+    if (action === "startEpicenterPick") {
+      setShakeTestEpicenterPickActive(true);
+      return;
+    }
+    if (action === "cancelEpicenterPick") {
+      setShakeTestEpicenterPickActive(false);
+      return;
+    }
+    if (action === "resetForm") {
+      setShakeTestForm(defaultShakeTestForm());
+      return;
+    }
+    if (action === "start") {
+      if (shakeTestForm.latitude == null || shakeTestForm.longitude == null) return;
+      if (realtimeStream.stations.length === 0) return;
+      const perStation = prepareShakeTest(
+        {
+          lat: shakeTestForm.latitude,
+          lon: shakeTestForm.longitude,
+          magnitude: shakeTestForm.magnitude,
+          depth: shakeTestForm.depth,
+        },
+        realtimeStream.stations
+      );
+      // 複数同時実行に対応するため、既存の実行中シミュレーションを止めずに
+      // 追加する(置き換えではなく配列への追加)。
+      const newTest = {
+        id: `shaketest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        startedAt: Date.now(),
+        perStation,
+        form: shakeTestForm,
+      };
+      setShakeTests(prev => [...prev, newTest]);
+      return;
+    }
+    if (action === "stop") {
+      // payload.idが指定されていればそのシミュレーションだけ個別に停止する。
+      // 指定が無ければ(バナーの「停止」ボタン等)全て停止する。
+      if (payload?.id) {
+        setShakeTests(prev => prev.filter(t => t.id !== payload.id));
+      } else {
+        setShakeTests([]);
+      }
+      return;
+    }
+  }
+
+  function handlePickShakeTestEpicenter(lat, lon, placeName) {
+    setShakeTestForm(prev => ({
+      ...prev,
+      latitude: lat,
+      longitude: lon,
+      place: placeName || `テスト震源(北緯${lat.toFixed(2)}度 東経${lon.toFixed(2)}度)`,
+    }));
+    setShakeTestEpicenterPickActive(false);
+  }
+
+  // シミュレーション実行中は、本物のWebSocket更新(realtimeStream.values)とは
+  // 独立して値を再計算する必要があるため、専用のタイマーでshakeTestTickを回す。
+  // 本物のリアルタイムデータの更新間隔(1秒ごと)に合わせている。各シミュ
+  // レーションは、全観測点が平常値近くまで減衰し終えたら個別に自動終了する
+  // (他のシミュレーションが実行中でも、終わったものだけ配列から取り除く)。
+  const hasActiveShakeTest = shakeTests.length > 0;
+  useEffect(() => {
+    if (!hasActiveShakeTest) return;
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setShakeTests(prev => {
+        const stillRunning = prev.filter(t => !isShakeTestFinished(t.perStation, now - t.startedAt));
+        return stillRunning.length === prev.length ? prev : stillRunning;
+      });
+      setShakeTestTick(t => t + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [hasActiveShakeTest]);
+
+  // MapCanvas(地図描画・揺れ検知エンジンの両方)へ渡す実質的なrealtimeValues。
+  // 優先順位: リプレイ再生中 > シミュレーション実行中 > 本物のリアルタイムデータ。
+  // シミュレーション実行中は、本物のデータに観測点ごとのシミュレーション値を
+  // 上書き合成する。検知エンジン側からは本物のデータと区別が付かない。
+  // 複数のシミュレーションが同時実行されている場合、同じ観測点の値が
+  // 複数のシミュレーションから計算されることがあるため、その場合はより
+  // 震度の高い方を採用する。
+  const effectiveRealtimeValues = useMemo(() => {
+    if (replayPlayer.loaded) return replayPlayer.values;
+    if (shakeTests.length === 0) return realtimeStream.values;
+    const now = Date.now();
+    const overlayMerged = new Map();
+    for (const test of shakeTests) {
+      const elapsed = now - test.startedAt;
+      const overlay = computeShakeTestValues(test.perStation, elapsed);
+      for (const [id, v] of overlay) {
+        const existing = overlayMerged.get(id);
+        // 重複した観測点は、より震度の高い方を採用する。
+        overlayMerged.set(id, existing == null ? v : Math.max(existing, v));
+      }
+    }
+    if (overlayMerged.size === 0) return realtimeStream.values;
+    const merged = new Map(realtimeStream.values);
+    for (const [id, v] of overlayMerged) merged.set(id, v);
+    return merged;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [realtimeStream.values, shakeTests, shakeTestTick, replayPlayer.loaded, replayPlayer.values]);
+
   // テスト配信中は、実際の一覧の先頭にテストデータを合成する。地震タブに関する
   // App側の判定(一覧・選択中の地震・地図表示)は、以降すべてこちらを使う。
   const effectiveQuakes = testQuake ? [testQuake, ...quakes] : quakes;
@@ -960,117 +1202,6 @@ export default function App() {
      ───────────────────────────────────────────────────── */
   const [tsunamiViewModeTop, setTsunamiViewModeTop] = useState("recent");
   const showTideGaugeLayer = !eewDetailOpen && activeNav === "tsunami" && tsunamiViewModeTop === "tidegauge";
-
-  // 気象タブ「地点」モードでGPS取得できている間だけBottomDock側から伝わってくる、
-  // 現在地の緯度経度(地図の青丸表示用)。それ以外は常にnull。
-  const [currentLocationPoint, setCurrentLocationPoint] = useState(null);
-  // 雨雲レーダーがON中の現在の時刻コマ({basetime, validtime})。BottomDock側から
-  // 伝わってくる。OFFの間・未読込の間はnull。
-  const [nowcastFrame, setNowcastFrame] = useState(null);
-  // 前後の先読み対象コマ(コマ切り替え時に一瞬レーダーが消えないよう、地図側で
-  // バックグラウンドにタイルを読み込んでおくために使う)。
-  const [nowcastPreloadFrames, setNowcastPreloadFrames] = useState([]);
-  // 実況+予測の全validtime一覧(5分おきに更新される)。地図側のキャッシュのうち、
-  // もうどのコマにも該当しなくなった(=特に予測コマは更新のたびにほぼ丸ごと
-  // 入れ替わる)ものを掃除するために使う。
-  const [nowcastKnownValidtimes, setNowcastKnownValidtimes] = useState([]);
-  // BottomDock側のonNowcastChangeは{frame, preloadFrames, knownValidtimes} | nullを渡してくる。
-  // 3つのstateへ振り分ける。
-  const handleNowcastChange = useCallback((payload) => {
-    setNowcastFrame(payload ? payload.frame : null);
-    setNowcastPreloadFrames(payload ? payload.preloadFrames : []);
-    setNowcastKnownValidtimes(payload ? payload.knownValidtimes : []);
-  }, []);
-  // 1/3/24時間降水量がON中の現在のモード・時刻コマ。BottomDock側から伝わってくる。
-  // 雨雲レーダーとは排他なので、オンになるのはどちらか一方だけ。
-  const [precipMode, setPrecipMode] = useState(null);
-  const [precipFrame, setPrecipFrame] = useState(null);
-  // 現在のモードの全validtime一覧(5分おきの一覧更新で変わる)。地図側のキャッシュの
-  // うち、もうどのコマにも該当しなくなったレイヤーの掃除に使う(雨雲レーダーの
-  // nowcastKnownValidtimesと同じ考え方)。
-  const [precipKnownValidtimes, setPrecipKnownValidtimes] = useState([]);
-  const handlePrecipChange = useCallback((payload) => {
-    setPrecipMode(payload ? payload.mode : null);
-    setPrecipFrame(payload ? payload.frame : null);
-    setPrecipKnownValidtimes(payload ? payload.knownValidtimes : []);
-  }, []);
-  // 天気分布予報がON中の現在のモード・時刻コマ。BottomDock側から伝わってくる。
-  // 雨雲レーダー・降水量とは排他なので、オンになるのはどれか1つだけ。
-  const [wdistMode, setWdistMode] = useState(null);
-  const [wdistFrame, setWdistFrame] = useState(null);
-  const [wdistKnownValidtimes, setWdistKnownValidtimes] = useState([]);
-  const handleWdistChange = useCallback((payload) => {
-    setWdistMode(payload ? payload.mode : null);
-    setWdistFrame(payload ? payload.frame : null);
-    setWdistKnownValidtimes(payload ? payload.knownValidtimes : []);
-  }, []);
-  // 台風情報がON中の現在のgeojson。BottomDock側から伝わってくる。OFFの間はnull。
-  const [typhoonGeojson, setTyphoonGeojson] = useState(null);
-  const handleTyphoonChange = useCallback((geojson) => {
-    setTyphoonGeojson(geojson);
-  }, []);
-  // 警報タブのくの字メニューで選択中のキキクル(土砂/浸水)。BottomDock側から
-  // {mode, frame, knownValidtimes} | null で伝わってくる(1/3/24時間降水量と
-  // 全く同じ形)。MapCanvas側のriskVisible/riskMode/riskFrame/riskKnownValidtimes
-  // に振り分ける。
-  // 「今どの項目が選ばれているか」(alertLayerMode)は、キキクルの時刻コマの
-  // 有無に関係なく常に正しく分かる必要がある(河川水位選択中は時刻コマが
-  // そもそも存在しないため)。そのため、キキクルの時刻コマ通知
-  // (handleAlertLayerChange)とは別経路(handleAlertModeChange)で管理する。
-  const [alertLayerMode, setAlertLayerMode] = useState(null);
-  const [alertLayerFrame, setAlertLayerFrame] = useState(null);
-  const [alertLayerKnownValidtimes, setAlertLayerKnownValidtimes] = useState([]);
-  const handleAlertModeChange = useCallback((mode) => {
-    setAlertLayerMode(mode);
-  }, []);
-  const handleAlertLayerChange = useCallback((payload) => {
-    setAlertLayerFrame(payload ? payload.frame : null);
-    setAlertLayerKnownValidtimes(payload ? payload.knownValidtimes : []);
-  }, []);
-
-  // 警報タブのくの字メニューで選択中の「河川水位」。BottomDock側からGeoJSON
-  // FeatureCollection | null で伝わってくる。MapCanvas側のriverVisible/
-  // riverStationsに振り分ける。タップ中の観測所(詳細カード用)もここで持つ。
-  const [riverStations, setRiverStations] = useState(null);
-  const handleRiverLayerChange = useCallback((geojson) => {
-    setRiverStations(geojson);
-  }, []);
-  const [selectedRiverStation, setSelectedRiverStation] = useState(null); // properties | null
-  const handleSelectRiverStation = useCallback((properties) => {
-    setSelectedRiverStation(properties || null);
-  }, []);
-  useEffect(() => {
-    if (alertLayerMode !== "riverLevel") setSelectedRiverStation(null);
-  }, [alertLayerMode]);
-  // 台風の中心点/予報円をタップした時のproperties。BottomDock側のTyphoonDetailCardで
-  // 表示する(時刻チップ=予報円タップ、台風一覧タップの両方でここに入る)。
-  const [selectedTyphoonInfo, setSelectedTyphoonInfo] = useState(null);
-  const handleSelectTyphoonCenter = useCallback((properties) => {
-    setSelectedTyphoonInfo(properties || null);
-  }, []);
-  // 台風詳細の選択解除。「戻る」ボタン、およびフローティングを閉じた時にBottomDock側
-  // から呼ばれる。
-  const handleClearSelectedTyphoon = useCallback(() => {
-    setSelectedTyphoonInfo(null);
-  }, []);
-  // 台風一覧の項目をタップした時、地図をその台風の強風域(無ければ暴風域、それも
-  // 無ければ中心のみ)が画面に収まるズーム倍率でflyToするためのリクエスト。
-  // {lon, lat, areaRadiusKm, areaLon, areaLat, nonce} | null。nonceは同じ地点を
-  // 連続でタップしても毎回flyToが起きるようにするための単純カウンタ。
-  const [typhoonFlyToRequest, setTyphoonFlyToRequest] = useState(null);
-  const handleSelectTyphoon = useCallback((typhoon) => {
-    if (!typhoon) return;
-    setSelectedTyphoonInfo(typhoon);
-    if (typhoon.lon != null && typhoon.lat != null) {
-      setTyphoonFlyToRequest({
-        lon: typhoon.lon, lat: typhoon.lat,
-        areaRadiusKm: typhoon.areaRadiusKm ?? null,
-        areaLon: typhoon.areaLon ?? typhoon.lon,
-        areaLat: typhoon.areaLat ?? typhoon.lat,
-        nonce: Date.now(),
-      });
-    }
-  }, []);
   // 現在進行形で有効な(解除されていない)津波情報があるかどうか。潮位観測点
   // マスタの取得トリガー・自動表示の判定の両方で使う軽量な判定。
   const hasActiveTsunami = effectiveTsunamis.some(t => !t.cancelled);
@@ -1213,12 +1344,249 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
+  // JMA2001走時表(震源推定、実験的機能)も起動時に一度だけ取得する。
+  // ファイルが無い(scripts/build-jma-travel-time.mjsを実行していない)場合は
+  // 404になるが、epicenterEstimation.ts側が自動的に従来の定速モデルに
+  // フォールバックするため、エラーはログに出すだけで動作は継続する。
+  useEffect(() => {
+    let cancelled = false;
+    loadJmaTravelTimeTable()
+      .then(json => { if (!cancelled) setJmaTravelTimeTable(tableFromJSON(json)); })
+      .catch(err => console.warn("JMA2001走時表を取得できませんでした(定速モデルにフォールバックします):", err));
+    return () => { cancelled = true; };
+  }, []);
+
+  /* ─────────────────────────────────────────────────────
+     気象タブ(MeteoQuakeから統合)。雨雲レーダー・降水量・天気分布・台風・現在地の
+     状態。BottomDock側のメニューで切り替えた内容が、ここへ伝わって地図に反映される。
+     ───────────────────────────────────────────────────── */
+  // 気象タブ「地点」モードでGPS取得できている間だけBottomDock側から伝わってくる、
+  // 現在地の緯度経度(地図の青丸表示用)。それ以外は常にnull。
+  const [currentLocationPoint, setCurrentLocationPoint] = useState(null);
+  // 雨雲レーダーがON中の現在の時刻コマ({basetime, validtime})。BottomDock側から
+  // 伝わってくる。OFFの間・未読込の間はnull。
+  const [nowcastFrame, setNowcastFrame] = useState(null);
+  // 前後の先読み対象コマ(コマ切り替え時に一瞬レーダーが消えないよう、地図側で
+  // バックグラウンドにタイルを読み込んでおくために使う)。
+  const [nowcastPreloadFrames, setNowcastPreloadFrames] = useState([]);
+  // 実況+予測の全validtime一覧(5分おきに更新される)。地図側のキャッシュのうち、
+  // もうどのコマにも該当しなくなった(=特に予測コマは更新のたびにほぼ丸ごと
+  // 入れ替わる)ものを掃除するために使う。
+  const [nowcastKnownValidtimes, setNowcastKnownValidtimes] = useState([]);
+  // BottomDock側のonNowcastChangeは{frame, preloadFrames, knownValidtimes} | nullを渡してくる。
+  // 3つのstateへ振り分ける。
+  const handleNowcastChange = useCallback((payload) => {
+    setNowcastFrame(payload ? payload.frame : null);
+    setNowcastPreloadFrames(payload ? payload.preloadFrames : []);
+    setNowcastKnownValidtimes(payload ? payload.knownValidtimes : []);
+  }, []);
+  // 1/3/24時間降水量がON中の現在のモード・時刻コマ。BottomDock側から伝わってくる。
+  // 雨雲レーダーとは排他なので、オンになるのはどちらか一方だけ。
+  const [precipMode, setPrecipMode] = useState(null);
+  const [precipFrame, setPrecipFrame] = useState(null);
+  // 現在のモードの全validtime一覧(5分おきの一覧更新で変わる)。地図側のキャッシュの
+  // うち、もうどのコマにも該当しなくなったレイヤーの掃除に使う(雨雲レーダーの
+  // nowcastKnownValidtimesと同じ考え方)。
+  const [precipKnownValidtimes, setPrecipKnownValidtimes] = useState([]);
+  const handlePrecipChange = useCallback((payload) => {
+    setPrecipMode(payload ? payload.mode : null);
+    setPrecipFrame(payload ? payload.frame : null);
+    setPrecipKnownValidtimes(payload ? payload.knownValidtimes : []);
+  }, []);
+  // 天気分布予報がON中の現在のモード・時刻コマ。BottomDock側から伝わってくる。
+  // 雨雲レーダー・降水量とは排他なので、オンになるのはどれか1つだけ。
+  const [wdistMode, setWdistMode] = useState(null);
+  const [wdistFrame, setWdistFrame] = useState(null);
+  const [wdistKnownValidtimes, setWdistKnownValidtimes] = useState([]);
+  const handleWdistChange = useCallback((payload) => {
+    setWdistMode(payload ? payload.mode : null);
+    setWdistFrame(payload ? payload.frame : null);
+    setWdistKnownValidtimes(payload ? payload.knownValidtimes : []);
+  }, []);
+  // 台風情報がON中の現在のgeojson。BottomDock側から伝わってくる。OFFの間はnull。
+  const [typhoonGeojson, setTyphoonGeojson] = useState(null);
+  const handleTyphoonChange = useCallback((geojson) => {
+    setTyphoonGeojson(geojson);
+  }, []);
+
+  // 台風の中心点/予報円をタップした時のproperties。BottomDock側のTyphoonDetailCardで
+  // 表示する(時刻チップ=予報円タップ、台風一覧タップの両方でここに入る)。
+  const [selectedTyphoonInfo, setSelectedTyphoonInfo] = useState(null);
+  const handleSelectTyphoonCenter = useCallback((properties) => {
+    setSelectedTyphoonInfo(properties || null);
+  }, []);
+  // 台風詳細の選択解除。「戻る」ボタン、およびフローティングを閉じた時にBottomDock側
+  // から呼ばれる。
+  const handleClearSelectedTyphoon = useCallback(() => {
+    setSelectedTyphoonInfo(null);
+  }, []);
+  // 台風一覧の項目をタップした時、地図をその台風の強風域(無ければ暴風域、それも
+  // 無ければ中心のみ)が画面に収まるズーム倍率でflyToするためのリクエスト。
+  // {lon, lat, areaRadiusKm, areaLon, areaLat, nonce} | null。nonceは同じ地点を
+  // 連続でタップしても毎回flyToが起きるようにするための単純カウンタ。
+  const [typhoonFlyToRequest, setTyphoonFlyToRequest] = useState(null);
+  const handleSelectTyphoon = useCallback((typhoon) => {
+    if (!typhoon) return;
+    setSelectedTyphoonInfo(typhoon);
+    if (typhoon.lon != null && typhoon.lat != null) {
+      setTyphoonFlyToRequest({
+        lon: typhoon.lon, lat: typhoon.lat,
+        areaRadiusKm: typhoon.areaRadiusKm ?? null,
+        areaLon: typhoon.areaLon ?? typhoon.lon,
+        areaLat: typhoon.areaLat ?? typhoon.lat,
+        nonce: Date.now(),
+      });
+    }
+  }, []);
+
+  /* ── 警報タブ(MeteoQuakeから統合): 警報・注意報、キキクル、河川水位 ── */
+  // 警報タブ: 気象警報・注意報。regioncode → {level, kinds} のマップ。
+  // 警報タブを開いている間だけ10分おきにポーリングする(EEW等の常時監視系と違い、
+  // 警報・注意報は数分単位で急変するものではないため)。
+  const [warningLevelMap, setWarningLevelMap] = useState({});
+  // 直近の取得時刻。タブを行ったり来たりするたびに毎回APIを叩き直さないよう、
+  // 直近1分以内に取得済みなら再取得をスキップする(定期ポーリングのタイマーは
+  // forceで無視する)。
+  const warningLevelMapFetchedAtRef = useRef(0);
+  useEffect(() => {
+    if (activeNav !== "alert") return;
+    let cancelled = false;
+    const refresh = (force = false) => {
+      if (!force && Date.now() - warningLevelMapFetchedAtRef.current < 60 * 1000) return;
+      fetchWarningLevelMap_combined()
+        .then((map) => {
+          if (cancelled) return;
+          warningLevelMapFetchedAtRef.current = Date.now();
+          setWarningLevelMap(map);
+        })
+        .catch((err) => console.error("警報・注意報データの取得に失敗しました:", err));
+    };
+    refresh();
+    const intervalId = setInterval(() => refresh(true), 10 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(intervalId); };
+  }, [activeNav]);
+
+  // 警報タブ: 市区町村の名称インデックス(1,821件、regioncode→{name, geometry})。
+  // 以前はloadWarningAreaMunicipalities()(1,821件全部のcentroidを毎回計算する
+  // 重い版、五十音ピッカー専用)を流用していたが、警報タブを開いた瞬間に
+  // 発表の有無に関わらず全市区町村分の座標計算が走ってしまい、体感の重さの
+  // 原因になっていた。ここでは名称とジオメトリを受け渡すだけの軽量版
+  // loadWarningAreaNameIndex()を使い、座標(centroid)は下のuseMemoで
+  // 「実際に発表中の数件」だけ遅延計算する。
+  const [warningAreaNameIndex, setWarningAreaNameIndex] = useState(null);
+  const warningAreaNameIndexLoadedRef = useRef(false);
+  useEffect(() => {
+    if (activeNav !== "alert" || warningAreaNameIndexLoadedRef.current) return;
+    warningAreaNameIndexLoadedRef.current = true;
+    loadWarningAreaNameIndex()
+      .then(setWarningAreaNameIndex)
+      .catch((err) => {
+        console.error("警報エリアの名称マスタの読み込みに失敗しました:", err);
+        warningAreaNameIndexLoadedRef.current = false; // 失敗時は次回開いた時に再試行できるようにする
+      });
+  }, [activeNav]);
+  // regioncode → {name, lat, lon} の逆引きテーブル。一覧表示・詳細カードの
+  // 両方で使う。centroid計算は「現在warningLevelMapに載っている(=発表中の)
+  // regioncodeだけ」に絞ることで、全1,821件分の計算を避けている。
+  const warningAreaByRegioncode = useMemo(() => {
+    const map = {};
+    if (!warningAreaNameIndex) return map;
+    // 名称は全1,821件分マップしておく(地図タップは発表の有無を問わず全国が
+    // 対象になったため、発表なしのエリアでも名前だけは詳細カードで出したい)。
+    // centroid計算(polygonRoughCentroid)は依然として重いので、一覧・flyToで
+    // 実際に必要になる「発表中」の分だけに絞って計算する。
+    for (const regioncode of Object.keys(warningAreaNameIndex)) {
+      const entry = warningAreaNameIndex[regioncode];
+      if (!entry) continue;
+      const centroid = warningLevelMap[regioncode] ? polygonRoughCentroid(entry.geometry) : null;
+      map[regioncode] = { name: entry.name, regionname: entry.regionname, lat: centroid?.lat ?? null, lon: centroid?.lon ?? null };
+    }
+    return map;
+  }, [warningLevelMap, warningAreaNameIndex]);
+
+  // 警報タブ: タップ/一覧選択中のエリア(regioncode) | null。
+  // タブを離れたら選択解除する(津波タブの選択解除と同じ考え方)。
+  const [selectedWarningArea, setSelectedWarningArea] = useState(null);
+  useEffect(() => {
+    if (activeNav !== "alert") setSelectedWarningArea(null);
+  }, [activeNav]);
+  // 一覧の項目をタップした時のflyTo先。{lon, lat, nonce} | null
+  // (nonceは同じエリアを連続でタップしても再度flyToが発火するようにするため)。
+  const [warningAreaFlyToRequest, setWarningAreaFlyToRequest] = useState(null);
+  // 地図の塗り分けをタップした時。地図タップは警報レイヤーの全ポリゴン
+  // (発表の有無を問わず日本全国)に対して判定される。以前は発表中でない
+  // エリアのタップを無視していたが、warningAreaByRegioncodeが名称だけは
+  // 全件分持つようになったため、発表なしのエリアもそのまま選択して
+  // 詳細カード側で「発表中の警報・注意報はありません」と出す。
+  function handleSelectWarningArea(regioncode) {
+    setSelectedWarningArea(regioncode);
+  }
+  // 一覧の項目をタップした時。選択に加えて、代表座標が分かっていればflyToする。
+  // useCallbackで参照を安定させ、WarningAreaListPanel(memo化済み)がBottomDockの
+  // 再レンダー(ドラッグ中のアニメーション等)のたびに再レンダーされるのを防ぐ。
+  const handleSelectWarningAreaFromList = useCallback((regioncode) => {
+    setSelectedWarningArea(regioncode);
+    const area = warningAreaByRegioncode[regioncode];
+    if (area && area.lat != null && area.lon != null) {
+      setWarningAreaFlyToRequest({ lon: area.lon, lat: area.lat, nonce: Date.now() });
+    }
+  }, [warningAreaByRegioncode]);
+  // 詳細カードの「戻る」ボタン。
+  function handleBackFromWarningArea() {
+    setSelectedWarningArea(null);
+  }
+
+  // 警報タブのくの字メニューで選択中のキキクル(土砂/浸水)。BottomDock側から
+  // {mode, frame, knownValidtimes} | null で伝わってくる(1/3/24時間降水量と
+  // 全く同じ形)。MapCanvas側のriskVisible/riskMode/riskFrame/riskKnownValidtimes
+  // に振り分ける。
+  // 「今どの項目が選ばれているか」(alertLayerMode)は、キキクルの時刻コマの
+  // 有無に関係なく常に正しく分かる必要がある(河川水位選択中は時刻コマが
+  // そもそも存在しないため)。そのため、キキクルの時刻コマ通知
+  // (handleAlertLayerChange)とは別経路(handleAlertModeChange)で管理する。
+  const [alertLayerMode, setAlertLayerMode] = useState(null);
+  const [alertLayerFrame, setAlertLayerFrame] = useState(null);
+  const [alertLayerKnownValidtimes, setAlertLayerKnownValidtimes] = useState([]);
+  const handleAlertModeChange = useCallback((mode) => {
+    setAlertLayerMode(mode);
+  }, []);
+  const handleAlertLayerChange = useCallback((payload) => {
+    setAlertLayerFrame(payload ? payload.frame : null);
+    setAlertLayerKnownValidtimes(payload ? payload.knownValidtimes : []);
+  }, []);
+
+  // 警報タブのくの字メニューで選択中の「河川水位」。BottomDock側からGeoJSON
+  // FeatureCollection | null で伝わってくる。MapCanvas側のriverVisible/
+  // riverStationsに振り分ける。タップ中の観測所(詳細カード用)もここで持つ。
+  const [riverStations, setRiverStations] = useState(null);
+  const handleRiverLayerChange = useCallback((geojson) => {
+    setRiverStations(geojson);
+  }, []);
+  const [selectedRiverStation, setSelectedRiverStation] = useState(null); // properties | null
+  const handleSelectRiverStation = useCallback((properties) => {
+    setSelectedRiverStation(properties || null);
+  }, []);
+  useEffect(() => {
+    if (alertLayerMode !== "riverLevel") setSelectedRiverStation(null);
+  }, [alertLayerMode]);
+
+  // 地震タブで選んだ地震はリアルタイムタブに、リアルタイムタブで選んだ地震は
+  // 地震タブに、それぞれ反映しない(要件)。selectedQuakeOriginが「今見ている
+  // タブ」と一致する場合だけ、実際に選択中として扱う。地震タブ・リアルタイム
+  // タブ以外(設定タブなど)では、従来どおりorigin区別なく常に反映する。
+  const quakeTabSelectedQuakeId = selectedQuakeOrigin === "realtime" ? null : selectedQuakeId;
+  const realtimeTabSelectedQuakeId = selectedQuakeOrigin === "realtime" ? selectedQuakeId : null;
+  const quakeSelectionRelevantToCurrentView =
+    effectiveNav === "realtime" ? realtimeTabSelectedQuakeId
+    : effectiveNav === "quake" ? quakeTabSelectedQuakeId
+    : selectedQuakeId;
+
   // 選択中の地震 + 観測点マスタが揃ったら、観測点ごとの震度に緯度経度を割り当てる。
   // 気象庁 震度データベース検索から開いた地震(searchQuake)は quakes には入っていないため、
   // そちらも見つからなかった場合のフォールバックとして探す。
   // (effectiveQuakesを使うことで、地震情報テスト配信中のダミー地震も選択・表示できる)
-  const selectedQuake = effectiveQuakes.find(q => q.id === selectedQuakeId)
-    || (searchQuake && searchQuake.id === selectedQuakeId ? searchQuake : null);
+  const selectedQuake = effectiveQuakes.find(q => q.id === quakeSelectionRelevantToCurrentView)
+    || (searchQuake && searchQuake.id === quakeSelectionRelevantToCurrentView ? searchQuake : null);
 
   // 観測点データが多い地震(震度データベース検索由来ではない、通常の地震一覧からの選択)は、
   // 観測点マスタとの突き合わせ(resolveStationPoints)が重くなり、選択直後に一瞬固まって
@@ -1492,7 +1860,15 @@ export default function App() {
   // どちらのタブを見ていても、緊急地震速報の詳細画面(eewDetailOpen)を開いている
   // 間はEEW以外の表示を一切出さない(震源・観測点・断層・津波予報区の色分け等、
   // 緊急地震速報の内容に集中してもらうため)。
-  const showQuakeMapLayers = !eewDetailOpen && (activeNav === "quake" || activeNav === "settings" || (activeNav === "tsunami" && causingQuakeCard != null));
+  // リアルタイムタブの「直近の地震一覧」から地震を選んだ場合も、地震タブと同じく
+  // 震源・観測点・震度塗り分けを地図に出す(realtimeTabSelectedQuakeIdで判定する
+  // ことで、地震タブ側で選んだ地震がリアルタイムタブに漏れて表示されないようにする)。
+  const showQuakeMapLayers = !eewDetailOpen && (
+    effectiveNav === "quake"
+    || activeNav === "settings"
+    || (activeNav === "tsunami" && causingQuakeCard != null)
+    || (effectiveNav === "realtime" && realtimeTabSelectedQuakeId != null)
+  );
 
   // 断層・プレート境界だけは例外。showQuakeMapLayers(震源・観測点・震度塗り分け等)は
   // 緊急地震速報の表示中はすべて隠すが、断層・プレート境界は地理的な背景情報であり、
@@ -1503,6 +1879,34 @@ export default function App() {
   // 津波予報区の色分けは、津波タブ・設定タブを見ている間に出す。
   // 実際にどの回の予報区を塗るかはtsunamiForMapDisplay(下)が決める。
   const showTsunamiMapLayers = !eewDetailOpen && (activeNav === "tsunami" || activeNav === "settings");
+
+  // MapCanvasに渡す「実質的なeewDetailOpen」。リアルタイムタブでは、FABを
+  // タップして開く操作(eewDetailOpen state)を経由せず、アクティブな緊急地震
+  // 速報がある間は常にフローティングへそのまま表示する(BottomDock側の
+  // `active === "realtime" && hasActiveEew`と同じ考え方)。MapCanvas側の
+  // 予想震度凡例(EEW_FILL_LEGEND_ORDER)もeewDetailOpenプロパティ1つだけで
+  // 表示可否を判定しているため、他タブと同様にリアルタイムタブでもこの
+  // タイミングで凡例が出るよう、ここでeewDetailOpen stateそのものではなく
+  // 合成した値をMapCanvasへ渡す。
+  const eewMapLegendVisible = eewDetailOpen
+    || (effectiveNav === "realtime" && effectiveEews.some(e => !e.cancelled));
+
+  // リアルタイムタブ(強震モニタ/S-net)の推計震度分布は、以前はリアルタイム
+  // タブを見ている間だけ表示していたが、常時バックグラウンドで見られるように
+  // 全タブ共通(設定タブ含む)で表示するよう変更した。ただし地震・津波・
+  // 潮位観測点のいずれかを選択して詳細を見ている間は、その情報に集中できる
+  // よう非表示にする。緊急地震速報の詳細表示中は、以前は他タブと同様に隠して
+  // いたが、緊急地震速報の最大予測震度エリアと合わせて見たい場面が多いため
+  // 隠さないようにした。
+  // 地震の選択は、quakeSelectionRelevantToCurrentView(タブごとに反映範囲を
+  // 分けたもの)で判定する。たとえば地震タブで地震を選んでいても、今
+  // リアルタイムタブを見ているなら、その選択はリアルタイムタブには関係ないため
+  // 推計震度分布を隠さない。
+  const showRealtimeMapLayers =
+    !inWeatherOrAlert
+    && quakeSelectionRelevantToCurrentView == null
+    && selectedTsunamiId == null
+    && selectedTideStationCode == null;
   const selectedFromRecent = effectiveTsunamis.find(t => t.id === selectedTsunamiId) || null;
   const selectedFromHistory = !selectedFromRecent
     ? (tsunamiHistory.items.find(t => t.id === selectedTsunamiId) || null)
@@ -1907,25 +2311,12 @@ export default function App() {
     const endDate = end || new Date(); // 稀に解除が確認できなかった場合は現在時刻まで
     const tsunamiId = selectedTsunami.id;
 
-    // 気象庁の潮位観測値(tide_obs)は直近1週間程度分しか提供されておらず、
-    // それより古い日付を指定するとエラーになる。対象期間の終端(=取得対象の
-    // うち最も新しい日)がすでに1週間以上前なら、取得を試みるだけ無駄なので
-    // APIを叩かずに「取得不可」として扱う。
-    const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-    const isTooOldToFetch = Date.now() - endDate.getTime() > ONE_WEEK_MS;
-
     async function run() {
       for (const st of selectedTsunamiTideStations) {
         if (cancelled) return;
         const key = `${tsunamiId}::${st.code}`;
         if (historicalTideObsRequestedRef.current.has(key)) continue; // 取得済み・取得中ならスキップ
         historicalTideObsRequestedRef.current.add(key);
-        if (isTooOldToFetch) {
-          // 1週間以上前のデータは気象庁側に無くエラーになるだけなので、
-          // リクエストを送らずに直接「取得失敗」扱いにする。
-          setHistoricalTideObsByStation(prev => ({ ...prev, [key]: { status: "error", data: null } }));
-          continue;
-        }
         setHistoricalTideObsByStation(prev => ({ ...prev, [key]: { status: "loading", data: null } }));
         try {
           const data = await fetchTideObsForDateRange(st.code, start, endDate);
@@ -2090,6 +2481,10 @@ export default function App() {
       <GlobalStyles tokens={themeContextValue.tokens}/>
       <Filters/>
 
+      {!isConsentUpToDate(consent) && (
+        <ConsentGate storedConsent={consent} onAgree={handleAgreeConsent}/>
+      )}
+
       <div style={{ height: "100%", position: "relative", overflow: "hidden", background: themeContextValue.tokens.pageBg }}>
 
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
@@ -2168,131 +2563,37 @@ export default function App() {
           onPickEewEpicenter={handlePickEewEpicenter}
           quakeEpicenterPickActive={quakeEpicenterPickActive}
           onPickQuakeEpicenter={handlePickQuakeEpicenter}
-          eewDetailOpen={eewDetailOpen}
+          shakeTestEpicenterPickActive={shakeTestEpicenterPickActive}
+          onPickShakeTestEpicenter={handlePickShakeTestEpicenter}
+          eewDetailOpen={eewMapLegendVisible}
+          showRealtimeMapLayers={showRealtimeMapLayers}
+          realtimeStations={realtimeStream.stations}
+          realtimeValues={effectiveRealtimeValues}
+          realtimeIntensityThreshold={realtimeIntensityThreshold}
+          realtimeRisingEnabled={realtimeRisingEnabled}
+          replayJmaColorEnabled={replayPlayer.loaded && replayJmaColorEnabled}
+          replayActive={replayPlayer.loaded}
+          replaySpeed={replayPlayer.speed}
+          replayPlaying={replayPlayer.isPlaying}
+          replayDataTimeMs={replayPlayer.loaded ? (replayPlayer.frames[replayPlayer.currentIndex]?.dataTime?.getTime() ?? null) : null}
+          shakeDetectionEnabled={shakeDetectionEnabled && !inWeatherOrAlert}
+          weakArrayDetectionEnabled={weakArrayDetectionEnabled}
+          cameraSettings={mapCameraSettings}
+          onShakeEventsChange={setShakeEvents}
+          epicenterEstimationEnabled={epicenterEstimationEnabled}
+          gridDetectionEnabled={shakeDetectionEnabled && !inWeatherOrAlert && gridDetectionEnabled}
+          gridCellsVisible={gridCellsVisible}
+          showLowConfidenceEstimates={showLowConfidenceEstimates}
+          onEpicenterEstimateChange={setEpicenterEstimates}
+          shakeTestTrueEpicenters={shakeTestTrueEpicenters}
         />
-
-        {/* 津波テスト配信「地図タップで選択」中のバナー — 画面上部中央に浮かぶ。
-            上段: 指示文・選択件数・キャンセル/完了ボタン。
-            下段: 「今タップしたらどのグレードで塗るか」を選ぶパレット。予報区ごとに
-            違うグレードを割り当てたいので、パレットで切り替えてからタップする方式。
-            複数の予報区を選べるようにするため、1回タップしただけではモードを終えず、
-            「完了」を押すまで何度でもタップし直せる。「キャンセル」はピック開始時点の
-            選択に戻す。 */}
-        {tsunamiAreaPickActive && (
-          <div style={{
-            position: "absolute",
-            top: "calc(16px + env(safe-area-inset-top))",
-            left: 0, right: 0,
-            display: "flex", justifyContent: "center",
-            zIndex: 30, padding: "0 16px",
-          }}>
-            <Glass radius={22} style={{
-              display: "flex", flexDirection: "column", gap: 8,
-              padding: "10px 12px",
-              animation: "appear 0.3s cubic-bezier(.25,1,.5,1)",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: themeContextValue.tokens.text, flex: 1 }}>
-                  海岸線をタップして予報区を選択
-                  {pickedTsunamiAreas.length > 0 && `(${pickedTsunamiAreas.length}件選択中)`}
-                </span>
-                <PressableButton
-                  type="button"
-                  onClick={cancelTsunamiAreaPick}
-                  style={{
-                    flexShrink: 0, padding: "6px 12px", borderRadius: 999, border: "none", cursor: "pointer",
-                    background: `rgba(${themeContextValue.tokens.ink},0.08)`,
-                    fontSize: 12, fontWeight: 700, color: themeContextValue.tokens.textSecondary,
-                  }}
-                >
-                  キャンセル
-                </PressableButton>
-                <PressableButton
-                  type="button"
-                  onClick={finishTsunamiAreaPick}
-                  style={{
-                    flexShrink: 0, padding: "6px 14px", borderRadius: 999, border: "none", cursor: "pointer",
-                    background: "#0A84FF",
-                    fontSize: 12, fontWeight: 700, color: "#fff",
-                  }}
-                >
-                  完了
-                </PressableButton>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 11, color: themeContextValue.tokens.textSecondary, flexShrink: 0 }}>
-                  塗るグレード:
-                </span>
-                {TEST_TSUNAMI_GRADE_OPTIONS.map(opt => {
-                  const active = activePickGrade === opt.value;
-                  const color = tsunamiGradeInfo(opt.value).color;
-                  return (
-                    <PressableButton
-                      key={opt.value}
-                      type="button"
-                      onClick={() => setActivePickGrade(opt.value)}
-                      style={{
-                        display: "inline-flex", alignItems: "center", gap: 5,
-                        padding: "5px 10px 5px 8px", borderRadius: 999, cursor: "pointer",
-                        border: active ? `1.5px solid ${color}` : "1.5px solid transparent",
-                        background: active ? `${color}26` : `rgba(${themeContextValue.tokens.ink},0.05)`,
-                        fontSize: 11, fontWeight: 700,
-                        color: active ? themeContextValue.tokens.text : themeContextValue.tokens.textSecondary,
-                      }}
-                    >
-                      <span style={{ width: 8, height: 8, borderRadius: 999, background: color, flexShrink: 0 }}/>
-                      {opt.label}
-                    </PressableButton>
-                  );
-                })}
-              </div>
-            </Glass>
-          </div>
-        )}
-
-        {/* 緊急地震速報テスト配信「地図をタップして震源を指定」中のバナー。
-            震源は1点だけなので津波の予報区ピックと違って複数タップの積み上げは不要
-            ─ タップした瞬間に確定し、自動的にモードを終える(MapCanvas側のクリック
-            ハンドラ→handlePickEewEpicenterでeewEpicenterPickActiveをfalseに戻している)。
-            ここでは「今からタップする」ことを案内し、途中でやめられるように
-            キャンセルボタンだけ出す。 */}
-        {eewEpicenterPickActive && (
-          <div style={{
-            position: "absolute",
-            top: "calc(16px + env(safe-area-inset-top))",
-            left: 0, right: 0,
-            display: "flex", justifyContent: "center",
-            zIndex: 30, padding: "0 16px",
-          }}>
-            <Glass radius={22} style={{
-              display: "flex", alignItems: "center", gap: 10,
-              padding: "10px 12px",
-              animation: "appear 0.3s cubic-bezier(.25,1,.5,1)",
-            }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: themeContextValue.tokens.text }}>
-                地図をタップして震源を指定
-              </span>
-              <PressableButton
-                type="button"
-                onClick={() => handleTestEewAction("cancelEpicenterPick")}
-                style={{
-                  flexShrink: 0, padding: "6px 12px", borderRadius: 999, border: "none", cursor: "pointer",
-                  background: `rgba(${themeContextValue.tokens.ink},0.08)`,
-                  fontSize: 12, fontWeight: 700, color: themeContextValue.tokens.textSecondary,
-                }}
-              >
-                キャンセル
-              </PressableButton>
-            </Glass>
-          </div>
-        )}
 
         {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ。
             緊急地震速報の詳細を表示中(eewDetailOpen)は、EEW側に別の凡例
             (震度の予測範囲の凡例)があるため、こちらは隠す。これが無いと、
             地震タブで地震を選択したまま緊急地震速報が開いた時、地震の震度凡例が
             EEWの表示に重なって残ってしまっていた。 */}
-        {!eewDetailOpen && activeNav === "quake" && selectedQuake && (
+        {!eewDetailOpen && effectiveNav === "quake" && selectedQuake && (
           <div style={{
             position: "absolute",
             top: "calc(16px + env(safe-area-inset-top))",
@@ -2395,39 +2696,179 @@ export default function App() {
           </div>
         )}
 
-        {/* ── Layer 2: Glass UI（透明ガラスが地図に浮かぶ） ── */}
+        {/* 震度しきい値バー — 強震モニタ/S-netの震度凡例を兼ねた、表示しきい値
+            スライダー。時刻バッジと同じく全タブ共通(地震・津波・潮位観測点を
+            選択している間は showRealtimeMapLayers 自体がfalseになるため非表示)。
+            EEWの予想震度凡例・地震/津波の凡例は画面右上、このバーは縦画面で
+            左上・横画面(isWide)で右下と、位置が分かれているため重ならない。
+            そのため緊急地震速報の表示中も隠さず、常時表示する。
 
-        {/* アラートピル — 一旦非表示 */}
-        {/*
-        <div style={{
-          position: "absolute", top: 20, left: 0, right: 0,
-          display: "flex", justifyContent: "center",
-          zIndex: 30, pointerEvents: "none",
-        }}>
-          <div style={{ pointerEvents: "auto" }}>
-            <AlertPill alert={ALERT}/>
+            津波テスト配信・緊急地震速報テスト配信・地震検知テストの「地図を
+            タップして選択」バナーは、以前は画面上部中央に単独で浮かべていたが、
+            この震度しきい値バー(震度凡例のカラーバー)のすぐ上に積み上げる形に
+            変更した。バー自体と同じコンテナ内でflex columnとして並べているため、
+            (a) 位置(縦画面=左上/横画面=右下)が自動的にバーと揃い、
+            (b) バーが無い場合(showRealtimeMapLayersがfalse)でもバナー単独で
+            正しい位置に表示できる。表示条件はバー単独の場合
+            (showRealtimeMapLayers)とバナー単独の場合(pick中)の両方をORで
+            まとめてコンテナごと出し分けている。 */}
+        {(showRealtimeMapLayers || tsunamiAreaPickActive || eewEpicenterPickActive || shakeTestEpicenterPickActive) && (
+          <div style={isWide ? {
+            position: "absolute",
+            right: 16,
+            bottom: "calc(16px + env(safe-area-inset-bottom))",
+            zIndex: 30,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-end",
+            gap: 8,
+          } : {
+            position: "absolute",
+            top: "calc(16px + env(safe-area-inset-top))",
+            left: 16,
+            zIndex: 30,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-start",
+            gap: 8,
+          }}>
+            {/* 津波テスト配信「地図タップで選択」中のバナー。
+                上段: 指示文・選択件数・キャンセル/完了ボタン。
+                下段: 「今タップしたらどのグレードで塗るか」を選ぶパレット。予報区ごとに
+                違うグレードを割り当てたいので、パレットで切り替えてからタップする方式。
+                複数の予報区を選べるようにするため、1回タップしただけではモードを終えず、
+                「完了」を押すまで何度でもタップし直せる。「キャンセル」はピック開始時点の
+                選択に戻す。 */}
+            {tsunamiAreaPickActive && (
+              <Glass radius={22} style={{
+                display: "flex", flexDirection: "column", gap: 8,
+                padding: "10px 12px",
+                maxWidth: "calc(100vw - 32px)",
+                animation: "appear 0.3s cubic-bezier(.25,1,.5,1)",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: themeContextValue.tokens.text, flex: 1 }}>
+                    海岸線をタップして予報区を選択
+                    {pickedTsunamiAreas.length > 0 && `(${pickedTsunamiAreas.length}件選択中)`}
+                  </span>
+                  <PressableButton
+                    type="button"
+                    onClick={cancelTsunamiAreaPick}
+                    style={{
+                      flexShrink: 0, padding: "6px 12px", borderRadius: 999, border: "none", cursor: "pointer",
+                      background: `rgba(${themeContextValue.tokens.ink},0.08)`,
+                      fontSize: 12, fontWeight: 700, color: themeContextValue.tokens.textSecondary,
+                    }}
+                  >
+                    キャンセル
+                  </PressableButton>
+                  <PressableButton
+                    type="button"
+                    onClick={finishTsunamiAreaPick}
+                    style={{
+                      flexShrink: 0, padding: "6px 14px", borderRadius: 999, border: "none", cursor: "pointer",
+                      background: "#0A84FF",
+                      fontSize: 12, fontWeight: 700, color: "#fff",
+                    }}
+                  >
+                    完了
+                  </PressableButton>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: themeContextValue.tokens.textSecondary, flexShrink: 0 }}>
+                    塗るグレード:
+                  </span>
+                  {TEST_TSUNAMI_GRADE_OPTIONS.map(opt => {
+                    const active = activePickGrade === opt.value;
+                    const color = tsunamiGradeInfo(opt.value).color;
+                    return (
+                      <PressableButton
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setActivePickGrade(opt.value)}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 5,
+                          padding: "5px 10px 5px 8px", borderRadius: 999, cursor: "pointer",
+                          border: active ? `1.5px solid ${color}` : "1.5px solid transparent",
+                          background: active ? `${color}26` : `rgba(${themeContextValue.tokens.ink},0.05)`,
+                          fontSize: 11, fontWeight: 700,
+                          color: active ? themeContextValue.tokens.text : themeContextValue.tokens.textSecondary,
+                        }}
+                      >
+                        <span style={{ width: 8, height: 8, borderRadius: 999, background: color, flexShrink: 0 }}/>
+                        {opt.label}
+                      </PressableButton>
+                    );
+                  })}
+                </div>
+              </Glass>
+            )}
+
+            {/* 緊急地震速報テスト配信「地図をタップして震源を指定」中のバナー。
+                震源は1点だけなので津波の予報区ピックと違って複数タップの積み上げは不要
+                ─ タップした瞬間に確定し、自動的にモードを終える(MapCanvas側のクリック
+                ハンドラ→handlePickEewEpicenterでeewEpicenterPickActiveをfalseに戻している)。
+                ここでは「今からタップする」ことを案内し、途中でやめられるように
+                キャンセルボタンだけ出す。 */}
+            {eewEpicenterPickActive && (
+              <Glass radius={22} style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 12px",
+                maxWidth: "calc(100vw - 32px)",
+                animation: "appear 0.3s cubic-bezier(.25,1,.5,1)",
+              }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: themeContextValue.tokens.text }}>
+                  地図をタップして震源を指定
+                </span>
+                <PressableButton
+                  type="button"
+                  onClick={() => handleTestEewAction("cancelEpicenterPick")}
+                  style={{
+                    flexShrink: 0, padding: "6px 12px", borderRadius: 999, border: "none", cursor: "pointer",
+                    background: `rgba(${themeContextValue.tokens.ink},0.08)`,
+                    fontSize: 12, fontWeight: 700, color: themeContextValue.tokens.textSecondary,
+                  }}
+                >
+                  キャンセル
+                </PressableButton>
+              </Glass>
+            )}
+
+            {/* 地震検知テスト「地図をタップして震源を指定」中のバナー。EEWの震源ピックと同じ構成。 */}
+            {shakeTestEpicenterPickActive && (
+              <Glass radius={22} style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 12px",
+                maxWidth: "calc(100vw - 32px)",
+                animation: "appear 0.3s cubic-bezier(.25,1,.5,1)",
+              }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: themeContextValue.tokens.text }}>
+                  地図をタップして震源を指定(地震検知テスト)
+                </span>
+                <PressableButton
+                  type="button"
+                  onClick={() => handleShakeTestAction("cancelEpicenterPick")}
+                  style={{
+                    flexShrink: 0, padding: "6px 12px", borderRadius: 999, border: "none", cursor: "pointer",
+                    background: `rgba(${themeContextValue.tokens.ink},0.08)`,
+                    fontSize: 12, fontWeight: 700, color: themeContextValue.tokens.textSecondary,
+                  }}
+                >
+                  キャンセル
+                </PressableButton>
+              </Glass>
+            )}
+
+            {showRealtimeMapLayers && (
+              <RealtimeIntensityThresholdBar
+                threshold={realtimeIntensityThreshold}
+                onChangeThreshold={handleChangeRealtimeIntensityThreshold}
+              />
+            )}
           </div>
-        </div>
-        */}
+        )}
 
-        {/* フローティングのナビ(縦持ちのタブバー/横画面の縦レール)の下端より下は、
-            見た目上ナビの外側なのに地図の全画面キャンバスがそのまま裏に伸びている
-            ため、何もしないとそこをドラッグ/ピンチしても地図が反応してしまう。
-            中身の無い透明divを地図より上の重ね順に置くだけで、この帯の中の
-            ポインタ/タッチ操作を地図の手前で止められる(下のcanvasには一切届かない)。
-            縦持ち(!isWide)はタブバー自身のbottomオフセットと同じ式、横画面(isWide)
-            は縦レールのbottom:16と同じ16pxを高さにして、ナビの下端にぴったり合わせる。 */}
-        <div style={{
-          position: "absolute",
-          left: 0, right: 0, bottom: 0,
-          height: isWide
-            ? 16
-            : isStandalonePwa
-              ? "max(0px, calc(env(safe-area-inset-bottom) - 10px))"
-              : "calc(env(safe-area-inset-bottom) + 10px)",
-          zIndex: 35,
-          touchAction: "none",
-        }}/>
+        {/* ── Layer 2: Glass UI（透明ガラスが地図に浮かぶ） ── */}
 
         {/* ボトムドック — ナビバーと地図レイヤーパネルをひとつのGlassに統合。
             レイヤーを開くと、このガラス自体の高さ・角丸が滑らかに変化し、
@@ -2458,7 +2899,10 @@ export default function App() {
                     </div>
                     <div style={{ width: 1, alignSelf: "stretch", background: `rgba(${tokens.ink},0.14)` }}/>
                     <BottomDock
-                      active={activeNav}
+                      active={effectiveNav}
+                      navActive={activeNav}
+                      quakeViewMode={quakeViewMode}
+                      onQuakeViewModeChange={setQuakeViewMode}
                       onNav={handleNavTap}
                       navCollapseSignal={navCollapseSignal}
                       navDoubleTapSignal={navDoubleTapSignal}
@@ -2466,10 +2910,30 @@ export default function App() {
                       layers={layersForPanel}
                       onToggleLayer={toggleLayer}
                       onLayerOpenChange={setLayerOpen}
+                      onCurrentLocationChange={setCurrentLocationPoint}
+                      onNowcastChange={handleNowcastChange}
+                      onPrecipChange={handlePrecipChange}
+                      onWdistChange={handleWdistChange}
+                      onTyphoonChange={handleTyphoonChange}
+                      onSelectTyphoon={handleSelectTyphoon}
+                      selectedTyphoonInfo={selectedTyphoonInfo}
+                      onClearSelectedTyphoon={handleClearSelectedTyphoon}
+                      onSelectTyphoonDetail={handleSelectTyphoonCenter}
+                      warningLevelMap={warningLevelMap}
+                      warningAreaByRegioncode={warningAreaByRegioncode}
+                      selectedWarningArea={selectedWarningArea}
+                      onSelectWarningAreaFromList={handleSelectWarningAreaFromList}
+                      onBackFromWarningArea={handleBackFromWarningArea}
+                      onAlertLayerChange={handleAlertLayerChange}
+                      onAlertModeChange={handleAlertModeChange}
+                      onRiverLayerChange={handleRiverLayerChange}
+                      selectedRiverStation={selectedRiverStation}
+                      onSelectRiverStation={handleSelectRiverStation}
+                      onChangeNowcastColorScheme={handleChangeNowcastColorScheme}
                       uiScale={wideUIScale}
                       quakes={effectiveQuakes}
                   quakeStatus={quakeStatus}
-                  selectedQuakeId={selectedQuakeId}
+                  selectedQuakeId={quakeSelectionRelevantToCurrentView}
                   onSelectQuake={selectQuake}
                   tsunamis={effectiveTsunamis}
                   tsunamiStatus={tsunamiStatus}
@@ -2479,25 +2943,6 @@ export default function App() {
                   tsunamiHistory={tsunamiHistory}
                   onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
                   onTsunamiViewModeChange={setTsunamiViewModeTop}
-                  onCurrentLocationChange={setCurrentLocationPoint}
-                  onNowcastChange={handleNowcastChange}
-                  onPrecipChange={handlePrecipChange}
-                  onWdistChange={handleWdistChange}
-                  onTyphoonChange={handleTyphoonChange}
-                  onSelectTyphoon={handleSelectTyphoon}
-                  selectedTyphoonInfo={selectedTyphoonInfo}
-                  onClearSelectedTyphoon={handleClearSelectedTyphoon}
-                  onSelectTyphoonDetail={handleSelectTyphoonCenter}
-                  warningLevelMap={warningLevelMap}
-                  warningAreaByRegioncode={warningAreaByRegioncode}
-                  selectedWarningArea={selectedWarningArea}
-                  onSelectWarningAreaFromList={handleSelectWarningAreaFromList}
-                  onBackFromWarningArea={handleBackFromWarningArea}
-                  onAlertLayerChange={handleAlertLayerChange}
-                  onAlertModeChange={handleAlertModeChange}
-                  onRiverLayerChange={handleRiverLayerChange}
-                  selectedRiverStation={selectedRiverStation}
-                  onSelectRiverStation={handleSelectRiverStation}
                   tideStations={tideStationsWithGrade}
                   tideStationsStatus={tideStationsStatus}
                   selectedTideStationCode={selectedTideStationCode}
@@ -2514,7 +2959,6 @@ export default function App() {
                   onToggleTideStationMarkersVisible={() => setTideStationMarkersVisible(v => !v)}
                   stationPoints={selectedQuakePoints}
                   onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
-                  onChangeNowcastColorScheme={handleChangeNowcastColorScheme}
                   estIntensityEnabled={estIntensityEnabled}
                   onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
                   areaFillEnabled={areaFillEnabled}
@@ -2533,6 +2977,29 @@ export default function App() {
                   onChangeStationListDisplayMode={handleChangeStationListDisplayMode}
                   experimentalFeaturesEnabled={experimentalFeaturesEnabled}
                   onChangeExperimentalFeaturesEnabled={handleChangeExperimentalFeaturesEnabled}
+                  /* realtimeApiToken={realtimeApiToken} */
+                  replayPlayer={replayPlayer}
+                  /* onChangeRealtimeApiToken={updateRealtimeApiToken} */
+                  realtimeRisingEnabled={realtimeRisingEnabled}
+                  onChangeRealtimeRisingEnabled={handleChangeRealtimeRisingEnabled}
+                  replayJmaColorEnabled={replayJmaColorEnabled}
+                  onChangeReplayJmaColorEnabled={handleChangeReplayJmaColorEnabled}
+                  shakeDetectionEnabled={shakeDetectionEnabled}
+                  onChangeShakeDetectionEnabled={handleChangeShakeDetectionEnabled}
+                  weakArrayDetectionEnabled={weakArrayDetectionEnabled}
+                  onChangeWeakArrayDetectionEnabled={handleChangeWeakArrayDetectionEnabled}
+                  cameraSettings={cameraSettings}
+                  onChangeCameraSettings={handleChangeCameraSettings}
+                  epicenterEstimationEnabled={epicenterEstimationEnabled}
+                  onChangeEpicenterEstimationEnabled={handleChangeEpicenterEstimationEnabled}
+                  gridDetectionEnabled={gridDetectionEnabled}
+                  onChangeGridDetectionEnabled={handleChangeGridDetectionEnabled}
+                  gridCellsVisible={gridCellsVisible}
+                  onChangeGridCellsVisible={handleChangeGridCellsVisible}
+                  showLowConfidenceEstimates={showLowConfidenceEstimates}
+                  onChangeShowLowConfidenceEstimates={handleChangeShowLowConfidenceEstimates}
+                  shakeEvents={shakeEvents}
+                  realtimeDataTime={realtimeDataTimeForMap}
                   testTsunami={testTsunami}
                   onBroadcastTestTsunami={broadcastTestTsunami}
                   onCancelTestTsunami={cancelTestTsunami}
@@ -2551,6 +3018,11 @@ export default function App() {
                   quakeTestForm={quakeTestForm}
                   quakeEpicenterPickActive={quakeEpicenterPickActive}
                   quakeTestAutoPlaying={quakeTestAutoPlaying}
+                  shakeTests={shakeTests}
+                  onShakeTestAction={handleShakeTestAction}
+                  shakeTestForm={shakeTestForm}
+                  shakeTestEpicenterPickActive={shakeTestEpicenterPickActive}
+                  epicenterEstimates={epicenterEstimates}
                   tsunamiAreaPickActive={tsunamiAreaPickActive}
                   onStartTsunamiAreaPick={startTsunamiAreaPick}
                   pickedTsunamiAreas={pickedTsunamiAreas}
@@ -2573,7 +3045,10 @@ export default function App() {
               </div>
           ) : (
             <BottomDock
-              active={activeNav}
+              active={effectiveNav}
+              navActive={activeNav}
+              quakeViewMode={quakeViewMode}
+              onQuakeViewModeChange={setQuakeViewMode}
               onNav={handleNavTap}
               navCollapseSignal={navCollapseSignal}
               navDoubleTapSignal={navDoubleTapSignal}
@@ -2581,9 +3056,29 @@ export default function App() {
               layers={layersForPanel}
               onToggleLayer={toggleLayer}
               onLayerOpenChange={setLayerOpen}
+              onCurrentLocationChange={setCurrentLocationPoint}
+              onNowcastChange={handleNowcastChange}
+              onPrecipChange={handlePrecipChange}
+              onWdistChange={handleWdistChange}
+              onTyphoonChange={handleTyphoonChange}
+              onSelectTyphoon={handleSelectTyphoon}
+              selectedTyphoonInfo={selectedTyphoonInfo}
+              onClearSelectedTyphoon={handleClearSelectedTyphoon}
+              onSelectTyphoonDetail={handleSelectTyphoonCenter}
+              warningLevelMap={warningLevelMap}
+              warningAreaByRegioncode={warningAreaByRegioncode}
+              selectedWarningArea={selectedWarningArea}
+              onSelectWarningAreaFromList={handleSelectWarningAreaFromList}
+              onBackFromWarningArea={handleBackFromWarningArea}
+              onAlertLayerChange={handleAlertLayerChange}
+              onAlertModeChange={handleAlertModeChange}
+              onRiverLayerChange={handleRiverLayerChange}
+              selectedRiverStation={selectedRiverStation}
+              onSelectRiverStation={handleSelectRiverStation}
+              onChangeNowcastColorScheme={handleChangeNowcastColorScheme}
               quakes={effectiveQuakes}
               quakeStatus={quakeStatus}
-              selectedQuakeId={selectedQuakeId}
+              selectedQuakeId={quakeSelectionRelevantToCurrentView}
               onSelectQuake={selectQuake}
               tsunamis={effectiveTsunamis}
               tsunamiStatus={tsunamiStatus}
@@ -2593,25 +3088,6 @@ export default function App() {
               tsunamiHistory={tsunamiHistory}
               onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
               onTsunamiViewModeChange={setTsunamiViewModeTop}
-              onCurrentLocationChange={setCurrentLocationPoint}
-                  onNowcastChange={handleNowcastChange}
-                  onPrecipChange={handlePrecipChange}
-                  onWdistChange={handleWdistChange}
-                  onTyphoonChange={handleTyphoonChange}
-                  onSelectTyphoon={handleSelectTyphoon}
-                  selectedTyphoonInfo={selectedTyphoonInfo}
-                  onClearSelectedTyphoon={handleClearSelectedTyphoon}
-                  onSelectTyphoonDetail={handleSelectTyphoonCenter}
-                  warningLevelMap={warningLevelMap}
-                  warningAreaByRegioncode={warningAreaByRegioncode}
-                  selectedWarningArea={selectedWarningArea}
-                  onSelectWarningAreaFromList={handleSelectWarningAreaFromList}
-                  onBackFromWarningArea={handleBackFromWarningArea}
-                  onAlertLayerChange={handleAlertLayerChange}
-                  onAlertModeChange={handleAlertModeChange}
-                  onRiverLayerChange={handleRiverLayerChange}
-                  selectedRiverStation={selectedRiverStation}
-                  onSelectRiverStation={handleSelectRiverStation}
               tideStations={tideStationsWithGrade}
               tideStationsStatus={tideStationsStatus}
               selectedTideStationCode={selectedTideStationCode}
@@ -2628,7 +3104,6 @@ export default function App() {
               onToggleTideStationMarkersVisible={() => setTideStationMarkersVisible(v => !v)}
               stationPoints={selectedQuakePoints}
               onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
-                  onChangeNowcastColorScheme={handleChangeNowcastColorScheme}
               estIntensityEnabled={estIntensityEnabled}
               onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
               areaFillEnabled={areaFillEnabled}
@@ -2647,6 +3122,29 @@ export default function App() {
               onChangeStationListDisplayMode={handleChangeStationListDisplayMode}
               experimentalFeaturesEnabled={experimentalFeaturesEnabled}
               onChangeExperimentalFeaturesEnabled={handleChangeExperimentalFeaturesEnabled}
+              /* realtimeApiToken={realtimeApiToken} */
+              replayPlayer={replayPlayer}
+              /* onChangeRealtimeApiToken={updateRealtimeApiToken} */
+              realtimeRisingEnabled={realtimeRisingEnabled}
+              onChangeRealtimeRisingEnabled={handleChangeRealtimeRisingEnabled}
+              replayJmaColorEnabled={replayJmaColorEnabled}
+              onChangeReplayJmaColorEnabled={handleChangeReplayJmaColorEnabled}
+              shakeDetectionEnabled={shakeDetectionEnabled}
+              onChangeShakeDetectionEnabled={handleChangeShakeDetectionEnabled}
+              weakArrayDetectionEnabled={weakArrayDetectionEnabled}
+              onChangeWeakArrayDetectionEnabled={handleChangeWeakArrayDetectionEnabled}
+              cameraSettings={cameraSettings}
+              onChangeCameraSettings={handleChangeCameraSettings}
+              epicenterEstimationEnabled={epicenterEstimationEnabled}
+              onChangeEpicenterEstimationEnabled={handleChangeEpicenterEstimationEnabled}
+              gridDetectionEnabled={gridDetectionEnabled}
+              onChangeGridDetectionEnabled={handleChangeGridDetectionEnabled}
+              gridCellsVisible={gridCellsVisible}
+              onChangeGridCellsVisible={handleChangeGridCellsVisible}
+              showLowConfidenceEstimates={showLowConfidenceEstimates}
+              onChangeShowLowConfidenceEstimates={handleChangeShowLowConfidenceEstimates}
+              shakeEvents={shakeEvents}
+              realtimeDataTime={realtimeDataTimeForMap}
               testTsunami={testTsunami}
               onBroadcastTestTsunami={broadcastTestTsunami}
               onCancelTestTsunami={cancelTestTsunami}
@@ -2665,6 +3163,11 @@ export default function App() {
               quakeTestForm={quakeTestForm}
               quakeEpicenterPickActive={quakeEpicenterPickActive}
               quakeTestAutoPlaying={quakeTestAutoPlaying}
+              shakeTests={shakeTests}
+              onShakeTestAction={handleShakeTestAction}
+              shakeTestForm={shakeTestForm}
+              shakeTestEpicenterPickActive={shakeTestEpicenterPickActive}
+              epicenterEstimates={epicenterEstimates}
               tsunamiAreaPickActive={tsunamiAreaPickActive}
               onStartTsunamiAreaPick={startTsunamiAreaPick}
               pickedTsunamiAreas={pickedTsunamiAreas}
@@ -2687,10 +3190,6 @@ export default function App() {
 
       </div>
 
-      {/* 利用規約・プライバシーポリシー・注意事項への同意ゲート。既存のフローティング
-          UI(BottomDock等)とは別の全画面オーバーレイで、未同意の間は他の操作を
-          一切ブロックする。同意済み(かつ内容に更新が無い)場合は何も描画しない。 */}
-      <TermsConsentGate/>
     </NowcastColorSchemeContext.Provider>
     </QuakeColorSchemeContext.Provider>
     </GlassOpaqueContext.Provider>
