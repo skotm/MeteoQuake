@@ -60,7 +60,12 @@ export default function App() {
   // 実際に表示している内容。地震タブのバーが「リアルタイム」の間は"realtime"として扱い、
   // 旧リアルタイムタブ向けの分岐(地図レイヤー・EEW表示・選択の反映範囲など)をそのまま使う。
   const effectiveNav = (activeNav === "quake" && quakeViewMode === "realtime") ? "realtime" : activeNav;
-  // 気象タブで気象タブ・警報タブを見ている間は、リアルタイム検知(と地図上のリアルタイム表示)を止める。
+  // 揺れ検知・震度の計算は、どのタブでも止めない(従来のB=KyoshinViewerと同じ)。
+  // 地震タブ以外では「地図の自動移動」だけを止める(下の mapCameraSettings 参照)。
+  const inQuakeTab = activeNav === "quake";
+  // 気象・警報タブでは、リアルタイム震度の「表示」(観測点・推定・しきい値バー・更新時刻の
+  // バッジ)を隠す。検知・震源推定の計算(MapCanvas側のtick)は続くので、他のタブへ戻った時に
+  // 検知が途切れたりやり直しになったりしない。
   const inWeatherOrAlert = activeNav === "weather" || activeNav === "alert";
 
   // 雨雲レーダー配色。設定タブの「気象」→「雨雲レーダー配色」から切り替える。
@@ -264,12 +269,12 @@ export default function App() {
   const [shakeDetectionEnabled, setShakeDetectionEnabledState] = useState(loadStoredShakeDetectionEnabled);
   // カメラの動き(詳細設定 > カメラの動き)。緊急地震速報・揺れ検知での地図の自動ズームの設定。
   const [cameraSettings, setCameraSettings] = useState(loadStoredCameraSettings);
-  // 気象・警報タブを見ている間は、揺れ検知の視点追従と緊急地震速報の自動ズームを止める
-  // (地図の操作を邪魔しない)。気象・警報タブの間に届いた速報は「見た」扱いになるため、
-  // 地震タブなどへ戻った時に古い速報で急に動くこともない。
+  // 地震タブ以外(津波・気象・警報・設定)では、揺れ検知の視点追従と緊急地震速報の自動ズームを止める
+  // (検知そのものは止めない)。地震タブ以外の間に届いた速報は「見た」扱いになるため、
+  // 地震タブへ戻った時に古い速報で急に動くこともない。
   const mapCameraSettings = useMemo(
-    () => (inWeatherOrAlert ? { ...cameraSettings, eewFocus: false, shakeFollow: false } : cameraSettings),
-    [cameraSettings, inWeatherOrAlert],
+    () => (inQuakeTab ? cameraSettings : { ...cameraSettings, eewFocus: false, shakeFollow: false }),
+    [cameraSettings, inQuakeTab],
   );
   function handleChangeCameraSettings(patch) {
     setCameraSettings(prev => {
@@ -2576,12 +2581,12 @@ export default function App() {
           replaySpeed={replayPlayer.speed}
           replayPlaying={replayPlayer.isPlaying}
           replayDataTimeMs={replayPlayer.loaded ? (replayPlayer.frames[replayPlayer.currentIndex]?.dataTime?.getTime() ?? null) : null}
-          shakeDetectionEnabled={shakeDetectionEnabled && !inWeatherOrAlert}
+          shakeDetectionEnabled={shakeDetectionEnabled}
           weakArrayDetectionEnabled={weakArrayDetectionEnabled}
           cameraSettings={mapCameraSettings}
           onShakeEventsChange={setShakeEvents}
           epicenterEstimationEnabled={epicenterEstimationEnabled}
-          gridDetectionEnabled={shakeDetectionEnabled && !inWeatherOrAlert && gridDetectionEnabled}
+          gridDetectionEnabled={shakeDetectionEnabled && gridDetectionEnabled}
           gridCellsVisible={gridCellsVisible}
           showLowConfidenceEstimates={showLowConfidenceEstimates}
           onEpicenterEstimateChange={setEpicenterEstimates}

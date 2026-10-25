@@ -2340,7 +2340,8 @@ export function BottomDock({
           で積み上げ、bottomのみ指定することでコンテナが上方向に伸びる
           形にしている)。 */}
       {selectedQuakeId == null && selectedTsunamiId == null
-        && selectedTideStationCode == null && realtimeDataTime && (
+        && selectedTideStationCode == null && realtimeDataTime
+        && active !== "weather" && active !== "alert" && (
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",

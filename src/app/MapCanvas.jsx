@@ -1386,26 +1386,6 @@ export function MapCanvas({
         });
 
         mapRef.current = map;
-
-        // 調査用: 地図の移動をコンソールに出す。ブラウザのコンソールで
-        //   localStorage.setItem("debugCameraMoves", "1")
-        // を実行してから再読み込みすると有効になる("0"または削除で無効)。
-        // ユーザー操作によるもの/プログラムによるもの(後者は呼び出し元のスタック付き)、
-        // および地図の領域サイズの変化(resize)を、[camera] の警告として出す。
-        // 有効になった時は、最初に「[camera] デバッグログ有効」と1行出る。
-        try {
-          if (localStorage.getItem("debugCameraMoves") === "1") {
-            console.warn("[camera] デバッグログ有効");
-            const logMove = (kind) => (e) => {
-              console.warn(`[camera] ${kind} (${e.originalEvent ? "ユーザー操作" : "プログラム"})`, e.originalEvent ? "" : new Error().stack);
-            };
-            for (const t of ["movestart", "zoomstart", "rotatestart", "pitchstart"]) map.on(t, logMove(t));
-            map.on("resize", () => {
-              const el = map.getContainer();
-              console.warn("[camera] resize", el.clientWidth, el.clientHeight);
-            });
-          }
-        } catch { /* localStorageが使えない環境では何もしない */ }
       })
       .catch((err) => {
         console.error("地図の読み込みに失敗:", err);
@@ -1594,8 +1574,6 @@ export function MapCanvas({
   const gridEngineRef = useRef(null);
   const gridInternalEstRef = useRef(null);
   const lastShakeGridModeRef = useRef(false);
-  // 揺れ検知が「無効→有効」に戻った時(気象・警報タブから戻った時など)を見つけるための前回値。
-  const lastShakeEnabledRef = useRef(shakeDetectionEnabled);
   if (!gridEngineRef.current) gridEngineRef.current = new GridDetector();
   const gridEstimatorRef = useRef(null);
   if (!gridEstimatorRef.current) gridEstimatorRef.current = new EpicenterEstimator();
@@ -1882,14 +1860,6 @@ export function MapCanvas({
     // 近傍点リストが未構築(観測点マスタ未取得)の間は空配列が返る。
     // グリッド検知がONの間は、通常の検知エンジンは動かさず(重いため)、グリッド検知のイベントを
     // 検知一覧・視点移動に使う(1tick前の結果。グリッド検知はこのeffectの終わりで進める)。
-    // 検知が無効→有効に戻った時(気象・警報タブから地震・津波・設定タブへ移った時など)は、
-    // 止めていた間の古い履歴を捨て、直後の2秒間は検知しない。この間も値の更新(履歴の蓄積)は
-    // 続くので、2秒後からは通常どおり検知できる(復帰時のデータの飛びを「急上昇」と誤検知しない)。
-    if (lastShakeEnabledRef.current !== shakeDetectionEnabled) {
-      lastShakeEnabledRef.current = shakeDetectionEnabled;
-      lastProcessedValuesRef.current = null;
-      if (shakeDetectionEnabled) shakeEngineRef.current.resetForSourceChange(engineNow, SOURCE_CHANGE_DETECTION_SUPPRESS_MS);
-    }
     const gridModeNow = shakeDetectionEnabled && gridDetectionEnabled;
     if (lastShakeGridModeRef.current !== gridModeNow) {
       lastShakeGridModeRef.current = gridModeNow;
