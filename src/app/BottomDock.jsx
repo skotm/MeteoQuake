@@ -1907,8 +1907,6 @@ export function BottomDock({
       selectedTideStationCode != null ||
       (activeTsunami != null && !causingQuakeFound)
     )) ||
-    (active === "weather") ||
-    (active === "alert" && selectedWarningArea != null) ||
     (active === "settings" && settingsPath.length > 0);
 
   return (
@@ -1925,7 +1923,7 @@ export function BottomDock({
           アクティブな緊急地震速報を常にそのままフローティングへ表示するため、
           タップして開く/閉じるという操作自体が不要になる。そのためこのFAB/
           戻るボタン自体をリアルタイムタブでは出さない。 */}
-      {hasActiveEew && active !== "realtime" && (
+      {hasActiveEew && active !== "realtime" && (eewDetailOpen || (active !== "weather" && active !== "alert")) && (
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",
@@ -2085,6 +2083,9 @@ export function BottomDock({
             left: wideAnchorRect.right + 12,
             top: wideAnchorRect.top + 16,
             zIndex: 50,
+            // 緊急地震速報の!ボタンは、気象・警報タブではこの枠の中に並べる
+            // (メニューが開いて広がっても重ならないように)。
+            display: "flex", alignItems: "flex-start", gap: 12,
           }}>
             {selectedWarningArea != null || selectedRiverStation != null ? (
               <BackToListButton
@@ -2100,6 +2101,7 @@ export function BottomDock({
                 onToggleItem={handleToggleAlertMenuItem}
               />
             )}
+            {hasActiveEew && <EewFabButton onClick={onOpenEewDetail}/>}
           </div>
           {/* キキクルの時刻スライダー(横画面) — 気象タブの各時刻スライダーと同じく、
               展開メニューが閉じている間だけ、パネルの右側・画面下端に沿って
@@ -2146,6 +2148,8 @@ export function BottomDock({
               formatLabel={formatRiskFrameLabel}
             />
           )}
+          {/* 緊急地震速報の!ボタン — メニュー・スライダーと同じ行に並べて、重ならないようにする。 */}
+          {hasActiveEew && <EewFabButton onClick={onOpenEewDetail}/>}
           {selectedWarningArea != null || selectedRiverStation != null ? (
             <BackToListButton
               onClick={selectedRiverStation != null ? () => onSelectRiverStation?.(null) : onBackFromWarningArea}
@@ -2177,12 +2181,16 @@ export function BottomDock({
             left: wideAnchorRect.right + 12,
             top: wideAnchorRect.top + 16,
             zIndex: 50,
+            // 緊急地震速報の!ボタンは、気象・警報タブではこの枠の中に並べる
+            // (メニューが開いて広がっても重ならないように)。
+            display: "flex", alignItems: "flex-start", gap: 12,
           }}>
             {selectedTyphoonInfo ? (
               <BackToListButton onClick={handleBackFromTyphoon} label="台風一覧に戻る"/>
             ) : (
               <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={false} itemStates={weatherMenuItemStates} onToggleItem={handleToggleWeatherMenuItem} hasActiveTyphoons={hasActiveTyphoons}/>
             )}
+            {hasActiveEew && <EewFabButton onClick={onOpenEewDetail}/>}
           </div>
           {/* 雨雲レーダーの時刻スライダー(横画面) — 縦画面の時と同じく、展開メニューが
               閉じている間だけ表示する。縦画面ではボタンのすぐ上に置いているが、
@@ -2279,6 +2287,8 @@ export function BottomDock({
               formatLabel={formatWdistFrameLabel}
             />
           )}
+          {/* 緊急地震速報の!ボタン — メニュー・スライダーと同じ行に並べて、重ならないようにする。 */}
+          {hasActiveEew && <EewFabButton onClick={onOpenEewDetail}/>}
           {selectedTyphoonInfo ? (
             <BackToListButton onClick={handleBackFromTyphoon} label="台風一覧に戻る"/>
           ) : (
@@ -2473,7 +2483,8 @@ export function BottomDock({
             スクロールしても本体と一緒には動かない(検索/一覧の入口を常に見せておく)。
             地震を選択してカード表示になっている間、および緊急地震速報の詳細を
             表示している間は不要なので隠す。 */}
-        {!eewDetailOpen && (active === "quake" || active === "realtime") && selectedQuakeId == null && (
+        {/* 緊急地震速報が出ている間は、地震タブは「リアルタイム」固定にして、切り替えバーは隠す。 */}
+        {!eewDetailOpen && !hasActiveEew && (active === "quake" || active === "realtime") && selectedQuakeId == null && (
           <QuakeListToolbar
             mode={quakeViewMode}
             onModeChange={(mode) => {
