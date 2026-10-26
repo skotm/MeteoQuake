@@ -57,9 +57,8 @@ export default function App() {
   // 地震タブのフローティングバー(左から リアルタイム / 地震一覧 / 地震検索)の選択。
   // 旧「リアルタイムタブ」は廃止し、バー左端の「リアルタイム」に統合した。
   const [quakeViewMode, setQuakeViewMode] = useState("realtime"); // "realtime" | "recent" | "search"
-  // 実際に表示している内容。地震タブのバーが「リアルタイム」の間は"realtime"として扱い、
-  // 旧リアルタイムタブ向けの分岐(地図レイヤー・EEW表示・選択の反映範囲など)をそのまま使う。
-  const effectiveNav = (activeNav === "quake" && quakeViewMode === "realtime") ? "realtime" : activeNav;
+  // (effectiveNav / effectiveQuakeViewMode は、緊急地震速報の状態に依存するため、
+  //  effectiveEews の定義の直後(下)で求める。)
   // 揺れ検知・震度の計算は、どのタブでも止めない(従来のB=KyoshinViewerと同じ)。
   // 地震タブ以外では「地図の自動移動」だけを止める(下の mapCameraSettings 参照)。
   const inQuakeTab = activeNav === "quake";
@@ -84,11 +83,7 @@ export default function App() {
   // 接続を維持する(他タブに移っても切断しない)。この state は一度trueに
   // なったら二度とfalseへは戻さない(=「タブを開いた」という事実の記録)。
   const [realtimeEverActivated, setRealtimeEverActivated] = useState(false);
-  useEffect(() => {
-    if (effectiveNav === "realtime" && !realtimeEverActivated) {
-      setRealtimeEverActivated(true);
-    }
-  }, [effectiveNav, realtimeEverActivated]);
+  // (一度開いたかどうかを記録するeffectは、effectiveNavの定義の後ろ(下)に置いてある。)
 
   // 【廃止】リアルタイムタブ(強震モニタ/S-net)配信APIのアクセストークン。
   // 設定タブ「詳細設定」から入力・変更できた(トークン入力機能自体を廃止した
@@ -708,6 +703,23 @@ export default function App() {
   // テスト配信中は、実際の一覧の先頭にテストデータを合成する。地図・パネルとも、
   // 以降のEEW関連の判定はこちら(effectiveEews)を使う。
   const effectiveEews = testEews.length > 0 ? [...testEews, ...eews] : eews;
+
+  // 緊急地震速報(取消済みでないもの)が出ている間は、地震タブを「リアルタイム」に固定する
+  // (フローティング上部の切り替えバーは隠す。BottomDock側)。速報が終われば、速報前に選んでいた
+  // 項目(リアルタイム/地震一覧/地震検索)に戻る。
+  const eewActive = effectiveEews.some(e => !e.cancelled);
+  const effectiveQuakeViewMode = eewActive ? "realtime" : quakeViewMode;
+  // 実際に表示している内容。地震タブのバーが「リアルタイム」の間(速報中の固定を含む)は
+  // "realtime"として扱い、旧リアルタイムタブ向けの分岐(地図レイヤー・EEW表示・選択の反映範囲など)を
+  // そのまま使う。
+  const effectiveNav = (activeNav === "quake" && effectiveQuakeViewMode === "realtime") ? "realtime" : activeNav;
+
+  // リアルタイム(強震モニタ/S-net)は、一度開いたらアプリを閉じるまで接続を維持する。
+  useEffect(() => {
+    if (effectiveNav === "realtime" && !realtimeEverActivated) {
+      setRealtimeEverActivated(true);
+    }
+  }, [effectiveNav, realtimeEverActivated]);
 
   // 緊急地震速報の詳細フローティングカードを表示中かどうか。左上のEewFabButtonを
   // 押すとtrueになり、専用の「戻る」ボタンで閉じるとfalseに戻る。既存のタブ
@@ -2598,7 +2610,7 @@ export default function App() {
             (震度の予測範囲の凡例)があるため、こちらは隠す。これが無いと、
             地震タブで地震を選択したまま緊急地震速報が開いた時、地震の震度凡例が
             EEWの表示に重なって残ってしまっていた。 */}
-        {!eewDetailOpen && effectiveNav === "quake" && selectedQuake && (
+        {!eewDetailOpen && (effectiveNav === "quake" || effectiveNav === "realtime") && selectedQuake && (
           <div style={{
             position: "absolute",
             top: "calc(16px + env(safe-area-inset-top))",
@@ -2906,7 +2918,7 @@ export default function App() {
                     <BottomDock
                       active={effectiveNav}
                       navActive={activeNav}
-                      quakeViewMode={quakeViewMode}
+                      quakeViewMode={effectiveQuakeViewMode}
                       onQuakeViewModeChange={setQuakeViewMode}
                       onNav={handleNavTap}
                       navCollapseSignal={navCollapseSignal}
@@ -3052,7 +3064,7 @@ export default function App() {
             <BottomDock
               active={effectiveNav}
               navActive={activeNav}
-              quakeViewMode={quakeViewMode}
+              quakeViewMode={effectiveQuakeViewMode}
               onQuakeViewModeChange={setQuakeViewMode}
               onNav={handleNavTap}
               navCollapseSignal={navCollapseSignal}

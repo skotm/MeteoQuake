@@ -78,7 +78,12 @@ export function PanelDragHandoffCard({ onHandoffToPanelDrag, children }) {
     startX.current = e.clientX;
     startY.current = e.clientY;
     decided.current = false;
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    // マウス(PC)ではポインタを捕捉しない。捕捉すると、押した位置のボタンではなくこのラッパーに
+    // pointerupが届き、clickもラッパー側で発生するため、カード内のボタン(「津波を引き起こした地震」
+    // など)が押せなくなる。タッチは元々押した要素に暗黙に捕捉されるため、従来どおり。
+    if (e.pointerType !== "mouse") {
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    }
   }
   function handlePointerMove(e) {
     if (pointerId.current !== e.pointerId || decided.current) return;
