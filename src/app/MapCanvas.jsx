@@ -1056,6 +1056,13 @@ export function MapCanvas({
               "symbol-sort-key": ["get", "sortOrder"],
             },
           });
+          // 潮位観測点(丸・津波高バー)は、リアルタイム震度の観測点より前面に表示する。
+          // 潮位のレイヤーはこの時点より前に作られていて、後から作られるリアルタイムの
+          // 観測点レイヤーの下になってしまうため、リアルタイムの観測点レイヤーを作り終えた
+          // ここで、潮位のレイヤーを(元の重なり順=津波高バーの上に丸、のまま)リアルタイムの観測点の上へ移す。
+          for (const tideLayerId of ["tsunami-height-bars-layer", "tide-station-points-layer"]) {
+            if (map.getLayer(tideLayerId)) map.moveLayer(tideLayerId);
+          }
           map.on("mouseenter", "realtime-points-layer", () => {
             map.getCanvas().style.cursor = "pointer";
           });
