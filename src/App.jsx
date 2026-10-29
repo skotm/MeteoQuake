@@ -295,7 +295,7 @@ export default function App() {
 
   // 震源推定(epicenterEstimation.ts、実験的機能)自体のON/OFF。地震検知と
   // 同じ設定タブで操作し、localStorageに永続化する。デフォルトOFF。
-  const [epicenterEstimationEnabled, setEpicenterEstimationEnabledState] = useState(false); // 一時的に無効化(設定UIはグレー表示でオンにできない。保存値は読まない)
+  const [epicenterEstimationEnabled, setEpicenterEstimationEnabledState] = useState(loadStoredEpicenterEstimationEnabled);
 
   // 信頼度が下限未満の震源推定も表示するか。リアルタイムタブの設定。デフォルトOFF。
   const [showLowConfidenceEstimates, setShowLowConfidenceEstimatesState] = useState(loadStoredShowLowConfidenceEstimates);
@@ -306,7 +306,6 @@ export default function App() {
   }
 
   function handleChangeEpicenterEstimationEnabled(next) {
-    if (next) return; // 一時的にオンにできない
     setEpicenterEstimationEnabledState(next);
     saveEpicenterEstimationEnabled(next);
   }
