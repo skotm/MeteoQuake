@@ -312,12 +312,11 @@ export function SettingsBody({
               />
               <SettingsToggleRow
                 label="震源推定(実験的機能)"
-                description="緊急地震速報が出ない小さな地震でも、地震検知の結果から震央のおおよその位置を推定して地図上に表示します。検知点数が少ないうちは精度が低く、位置が大きくぶれることがあります。(現在、一時的に利用できません)"
-                checked={false}
-                disabled
-                onChange={() => {}}
+                description="緊急地震速報が出ない小さな地震でも、地震検知の結果から震央のおおよその位置を推定して地図上に表示します。検知点数が少ないうちは精度が低く、位置が大きくぶれることがあります。"
+                checked={epicenterEstimationEnabled}
+                onChange={() => onChangeEpicenterEstimationEnabled(!epicenterEstimationEnabled)}
               />
-              {false && epicenterEstimationEnabled && (
+              {epicenterEstimationEnabled && (
                 <SettingsToggleRow
                   label="信頼度の低い推定を表示"
                   description={`震源推定の信頼度(推定Mの右に表示される0.00〜1.00の数値)が${ESTIMATE_MIN_DISPLAY_CONFIDENCE.toFixed(2)}未満の推定も表示します。オフの間は、${ESTIMATE_MIN_DISPLAY_CONFIDENCE.toFixed(2)}未満の推定を表示しません。`}
