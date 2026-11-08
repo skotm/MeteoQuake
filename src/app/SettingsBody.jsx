@@ -1,5 +1,5 @@
 import { useContext, useEffect } from "react";
-import { ESTIMATE_MIN_DISPLAY_CONFIDENCE } from "../epicenterConfidence";
+import { ESTIMATE_MIN_DISPLAY_CONFIDENCE } from "../engines/epicenterConfidence";
 import { EMPTY_EQDB_LIST } from "./eqdb";
 import { GlassOpaqueContext } from "./glass";
 import { ThemeContext } from "./theme";

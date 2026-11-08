@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useRealtimeStream } from "./useRealtimeStream";
 import { useReplayPlayer } from "./useReplayPlayer";
-import { prepareShakeTest, isShakeTestFinished, computeShakeTestValues } from "./shakeTestSimulation";
-import { setJmaTravelTimeTable, tableFromJSON } from "./jmaTravelTime";
+import { prepareShakeTest, isShakeTestFinished, computeShakeTestValues } from "./engines/shakeTestSimulation";
+import { setJmaTravelTimeTable, tableFromJSON } from "./engines/jmaTravelTime";
 import { CONSENT_DOCS, isConsentUpToDate, loadStoredConsent, saveConsent } from "./app/consent";
 import { loadMarkdownFile } from "./app/settingsPanels";
 import { QuakeColorSchemeContext, REALTIME_API_BASE_URL, loadStoredQuakeColorScheme, saveQuakeColorScheme } from "./app/colorSchemes";
@@ -11,6 +11,7 @@ import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layou
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
 import { THEME_TOKENS, ThemeContext, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
 import { clampQuakeFetchLimit, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, saveGridDetectionEnabled, saveGridCellsVisible, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
+import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
 import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
 import { loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
 import { buildTestQuakeStageCard, calcTestEewAreasByAttenuation, isTestWarnLevel } from "./app/testSimulation";
@@ -428,6 +429,9 @@ export default function App() {
   //   このselectQuake()を通すことで、state更新と完全に同じタイミング(同期的)
   //   でrefも更新されるようにする。
   const selectedQuakeIdRef = useRef(null);
+  // selectedQuakeOriginの最新値を、WebSocketの受信処理などから参照するためのref(selectedQuakeIdRefと
+  // 同じ理由で、selectQuake()の中で、state更新と同時に同期的に更新する)。
+  const selectedQuakeOriginRef = useRef(null);
   // 地震タブの一覧と、リアルタイムタブの「直近の地震」一覧、どちらから選んだ
   // かを覚えておく。地震タブで開いた地震をリアルタイムタブに、逆にリアルタイム
   // タブで開いた地震を地震タブに、それぞれ反映させないため(要件により)。
@@ -440,10 +444,12 @@ export default function App() {
     selectedQuakeIdRef.current = id;
     setSelectedQuakeId(id);
     if (id == null) {
+      selectedQuakeOriginRef.current = null;
       setSelectedQuakeOrigin(null);
     } else if (origin !== undefined) {
       // 続報での自動差し替え(successor更新)などorigin未指定の呼び出しでは、
       // 元々どちらのタブが選んだ地震かをそのまま引き継ぐ。
+      selectedQuakeOriginRef.current = origin;
       setSelectedQuakeOrigin(origin);
     }
   }, []);
@@ -474,6 +480,9 @@ export default function App() {
         // 自動でEEW詳細画面に切り替える。設定タブだけは対象外
         // (設定変更中に画面が奪われて操作が中断されるのを避けるため)。
         if (activeNavRef.current !== "settings") setEewDetailOpen(true);
+        // リアルタイムタブで地震を選択して見ている間は、EEWの表示を隠している(computeEewVisibility)。
+        // 新しい速報は見逃さないよう、選択を解除して表示する。
+        if (shouldRevealIncomingEew({ selectedQuakeId: selectedQuakeIdRef.current, selectedQuakeOrigin: selectedQuakeOriginRef.current, existing: undefined, incoming: newEew })) selectQuake(null);
         return [withLocal, ...prev].slice(0, EEW_MAX_CONCURRENT);
       }
       const existing = prev[idx];
@@ -481,6 +490,8 @@ export default function App() {
       // 更新では上書きしない(Wolfx自身の更新は常に反映する)。
       if (existing.source === "wolfx" && newEew.source !== "wolfx") return prev;
       if (existing.cancelled && !newEew.cancelled) return prev; // 取消済みは以後の続報で覆さない
+      // 続報で予報から警報へ切り上がった時も、隠れていると見逃すので、選択を解除して表示する。
+      if (shouldRevealIncomingEew({ selectedQuakeId: selectedQuakeIdRef.current, selectedQuakeOrigin: selectedQuakeOriginRef.current, existing, incoming: newEew })) selectQuake(null);
       const next = [...prev];
       next[idx] = {
         ...newEew,
@@ -603,6 +614,14 @@ export default function App() {
         // 自動判定する。一度警報級になったイベントは、その後の続報で計算上の震度が
         // 下がっても予報には戻さない(気象庁の実運用でも警報は取消されるまで解除されない)。
         const computedIsWarnLevel = isTestWarnLevel(maxIntensityKey);
+        // 実際の速報と同じく、リアルタイムタブで地震を選択して見ている間に、新規の(または警報へ切り上がった)
+        // テスト速報を出した時は、選択を解除して速報を表示する。
+        const existingTest = isNew ? undefined : testEews[idx];
+        if (shouldRevealIncomingEew({
+          selectedQuakeId: selectedQuakeIdRef.current, selectedQuakeOrigin: selectedQuakeOriginRef.current,
+          existing: existingTest,
+          incoming: { cancelled: false, isWarnLevel: existingTest?.isWarnLevel === true ? true : computedIsWarnLevel },
+        })) selectQuake(null);
         if (isNew) {
           setTestEews(prev => [...prev, buildTestEewCard({
             ...params, id: resultId, areas, maxIntensityKey, isWarnLevel: computedIsWarnLevel,
@@ -1597,6 +1616,17 @@ export default function App() {
     : effectiveNav === "quake" ? quakeTabSelectedQuakeId
     : selectedQuakeId;
 
+  // 緊急地震速報の発表中に、リアルタイムタブの一覧から地震を選択した場合は、EEWの表示(P波・S波の円・
+  // 予想震度の塗り分け・EEWカード・予想震度凡例)を隠し、選んだ地震の表示(震源・観測点・震度塗り分け・
+  // 震度凡例・戻るボタン)に集中させる。選択を解除(戻る)すれば、発表中のEEWが元どおり表示される。
+  // 以前は、EEWの表示が残る上に、新規の速報で自動的にtrueになるeewDetailOpenが、リアルタイムタブでは
+  // 閉じる手段が無くtrueのまま残るため、選んだ地震自体が地図に出ず、戻るボタンも出なかった。
+  // 隠れている間に、新しい速報が来た時は、選択を解除して表示する(handleIncomingEew)。
+  // ここより下(地図・BottomDockへ渡す値)は、元のeffectiveEews・eewDetailOpenではなく、この値を使う。
+  const { displayedEews, displayedEewDetailOpen } = computeEewVisibility({
+    effectiveNav, effectiveEews, realtimeTabSelectedQuakeId, eewDetailOpen,
+  });
+
   // 選択中の地震 + 観測点マスタが揃ったら、観測点ごとの震度に緯度経度を割り当てる。
   // 気象庁 震度データベース検索から開いた地震(searchQuake)は quakes には入っていないため、
   // そちらも見つからなかった場合のフォールバックとして探す。
@@ -1879,7 +1909,7 @@ export default function App() {
   // リアルタイムタブの「直近の地震一覧」から地震を選んだ場合も、地震タブと同じく
   // 震源・観測点・震度塗り分けを地図に出す(realtimeTabSelectedQuakeIdで判定する
   // ことで、地震タブ側で選んだ地震がリアルタイムタブに漏れて表示されないようにする)。
-  const showQuakeMapLayers = !eewDetailOpen && (
+  const showQuakeMapLayers = !displayedEewDetailOpen && (
     effectiveNav === "quake"
     || activeNav === "settings"
     || (activeNav === "tsunami" && causingQuakeCard != null)
@@ -1890,11 +1920,11 @@ export default function App() {
   // 緊急地震速報の表示中はすべて隠すが、断層・プレート境界は地理的な背景情報であり、
   // EEWの震源位置を見る上でもむしろ有用なため、EEW表示中でも(元のタブに関わらず)
   // 設定のON/OFF(faultsEnabled/plateBoundariesEnabled)に従って表示できるようにする。
-  const showFaultPlateLayers = showQuakeMapLayers || eewDetailOpen;
+  const showFaultPlateLayers = showQuakeMapLayers || displayedEewDetailOpen;
 
   // 津波予報区の色分けは、津波タブ・設定タブを見ている間に出す。
   // 実際にどの回の予報区を塗るかはtsunamiForMapDisplay(下)が決める。
-  const showTsunamiMapLayers = !eewDetailOpen && (activeNav === "tsunami" || activeNav === "settings");
+  const showTsunamiMapLayers = !displayedEewDetailOpen && (activeNav === "tsunami" || activeNav === "settings");
 
   // MapCanvasに渡す「実質的なeewDetailOpen」。リアルタイムタブでは、FABを
   // タップして開く操作(eewDetailOpen state)を経由せず、アクティブな緊急地震
@@ -1904,8 +1934,8 @@ export default function App() {
   // 表示可否を判定しているため、他タブと同様にリアルタイムタブでもこの
   // タイミングで凡例が出るよう、ここでeewDetailOpen stateそのものではなく
   // 合成した値をMapCanvasへ渡す。
-  const eewMapLegendVisible = eewDetailOpen
-    || (effectiveNav === "realtime" && effectiveEews.some(e => !e.cancelled));
+  const eewMapLegendVisible = displayedEewDetailOpen
+    || (effectiveNav === "realtime" && displayedEews.some(e => !e.cancelled));
 
   // リアルタイムタブ(強震モニタ/S-net)の推計震度分布は、以前はリアルタイム
   // タブを見ている間だけ表示していたが、常時バックグラウンドで見られるように
@@ -2574,7 +2604,7 @@ export default function App() {
           tsunamiAreaPickActive={tsunamiAreaPickActive}
           onPickTsunamiArea={handlePickTsunamiArea}
           pickedTsunamiAreas={pickedTsunamiAreas}
-          eews={effectiveEews}
+          eews={displayedEews}
           eewEpicenterPickActive={eewEpicenterPickActive}
           onPickEewEpicenter={handlePickEewEpicenter}
           quakeEpicenterPickActive={quakeEpicenterPickActive}
@@ -2609,7 +2639,7 @@ export default function App() {
             (震度の予測範囲の凡例)があるため、こちらは隠す。これが無いと、
             地震タブで地震を選択したまま緊急地震速報が開いた時、地震の震度凡例が
             EEWの表示に重なって残ってしまっていた。 */}
-        {!eewDetailOpen && (effectiveNav === "quake" || effectiveNav === "realtime") && selectedQuake && (
+        {!displayedEewDetailOpen && (effectiveNav === "quake" || effectiveNav === "realtime") && selectedQuake && (
           <div style={{
             position: "absolute",
             top: "calc(16px + env(safe-area-inset-top))",
@@ -3024,8 +3054,8 @@ export default function App() {
                   onTestEewAction={handleTestEewAction}
                   eewTestForm={eewTestForm}
                   eewEpicenterPickActive={eewEpicenterPickActive}
-                  eews={effectiveEews}
-                  eewDetailOpen={eewDetailOpen}
+                  eews={displayedEews}
+                  eewDetailOpen={displayedEewDetailOpen}
                   eewOpenSignal={eewOpenSignal}
                   onOpenEewDetail={() => { setEewDetailOpen(true); setEewOpenSignal(s => s + 1); }}
                   onCloseEewDetail={() => setEewDetailOpen(false)}
@@ -3169,8 +3199,8 @@ export default function App() {
               onTestEewAction={handleTestEewAction}
               eewTestForm={eewTestForm}
               eewEpicenterPickActive={eewEpicenterPickActive}
-              eews={effectiveEews}
-              eewDetailOpen={eewDetailOpen}
+              eews={displayedEews}
+              eewDetailOpen={displayedEewDetailOpen}
               eewOpenSignal={eewOpenSignal}
               onOpenEewDetail={() => { setEewDetailOpen(true); setEewOpenSignal(s => s + 1); }}
               onCloseEewDetail={() => setEewDetailOpen(false)}
