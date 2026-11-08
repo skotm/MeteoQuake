@@ -4,10 +4,9 @@ import { registerNowcastProtocol, registerPrecipProtocol, registerWdistProtocol 
 import { registerRiskProtocol, riskProtocolUrl } from "./weather/risk";
 import { buildWarningAreaColorExpr, buildWarningAreasGeoJson, loadWarningAreasFullGeoJson } from "./warnings";
 import { useRef, useState, useContext, useEffect } from "react";
-import { ShakeDetectionEngine } from "../shakeDetection";
-import { EpicenterEstimator } from "../epicenterEstimation";
-import { GridDetector } from "../gridDetection";
-import { P_WAVE_SPEED_KM_S as EPICENTER_ESTIMATE_P_WAVE_SPEED_KM_S, S_WAVE_SPEED_KM_S as EPICENTER_ESTIMATE_S_WAVE_SPEED_KM_S } from "../shakeTestSimulation";
+import { AnalysisRunner, shouldUseAnalysisWorker } from "../analysis/analysisRunner";
+import { AreaFillCoordinator } from "./areaFillState";
+import { P_WAVE_SPEED_KM_S as EPICENTER_ESTIMATE_P_WAVE_SPEED_KM_S, S_WAVE_SPEED_KM_S as EPICENTER_ESTIMATE_S_WAVE_SPEED_KM_S } from "../engines/shakeTestSimulation";
 import { pickEewsToFocus } from "../eewCameraFocus";
 import { focusMapOnPoints } from "./mapFocus";
 import { ShakeCameraFollower, SHAKE_RESUME_MS } from "./shakeCameraFollow";
@@ -19,10 +18,10 @@ import { BOUNDARY_LINE_COLORS, EEW_FILL_LEGEND_ORDER, INTENSITY_LABEL, STATION_I
 import { EST_INTENSITY_MIN_INTENSITY_KEYS, QUAKE_INTENSITY_RANK, buildEpicenterCircleColorExpr, buildEpicenterCircleStrokeColorExpr, buildEstIntensityFillColorExpr, buildEstIntensityFillFeatures, buildEstIntensityGridFromImage, buildEstIntensityLineCoords, fetchEstimatedIntensityMatch, loadImageElement, meshCodeToBounds, offsetMeshCode } from "./estIntensity";
 import { EPICENTER_LABEL_CANVAS_SCALE, buildDetectedStationIdSet, buildEpicenterEstimateFeatures, buildTrueEpicenterFeatures, drawEpicenterLabelCanvas, updateEpicenterEstimateLabels } from "./shakeMapLayers";
 import { filterEstimatesNearEew } from "./eewEstimateFilter";
-import { filterEstimatesByConfidence, logEstimateConfidenceChanges } from "../epicenterConfidence";
+import { filterEstimatesByConfidence, logEstimateConfidenceChanges } from "../engines/epicenterConfidence";
 import { findAreaCodesByName, findEpicenterNameByPoint, findNearestTsunamiAreaWithDistance } from "./geo";
 import { EEW_P_WAVE_SPEED_KM_S, EEW_S_WAVE_SPEED_KM_S, eewCirclePolygon, eewWaveSurfaceRadiusKm } from "./liveFeeds";
-import { aggregateByArea } from "./stations";
+import { aggregateByArea, loadJmaTravelTimeTable } from "./stations";
 import { buildTsunamiAreaColorExpr } from "./tsunamiData";
 import { TSUNAMI_ICON_BORDER, tsunamiBarWidthForZoom, tsunamiStationIconId } from "./mapIcons";
 import { Glass } from "./glass";
@@ -33,9 +32,6 @@ import { Glass } from "./glass";
    世界(world.json)・都道府県(prefectures.json)をベクターとして描画する。
    外部タイル・外部スタイルサーバーには依存しない。
    ───────────────────────────────────────────────────── */
-// 独立した地震の判定に推定を使うイベントの、検知点数の下限(gridDetectionのpendingMainMinPointsと同じ)。
-const GRID_INTERNAL_ESTIMATE_MIN_POINTS = 20;
-
 export function MapCanvas({
   onReady, stationPoints, hypocenters, isWide,
   quakeTimeStr, maxIntensityKey, estIntensityEnabled, areaFillEnabled,
@@ -1549,11 +1545,21 @@ export function MapCanvas({
   // 問わずデータのある観測点はすべて記録しておく。
   const prevRealtimeValuesRef = useRef(new Map());
 
-  // 揺れ検知エンジン(shakeDetection.ts)本体。一度だけ生成し、以降は
-  // 同じインスタンスを使い回す(内部に観測点ごとの履歴・進行中のイベントを
+  // 解析処理(揺れ検知エンジン・震源推定・グリッド検知。analysis/analysisPipeline.ts)の実行役。一度だけ
+  // 生成し、以降は同じインスタンスを使い回す(内部に観測点ごとの履歴・進行中のイベント・推定のキャッシュを
   // 保持しているため、tickのたびに作り直すと検知が働かなくなる)。
-  const shakeEngineRef = useRef(null);
-  if (!shakeEngineRef.current) shakeEngineRef.current = new ShakeDetectionEngine();
+  // 解析を同じスレッドで同期的に行うか、Web Workerで非同期に行うかは、analysis/analysisRunner.tsの
+  // shouldUseAnalysisWorker()で決まる(既定は同期。URLの ?analysisWorker=1 で、Workerを有効にできる)。
+  // Workerは、最初に使われた時に作られる(描画中には作らない)。作れない・エラーが起きた場合は、同期に戻る。
+  const analysisRef = useRef(null);
+  if (!analysisRef.current) {
+    analysisRef.current = new AnalysisRunner({
+      useWorker: shouldUseAnalysisWorker(),
+      createWorker: () => new Worker(new URL("../workers/earthquakeWorker.ts", import.meta.url), { type: "module" }),
+      onFallback: (reason) => console.warn("解析Workerを使えないため、同じスレッドでの解析に切り替えました:", reason),
+      onError: (error) => console.warn("解析Worker内のtickの処理でエラー:", error),
+    });
+  }
 
   // 揺れ検知イベントの直近の検出結果。ズーム変更時、検知エンジンのtickとは
   // 独立に円ポリゴンだけを再投影するために参照する(下のuseEffect)。
@@ -1571,31 +1577,11 @@ export function MapCanvas({
   const shownEstimateIdsRef = useRef(new Set());
   const confidenceLogRef = useRef(new Map());
 
-  // 震源推定(epicenterEstimation.ts)本体。ShakeDetectionEngineと同様、
-  // 一度だけ生成して使い回す(イベントごとの推定キャッシュを内部に持つため)。
-  const epicenterEstimatorRef = useRef(null);
-  if (!epicenterEstimatorRef.current) epicenterEstimatorRef.current = new EpicenterEstimator();
 
-  // グリッド(セル)方式の検知(gridDetection.ts)本体と、そのイベント用の震源推定。既存の検知・推定とは
-  // 別のインスタンス(キャッシュ・内部状態を共有しない)。
-  const gridEngineRef = useRef(null);
-  const gridInternalEstRef = useRef(null);
-  const lastShakeGridModeRef = useRef(false);
-  if (!gridEngineRef.current) gridEngineRef.current = new GridDetector();
-  const gridEstimatorRef = useRef(null);
-  if (!gridEstimatorRef.current) gridEstimatorRef.current = new EpicenterEstimator();
+  // グリッド(セル)方式の検知の、震源推定ラベル・表示用の状態(検知・推定の本体はanalysisRef)。
   const gridLabelCacheRef = useRef(null);
   const lastGridEstimatesRef = useRef(new Map());
-  const lastGridResultRef = useRef(null);
-  const lastGridValuesRef = useRef(null);
-  const prevGridEnabledRef = useRef(false);
   const shownGridEstimateIdsRef = useRef(new Set());
-  useEffect(() => {
-    if (realtimeStations.length === 0) return;
-    gridEngineRef.current.initialize(realtimeStations);
-    lastGridResultRef.current = null;
-    lastGridValuesRef.current = null;
-  }, [realtimeStations]);
 
   // 推定深さ・推定Mラベル(updateEpicenterEstimateLabels参照)の、
   // eventIdごとに前回登録した内容のキャッシュ。
@@ -1611,18 +1597,23 @@ export function MapCanvas({
   weakArrayDetectionEnabledRef.current = weakArrayDetectionEnabled;
   useEffect(() => {
     if (realtimeStations.length === 0) return;
-    // initializeが微弱検知器を作るので、その前に、設定を反映しておく
-    shakeEngineRef.current.setWeakArrayEnabled(weakArrayDetectionEnabledRef.current);
-    shakeEngineRef.current.initialize(realtimeStations);
+    // 検知器の初期化(近傍点リストの再計算)。微弱検知の設定は、検知器を作る前に反映される。
+    analysisRef.current.setStations(realtimeStations, weakArrayDetectionEnabledRef.current);
   }, [realtimeStations]);
-  // 設定の切り替えを、実行中のエンジンへ反映する
+  // 設定の切り替えを、実行中のエンジンへ反映する(グリッド検知の発火に必要な震度の水準も、微弱検知の設定に連動する)。
   useEffect(() => {
-    shakeEngineRef.current.setWeakArrayEnabled(weakArrayDetectionEnabled);
+    analysisRef.current.setWeakArrayEnabled(weakArrayDetectionEnabled);
   }, [weakArrayDetectionEnabled]);
-  // グリッド検知の発火に必要な震度の水準も、微弱検知の設定に連動させる。
+  // 走時表(public/jma-travel-time.json)を、解析のWorkerへ渡す。Workerは自分のモジュール空間を持つため、
+  // App.jsxがメインスレッドに設定した走時表は見えない。同期モードでは何もしない。取得はApp.jsxと同じ関数
+  // (結果は共有される)。取得できなくても、定速モデルにフォールバックして動作は継続する(App.jsxと同じ)。
   useEffect(() => {
-    gridEngineRef.current?.setWeakEnabled(weakArrayDetectionEnabled);
-  }, [weakArrayDetectionEnabled]);
+    let cancelled = false;
+    loadJmaTravelTimeTable()
+      .then(json => { if (!cancelled) analysisRef.current.setTravelTable(json); })
+      .catch(() => { /* 取得失敗はApp.jsx側でログに出している */ });
+    return () => { cancelled = true; };
+  }, []);
 
   // 【データ源切り替え対策】揺れ検知エンジンへ渡している震度値の出どころ。
   // 優先順位はApp側のeffectiveRealtimeValuesと同じ(リプレイ再生中 >
@@ -1633,8 +1624,6 @@ export function MapCanvas({
   const realtimeSourceMode = replayActive
     ? "replay"
     : (shakeTestTrueEpicenters.length > 0 ? "test" : "live");
-  const prevRealtimeSourceModeRef = useRef(realtimeSourceMode);
-  const SOURCE_CHANGE_DETECTION_SUPPRESS_MS = 2000;
   // 【リプレイの速度依存バグ対策】検知エンジン・震源推定へ渡す時刻(エンジン時刻)。
   // 以前は常にDate.now()(壁時計)を渡していたが、リプレイは既定で4倍速のため、
   // 観測点ごとの検知時刻の差が実際の1/4に圧縮され、見かけのP波速度が4倍
@@ -1682,15 +1671,6 @@ export function MapCanvas({
       map.off("moveend", onMoveEnd);
     };
   }, [status]);
-  const lastEngineNowRef = useRef(null);
-  // 検知エンジン(processTick)を最後に実際に進めた時に渡した震度値のMap。
-  // 新しいデータが届くたびに新しいMapが作られる(リアルタイム・リプレイ・テスト共通)
-  // ので、同じMapのままeffectが再実行されたかどうかの判定に使う。
-  const lastProcessedValuesRef = useRef(null);
-  // リプレイ中にシーク/巻き戻し/大きく先へ飛んだとき(データ時刻が不連続に
-  // なったとき)、検知状態を引き継がないためのしきい値(ms)。通常再生では
-  // 1tickあたり1〜数フレーム(=数秒)しか進まない。
-  const REPLAY_TIME_JUMP_RESET_MS = 5000;
   // P波・S波到達円のアニメーションを、エンジン時刻と同じ時間軸(データ時刻)で
   // 進めるための基準(最後にデータ時刻が更新された時点の、データ時刻と壁時計)。
   const replayClockRef = useRef({ dataMs: null, wallMs: 0 });
@@ -1749,8 +1729,8 @@ export function MapCanvas({
     const prevValues = prevRealtimeValuesRef.current;
     const calmColor = intensityToShindoColor(SHINDO_MIN_INTENSITY);
     // 揺れ検知(shakeDetection.ts、実験的機能)で「検知済み」と判定された
-    // 観測点のidの集合。このeffect内では揺れ検知(shakeEngineRef.current.
-    // processTick)自体はこの少し下で1tick分進めるため、ここではまだ
+    // 観測点のidの集合。このeffect内では揺れ検知(analysisRef.current.tick)
+    // 自体はこの少し下で1tick分進めるため、ここではまだ
     // 直近1tick前(最大500ms前)の判定結果(lastShakeEventsRef.current)を
     // 参照することになるが、見た目のズレとしては無視できるレベルなので
     // 許容する。
@@ -1812,230 +1792,138 @@ export function MapCanvas({
     }
     prevRealtimeValuesRef.current = nextValues;
 
-    // 【データ源切り替え対策】リアルタイム⇔リプレイ・検知テストが切り替わった
-    // 場合、それまでの検知(観測点の履歴・進行中のイベント・震源推定の
-    // キャッシュ)を破棄し、切り替え直後2秒間は検知を無効化する。
-    // 検知の有効/無効の設定に関わらず、切り替えは必ず記録する。
     const engineNow = (replayActive && replayDataTimeMs != null) ? replayDataTimeMs : Date.now();
-    const prevEngineNow = lastEngineNowRef.current;
-    lastEngineNowRef.current = engineNow;
-    const sourceModeChanged = prevRealtimeSourceModeRef.current !== realtimeSourceMode;
-    let replayTimeJumped = false;
-    if (sourceModeChanged) {
-      prevRealtimeSourceModeRef.current = realtimeSourceMode;
-      shakeEngineRef.current.resetForSourceChange(engineNow, SOURCE_CHANGE_DETECTION_SUPPRESS_MS);
-      epicenterEstimatorRef.current.reset();
-      lastEpicenterEstimatesRef.current = new Map();
-      gridEngineRef.current.resetForSourceChange(engineNow, SOURCE_CHANGE_DETECTION_SUPPRESS_MS);
-      gridEstimatorRef.current.reset();
-      lastGridEstimatesRef.current = new Map();
-      lastGridResultRef.current = null;
-      lastGridValuesRef.current = null;
-    } else if (replayActive && replayDataTimeMs != null && prevEngineNow != null) {
-      // リプレイのシーク・巻き戻し・再生し直し(データ時刻が戻る、または5秒超
-      // 飛ぶ)では、それまでの検知を持ち越さずリセットする。
-      const jumpMs = engineNow - prevEngineNow;
-      if (jumpMs < 0 || jumpMs > REPLAY_TIME_JUMP_RESET_MS) {
-        replayTimeJumped = true;
-        shakeEngineRef.current.resetForSourceChange(engineNow, SOURCE_CHANGE_DETECTION_SUPPRESS_MS);
-        epicenterEstimatorRef.current.reset();
+    // 解析(揺れ検知・震源推定・グリッド検知)を1tick分進める。処理の中身(データ源の切り替え・リプレイの
+    // シークでのリセット、同じMapでの再実行ではエンジンを進めない、など)は analysis/analysisPipeline.ts にある。
+    // 解析結果の描画(applyAnalysis)。同期モードでは、tick()の中でその場で呼ばれる(従来と同じ動作)。
+    // Workerモードでは、結果が返った時に呼ばれる(1tick以上遅れる。Worker処理中に溜まって、まとめられた
+    // tickの分は呼ばれない)。呼ばれる時点では、このeffectの実行は終わっているが、使う値(設定・地図など)は、
+    // tickを送った時点のものを使う(次のtickで、最新の値に追いつく)。
+    const applyAnalysis = (analysis) => {
+      // 地図が破棄された後(Workerモードで、結果が遅れて届いた場合)は、何もしない。
+      if (mapRef.current !== map) return;
+      // リセットされた時は、描画側が持つ前回の推定結果も捨てる。
+      if (analysis.didReset) {
         lastEpicenterEstimatesRef.current = new Map();
-        gridEngineRef.current.resetForSourceChange(engineNow, SOURCE_CHANGE_DETECTION_SUPPRESS_MS);
-        gridEstimatorRef.current.reset();
         lastGridEstimatesRef.current = new Map();
-        lastGridResultRef.current = null;
-        lastGridValuesRef.current = null;
       }
-    }
-    // 【震度しきい値などの操作で検知が乱れる問題の対策】このeffectは、新しい
-    // データが届いた時だけでなく、震度しきい値バー・上昇中表示・リプレイ色分け・
-    // 検知/震源推定のON/OFFなどの操作でも再実行される(依存配列に含まれる
-    // ため)。検知エンジンのprocessTickは「1回の呼び出し=1tick(≒1秒)」前提で、
-    // 直近5tickの履歴・直近10tickの上昇速度・誤検知の取り消し判定(6tick)・
-    // イベント解放(10tick)などをtick数で数えている。しきい値バーをドラッグ
-    // するだけで同じ値のままprocessTickが毎秒数十回呼ばれ、履歴が同じ値で
-    // 埋まって基準値が壊れたり、イベントが分裂・取り消しされたり、検知自体が
-    // 欠落したりすることをシミュレーションで確認した(青森・千葉のリプレイで
-    // 初動付近の操作により検知が欠落/イベントが7個に分裂)。そこで、前回
-    // processTickに渡したものと同じMapのままの再実行では検知エンジンを進めず、
-    // 前回の結果をそのまま使う。切り替え・シークによるリセット直後は必ず進める。
-    const valuesUnchanged = !sourceModeChanged && !replayTimeJumped
-      && lastProcessedValuesRef.current === realtimeValues;
-    if (sourceModeChanged || replayTimeJumped) lastProcessedValuesRef.current = null;
+      const shakeEvents = analysis.shakeEvents;
 
-    // 揺れ検知エンジンを1tick分進める(設定でOFFの間は呼ばない)。
-    // 近傍点リストが未構築(観測点マスタ未取得)の間は空配列が返る。
-    // グリッド検知がONの間は、通常の検知エンジンは動かさず(重いため)、グリッド検知のイベントを
-    // 検知一覧・視点移動に使う(1tick前の結果。グリッド検知はこのeffectの終わりで進める)。
-    const gridModeNow = shakeDetectionEnabled && gridDetectionEnabled;
-    if (lastShakeGridModeRef.current !== gridModeNow) {
-      lastShakeGridModeRef.current = gridModeNow;
-      lastProcessedValuesRef.current = null; // 方式が切り替わったら、直前の結果を使い回さない
-      // 通常の検知に戻る時は、止めていた間の古い状態を持ち越さないよう、エンジンをリセットする。
-      if (!gridModeNow) shakeEngineRef.current.resetForSourceChange(engineNow, 0);
-    }
-    const shakeEvents = !shakeDetectionEnabled
-      ? []
-      : gridModeNow
-        ? (lastGridResultRef.current?.events ?? [])
-        : (valuesUnchanged && lastProcessedValuesRef.current === realtimeValues
-          ? lastShakeEventsRef.current
-          : (lastProcessedValuesRef.current = realtimeValues, shakeEngineRef.current.processTick(realtimeValues, engineNow)));
-
-    // 揺れ検知の視点移動。確定したイベントを1つ追従し、最初の検知で、そのイベントの観測点が
-    // 全部収まるよう(フローティングを除いた部分の中心に)視点を移動する。その後、イベントが
-    // 育って観測点が増え、画面の端からはみ出しそうになったら、もう一度調整する。
-    // ユーザーが地図を操作している間と操作後2秒間は動かさず、2秒間操作が無ければ再開する。
-    // 設定「カメラの動き」で切り替えられる。判断は shakeCameraFollow.js を参照。
-    // 地震・津波などを選択して見ている間(観測点レイヤー非表示)は、視点を奪わない。
-    if (showRealtimeMapLayers) {
-      shakeFollowerRef.current.tick({
-        map, events: shakeEvents, isWide, nowMs: Date.now(), settings: cameraSettings,
-      });
-    }
-    lastShakeEventsRef.current = shakeEvents;
-    onShakeEventsChangeRef.current?.(shakeEvents);
-
-    // 震源推定(実験的機能)。ShakeDetectionEngine.processTick()とは別の
-    // 重い処理になるため、機能自体がONの間だけ、かつ揺れ検知イベントが
-    // 実際にある時だけ呼ぶ。EpicenterEstimator側で「検知点数(pointCount)が
-    // 変化したイベントだけ再計算する」キャッシュを持っているので、ここでは
-    // 単純に毎tick呼んでよい。
-    // グリッド方式の検知がONの間は、通常の震源推定は動かさない(重いため)。グリッド方式の推定のみ表示する。
-    if (epicenterEstimationEnabled && !gridDetectionEnabled) {
-      const estimates = shakeEvents.length > 0
-        ? epicenterEstimatorRef.current.updateAll(shakeEvents, realtimeStations, engineNow)
-        : new Map();
-      // テスト用: 信頼度の内訳を、非表示になるものも含めてログに残す。
-      logEstimateConfidenceChanges(estimates, confidenceLogRef.current);
-      // 信頼度が下限未満の推定は、設定でオンにしない限り表示しない。
-      const confidentEstimates = filterEstimatesByConfidence(estimates, showLowConfidenceEstimatesRef.current, shownEstimateIdsRef.current);
-      // 緊急地震速報(PLUM法を除く)が発表中の地震は、EEWの震源付近の推定を表示しない。
-      // 推定そのものと、下のエンジンへのフィードバック(setExternalEstimates)は
-      // 抑制せず、表示・コールバック・P/S波円・マーカータップにだけ絞り込み後を使う。
-      const displayEstimates = filterEstimatesNearEew(confidentEstimates, eewsRef.current);
-      lastEpicenterEstimatesRef.current = displayEstimates;
-      // 【対策C: 検知が分散してしまう問題】epicenterEstimation.tsのより
-      // 精度の高い推定結果(グリッド探索+振幅較正)を、shakeDetection.ts
-      // 側のイベント統合判定(canEventsMerge)へフィードバックする。次回の
-      // processTick呼び出し(次tick)から、粗い簡易チェックより優先して
-      // 使われる(1tick遅れの反映になるが、統合判定は瞬時性より精度を
-      // 優先すべき処理のため許容している)。
-      shakeEngineRef.current.setExternalEstimates(estimates);
-      // 【対策: ラベルが表示されないバグ】画像(addImage/updateImage)を登録
-      // する前にsetDataでlabelIconIdを参照するデータを流し込むと、
-      // MapLibreがレイアウト処理の時点で画像が見つからず、後から画像を
-      // 登録してもそのシンボルを自動的には拾い直さないことがある。画像の
-      // 登録(updateEpicenterEstimateLabels)を先に済ませてから、それを
-      // 参照するsetDataを呼ぶ順序に変更した。
-      updateEpicenterEstimateLabels(map, displayEstimates, epicenterLabelCacheRef);
-      const epicenterSource = map.getSource("epicenter-estimates");
-      if (epicenterSource) {
-        epicenterSource.setData({
-          type: "FeatureCollection",
-          features: buildEpicenterEstimateFeatures(displayEstimates),
+      // 揺れ検知の視点移動。確定したイベントを1つ追従し、最初の検知で、そのイベントの観測点が
+      // 全部収まるよう(フローティングを除いた部分の中心に)視点を移動する。その後、イベントが
+      // 育って観測点が増え、画面の端からはみ出しそうになったら、もう一度調整する。
+      // ユーザーが地図を操作している間と操作後2秒間は動かさず、2秒間操作が無ければ再開する。
+      // 設定「カメラの動き」で切り替えられる。判断は shakeCameraFollow.js を参照。
+      // 地震・津波などを選択して見ている間(観測点レイヤー非表示)は、視点を奪わない。
+      if (showRealtimeMapLayers) {
+        shakeFollowerRef.current.tick({
+          map, events: shakeEvents, isWide, nowMs: Date.now(), settings: cameraSettings,
         });
       }
-      onEpicenterEstimateChangeRef.current?.(displayEstimates);
-    } else {
-      // 機能自体がOFFの間は、P波/S波到達円アニメーション用の参照も
-      // 空にしておく(レイヤー自体は非表示だが、念のため古いデータを
-      // 参照し続けないようにする)。
-      lastEpicenterEstimatesRef.current = new Map();
-      // 【対策C】機能がOFFの間、イベント統合判定(canEventsMerge)が古い
-      // 推定を使い続けないよう、エンジン側の参照もクリアしておく
-      // (nullを渡すとsetExternalEstimates内で空のMapに正規化される)。
-      shakeEngineRef.current.setExternalEstimates(null);
-      // ラベル用に登録していたbitmapも、放置せずここで掃除しておく
-      // (updateEpicenterEstimateLabelsの「存在しないeventIdは掃除する」
-      // ロジックを、空のMapを渡すことで流用する)。
-      updateEpicenterEstimateLabels(map, new Map(), epicenterLabelCacheRef);
-      const normalEpicenterSource = map.getSource("epicenter-estimates");
-      if (normalEpicenterSource) normalEpicenterSource.setData({ type: "FeatureCollection", features: [] });
-    }
+      lastShakeEventsRef.current = shakeEvents;
+      onShakeEventsChangeRef.current?.(shakeEvents);
 
-    // グリッド(セル)方式の検知(gridDetection.ts)。既存の検知とは独立に、同じ震度値を渡す。
-    // 設定がONの間だけ動かす。ONにした直後は、古い状態を持ち越さないようリセットする。
-    const gridSource = map.getSource("grid-cells");
-    const gridEpicenterSource = map.getSource("grid-epicenter-estimates");
-    if (gridDetectionEnabled) {
-      if (!prevGridEnabledRef.current) {
-        gridEngineRef.current.resetForSourceChange(engineNow, SOURCE_CHANGE_DETECTION_SUPPRESS_MS);
-        gridEstimatorRef.current.reset();
-        lastGridResultRef.current = null;
-        lastGridValuesRef.current = null;
-        gridInternalEstRef.current = null;
-      }
-      prevGridEnabledRef.current = true;
-      const gridUnchanged = lastGridResultRef.current != null && lastGridValuesRef.current === realtimeValues;
-      const gridResult = gridUnchanged
-        ? lastGridResultRef.current
-        : gridEngineRef.current.processTick(realtimeValues, engineNow);
-      lastGridResultRef.current = gridResult;
-      lastGridValuesRef.current = realtimeValues;
-      if (gridSource && showRealtimeMapLayers && gridCellsVisible) {
-        const scheme = colorSchemeRef.current;
-        const cellFeatures = [];
-        // 検知が起きたセル(発火中、またはイベントに属するセル)だけ枠を表示する。
-        // 静音時は該当するセルが無いので、何も表示しない。
-        for (const c of gridResult.cells) {
-          if (c.dataCount === 0) continue;
-          if (!c.fired && c.eventId == null) continue;
-          const key = intensityValueToKey(c.maxIntensity);
-          const color = (scheme.colors[key] || scheme.colors["0"]).bg;
-          cellFeatures.push({
-            type: "Feature",
-            geometry: { type: "Polygon", coordinates: [[
-              [c.minLon, c.minLat], [c.maxLon, c.minLat], [c.maxLon, c.maxLat], [c.minLon, c.maxLat], [c.minLon, c.minLat],
-            ]] },
-            properties: { color, fired: c.fired, hot: c.maxIntensity != null && c.maxIntensity >= 0.5, sort: c.maxIntensity ?? -10 },
+      // 震源推定(実験的機能)の結果の表示。推定そのもの(重い処理)は、analysisRef.current.tick()の中で、
+      // 機能自体がONの間だけ、かつ揺れ検知イベントが実際にある時だけ行われる(analysis.estimatesがnullなら実行なし)。
+      // グリッド方式の検知がONの間は、通常の震源推定は動かさない(重いため)。グリッド方式の推定のみ表示する。
+      if (analysis.estimates) {
+        const estimates = analysis.estimates;
+        // テスト用: 信頼度の内訳を、非表示になるものも含めてログに残す。
+        logEstimateConfidenceChanges(estimates, confidenceLogRef.current);
+        // 信頼度が下限未満の推定は、設定でオンにしない限り表示しない。
+        const confidentEstimates = filterEstimatesByConfidence(estimates, showLowConfidenceEstimatesRef.current, shownEstimateIdsRef.current);
+        // 緊急地震速報(PLUM法を除く)が発表中の地震は、EEWの震源付近の推定を表示しない。
+        // 推定そのものと、下のエンジンへのフィードバック(setExternalEstimates)は
+        // 抑制せず、表示・コールバック・P/S波円・マーカータップにだけ絞り込み後を使う。
+        const displayEstimates = filterEstimatesNearEew(confidentEstimates, eewsRef.current);
+        lastEpicenterEstimatesRef.current = displayEstimates;
+        // 【対策: ラベルが表示されないバグ】画像(addImage/updateImage)を登録
+        // する前にsetDataでlabelIconIdを参照するデータを流し込むと、
+        // MapLibreがレイアウト処理の時点で画像が見つからず、後から画像を
+        // 登録してもそのシンボルを自動的には拾い直さないことがある。画像の
+        // 登録(updateEpicenterEstimateLabels)を先に済ませてから、それを
+        // 参照するsetDataを呼ぶ順序に変更した。
+        updateEpicenterEstimateLabels(map, displayEstimates, epicenterLabelCacheRef);
+        const epicenterSource = map.getSource("epicenter-estimates");
+        if (epicenterSource) {
+          epicenterSource.setData({
+            type: "FeatureCollection",
+            features: buildEpicenterEstimateFeatures(displayEstimates),
           });
         }
-        gridSource.setData({ type: "FeatureCollection", features: cellFeatures });
-      }
-      // 震源推定は、表示(「震源推定」ON)の有無にかかわらず、グリッド方式の検知がONの間は常に行う
-      // (独立した別の地震かどうかの判定に、推定を使うため)。結果は、次のtickの判定へ返す。
-      // 「震源推定」の表示がOFFの間は、判定に使う大きなイベント(20点以上)だけを、3秒おきに推定する(負荷を抑えるため)。
-      let gridEstimates;
-      if (epicenterEstimationEnabled) {
-        gridEstimates = gridResult.events.length > 0
-          ? gridEstimatorRef.current.updateAll(gridResult.events, realtimeStations, engineNow)
-          : new Map();
-        gridInternalEstRef.current = { at: engineNow, map: gridEstimates };
+        onEpicenterEstimateChangeRef.current?.(displayEstimates);
       } else {
-        const cached = gridInternalEstRef.current;
-        if (cached && engineNow >= cached.at && engineNow - cached.at < 3000) {
-          gridEstimates = cached.map;
+        // 機能自体がOFFの間は、P波/S波到達円アニメーション用の参照も
+        // 空にしておく(レイヤー自体は非表示だが、念のため古いデータを
+        // 参照し続けないようにする)。
+        lastEpicenterEstimatesRef.current = new Map();
+        // ラベル用に登録していたbitmapも、放置せずここで掃除しておく
+        // (updateEpicenterEstimateLabelsの「存在しないeventIdは掃除する」
+        // ロジックを、空のMapを渡すことで流用する)。
+        updateEpicenterEstimateLabels(map, new Map(), epicenterLabelCacheRef);
+        const normalEpicenterSource = map.getSource("epicenter-estimates");
+        if (normalEpicenterSource) normalEpicenterSource.setData({ type: "FeatureCollection", features: [] });
+      }
+
+      // グリッド(セル)方式の検知(gridDetection.ts)。既存の検知とは独立に、同じ震度値を渡す。
+      // 設定がONの間だけ動かす。ONにした直後は、古い状態を持ち越さないようリセットする。
+      const gridSource = map.getSource("grid-cells");
+      const gridEpicenterSource = map.getSource("grid-epicenter-estimates");
+      if (analysis.grid) {
+        const gridResult = analysis.grid.result;
+        if (gridSource && showRealtimeMapLayers && gridCellsVisible) {
+          const scheme = colorSchemeRef.current;
+          const cellFeatures = [];
+          // 検知が起きたセル(発火中、またはイベントに属するセル)だけ枠を表示する。
+          // 静音時は該当するセルが無いので、何も表示しない。
+          for (const c of gridResult.cells) {
+            if (c.dataCount === 0) continue;
+            if (!c.fired && c.eventId == null) continue;
+            const key = intensityValueToKey(c.maxIntensity);
+            const color = (scheme.colors[key] || scheme.colors["0"]).bg;
+            cellFeatures.push({
+              type: "Feature",
+              geometry: { type: "Polygon", coordinates: [[
+                [c.minLon, c.minLat], [c.maxLon, c.minLat], [c.maxLon, c.maxLat], [c.minLon, c.maxLat], [c.minLon, c.minLat],
+              ]] },
+              properties: { color, fired: c.fired, hot: c.maxIntensity != null && c.maxIntensity >= 0.5, sort: c.maxIntensity ?? -10 },
+            });
+          }
+          gridSource.setData({ type: "FeatureCollection", features: cellFeatures });
+        }
+        // 震源推定は、表示(「震源推定」ON)の有無にかかわらず、グリッド方式の検知がONの間は常にtick()の中で行われる
+        // (独立した別の地震かどうかの判定に、推定を使うため)。
+        const gridEstimates = analysis.grid.estimates;
+        if (epicenterEstimationEnabled) {
+          const confident = filterEstimatesByConfidence(gridEstimates, showLowConfidenceEstimatesRef.current, shownGridEstimateIdsRef.current);
+          const gridDisplay = filterEstimatesNearEew(confident, eewsRef.current);
+          lastGridEstimatesRef.current = gridDisplay;
+          updateEpicenterEstimateLabels(map, gridDisplay, gridLabelCacheRef);
+          if (gridEpicenterSource) {
+            gridEpicenterSource.setData({ type: "FeatureCollection", features: buildEpicenterEstimateFeatures(gridDisplay) });
+          }
         } else {
-          const big = gridResult.events.filter((e) => e.pointCount >= GRID_INTERNAL_ESTIMATE_MIN_POINTS);
-          gridEstimates = big.length > 0 ? gridEstimatorRef.current.updateAll(big, realtimeStations, engineNow) : new Map();
-          gridInternalEstRef.current = { at: engineNow, map: gridEstimates };
+          lastGridEstimatesRef.current = new Map();
+          updateEpicenterEstimateLabels(map, new Map(), gridLabelCacheRef);
+          if (gridEpicenterSource) gridEpicenterSource.setData({ type: "FeatureCollection", features: [] });
         }
-      }
-      gridEngineRef.current.setExternalEstimates(gridEstimates);
-      if (epicenterEstimationEnabled) {
-        const confident = filterEstimatesByConfidence(gridEstimates, showLowConfidenceEstimatesRef.current, shownGridEstimateIdsRef.current);
-        const gridDisplay = filterEstimatesNearEew(confident, eewsRef.current);
-        lastGridEstimatesRef.current = gridDisplay;
-        updateEpicenterEstimateLabels(map, gridDisplay, gridLabelCacheRef);
-        if (gridEpicenterSource) {
-          gridEpicenterSource.setData({ type: "FeatureCollection", features: buildEpicenterEstimateFeatures(gridDisplay) });
-        }
-      } else {
+      } else if (analysis.gridJustDisabled) {
         lastGridEstimatesRef.current = new Map();
         updateEpicenterEstimateLabels(map, new Map(), gridLabelCacheRef);
+        if (gridSource) gridSource.setData({ type: "FeatureCollection", features: [] });
         if (gridEpicenterSource) gridEpicenterSource.setData({ type: "FeatureCollection", features: [] });
       }
-    } else if (prevGridEnabledRef.current) {
-      prevGridEnabledRef.current = false;
-      lastGridResultRef.current = null;
-      lastGridValuesRef.current = null;
-      lastGridEstimatesRef.current = new Map();
-      gridEstimatorRef.current.reset();
-      updateEpicenterEstimateLabels(map, new Map(), gridLabelCacheRef);
-      if (gridSource) gridSource.setData({ type: "FeatureCollection", features: [] });
-      if (gridEpicenterSource) gridEpicenterSource.setData({ type: "FeatureCollection", features: [] });
-    }
+    };
+    // 【リプレイの速度依存バグ対策】エンジンへ渡す時刻は、リプレイ中はデータ時刻(上のengineNow)。
+    analysisRef.current.tick({
+      values: realtimeValues,
+      now: engineNow,
+      sourceMode: realtimeSourceMode,
+      replayClock: replayActive && replayDataTimeMs != null,
+      shakeDetectionEnabled,
+      gridDetectionEnabled,
+      epicenterEstimationEnabled,
+    }, applyAnalysis);
   }, [realtimeStations, realtimeValues, status, showRealtimeMapLayers, realtimeIntensityThreshold, realtimeRisingEnabled, replayJmaColorEnabled, shakeDetectionEnabled, epicenterEstimationEnabled, gridDetectionEnabled, gridCellsVisible, showLowConfidenceEstimates, realtimeSourceMode, replayActive, replayDataTimeMs, isWide, cameraSettings]);
 
   // 緊急地震速報: P波・S波の伝播円と震源マーカーをリアルタイムに更新する。
@@ -2178,10 +2066,19 @@ export function MapCanvas({
   // 計算する。取消・タイムアウトで対象のEEWが無くなったら自動的に消える。
   // 地震情報の震度分布(下のuseEffect)と全く同じ"areas"ソース/feature-stateの
   // 仕組み(setFeatureState)を使い、同じ"areas-intensity-fill"・
-  // "areas-intensity-line"レイヤーで描画する。塗った区域コードは
-  // eewPaintedAreaCodesRefで別管理し、地震情報側が塗った区域(paintedAreaCodesRef)
-  // を巻き込んで消してしまわないようにしている。
-  const eewPaintedAreaCodesRef = useRef([]);
+  // "areas-intensity-line"レイヤーで描画する。
+  // 地震情報の震度分布と、EEWの予想震度は、同じ"areas"ソースの同じ区域のfeature-stateを共有する。
+  // 互いの塗りを消し合わないよう、所有者ごとの「区域→色」を調停役(AreaFillCoordinator)が合成して反映する
+  // (重なる区域はEEWが優先)。地震情報側はeffect内で同期的に、EEW側はデータ読み込み後に非同期で動くため、
+  // 実行順序に依存して、片方の消去がもう片方の色を消していた(例: EEW発表中に地震を選択した直後)。
+  const areaFillRef = useRef(null);
+  if (!areaFillRef.current) {
+    areaFillRef.current = new AreaFillCoordinator((code, color) => {
+      const map = mapRef.current;
+      if (!map) return;
+      map.setFeatureState({ source: "areas", id: code }, color ? { color, hasIntensity: 1 } : { color: null, hasIntensity: 0 });
+    });
+  }
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
@@ -2190,12 +2087,8 @@ export function MapCanvas({
     loadGeoData().then(({ areas: areasGeoJSON }) => {
       if (cancelled) return;
 
-      for (const code of eewPaintedAreaCodesRef.current) {
-        map.setFeatureState({ source: "areas", id: code }, { color: null, hasIntensity: 0 });
-      }
-      eewPaintedAreaCodesRef.current = [];
-
-      const paintedCodes = new Set();
+      // EEWが塗る区域の「区域→色」(重なる区域は先勝ち)。前回塗った分の消去は、調停役が行う。
+      const eewColors = new Map();
       let minOrderIdx = Infinity, maxOrderIdx = -Infinity;
       for (const eew of eews) {
         if (eew.cancelled || !Array.isArray(eew.areas)) continue;
@@ -2207,9 +2100,8 @@ export function MapCanvas({
           const color = (colorScheme.colors[intensityKey] || colorScheme.colors["0"]).bg;
           const orderIdx = EEW_FILL_LEGEND_ORDER.indexOf(intensityKey);
           for (const code of codes) {
-            if (paintedCodes.has(code)) continue; // 複数EEWが同じ地域を含む場合は先勝ちでよい
-            paintedCodes.add(code);
-            map.setFeatureState({ source: "areas", id: code }, { color, hasIntensity: 1 });
+            if (eewColors.has(code)) continue; // 複数EEWが同じ地域を含む場合は先勝ちでよい
+            eewColors.set(code, color);
             if (orderIdx !== -1) {
               if (orderIdx < minOrderIdx) minOrderIdx = orderIdx;
               if (orderIdx > maxOrderIdx) maxOrderIdx = orderIdx;
@@ -2217,7 +2109,7 @@ export function MapCanvas({
           }
         }
       }
-      eewPaintedAreaCodesRef.current = [...paintedCodes];
+      areaFillRef.current.setEewFill(eewColors);
       setEewFillRange(
         maxOrderIdx >= 0
           ? { minKey: EEW_FILL_LEGEND_ORDER[minOrderIdx], maxKey: EEW_FILL_LEGEND_ORDER[maxOrderIdx] }
@@ -2244,26 +2136,19 @@ export function MapCanvas({
   // 前回塗った区域は毎回リセットしてから、今回の集計結果を塗り直す
   // (そうしないと、観測点が無くなった区域の色が古いまま残ってしまう)。
   // 設定でOFFにされている場合は、リセットだけ行って塗り直しはしない(塗りつぶし無し状態にする)。
-  const paintedAreaCodesRef = useRef([]);
+  // 前回塗った分の消去と、EEWの塗りとの合成は、調停役(areaFillRef)が行う。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
 
-    for (const code of paintedAreaCodesRef.current) {
-      map.setFeatureState({ source: "areas", id: code }, { color: null, hasIntensity: 0 });
+    const quakeColors = new Map();
+    if (areaFillEnabled) {
+      const maxByArea = aggregateByArea(stationPoints || []);
+      maxByArea.forEach((intensityKey, code) => {
+        quakeColors.set(code, (colorScheme.colors[intensityKey] || colorScheme.colors["0"]).bg);
+      });
     }
-    paintedAreaCodesRef.current = [];
-
-    if (!areaFillEnabled) return;
-
-    const maxByArea = aggregateByArea(stationPoints || []);
-    const codes = [];
-    maxByArea.forEach((intensityKey, code) => {
-      const color = (colorScheme.colors[intensityKey] || colorScheme.colors["0"]).bg;
-      map.setFeatureState({ source: "areas", id: code }, { color, hasIntensity: 1 });
-      codes.push(code);
-    });
-    paintedAreaCodesRef.current = codes;
+    areaFillRef.current.setQuakeFill(quakeColors);
   }, [stationPoints, status, colorScheme, areaFillEnabled]);
 
   // 断層(faults.geojson)の表示ON/OFF。トグルがONになった最初の1回だけ

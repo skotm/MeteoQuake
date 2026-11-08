@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test": "npx tsx --test tests/*.test.ts",
+    "replay": "npx tsx tools/replay-eval.mts",
     "preview": "vite preview"
   },
   "dependencies": {
