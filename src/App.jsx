@@ -14,7 +14,7 @@ import { clampQuakeFetchLimit, loadStoredAreaFillEnabled, loadStoredBoundaryLine
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
 import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
 import { loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
-import { buildTestQuakeStageCard, calcTestEewAreasByAttenuation, isTestWarnLevel } from "./app/testSimulation";
+import { buildTestQuakeStageCard, calcTestEewAreasByAttenuation, isTestWarnLevel, formatTestQuakeNow, testQuakeTimeFromInput, testQuakeTimeToInput } from "./app/testSimulation";
 import { dedupeQuakeList, fetchRecentQuakes, mergeQuakeCards } from "./app/quakeCards";
 import { TSUNAMI_FETCH_LIMIT, TSUNAMI_HISTORY_PAGE_SIZE, dedupeTsunamiList, fetchJmaTsunamiHistory, fetchRecentTsunamis, fetchTsunamiHistoryPage, mergeTsunamiSources, tsunamiGradeInfo, tsunamiHeightBandColor } from "./app/tsunamiData";
 import { TEST_TSUNAMI_GRADE_OPTIONS } from "./app/testPanels";
@@ -55,9 +55,9 @@ export default function App() {
   }, []);
 
   const [activeNav, setActiveNav] = useState("quake");
-  // 地震タブのフローティングバー(左から リアルタイム / 地震一覧 / 地震検索)の選択。
-  // 旧「リアルタイムタブ」は廃止し、バー左端の「リアルタイム」に統合した。
-  const [quakeViewMode, setQuakeViewMode] = useState("realtime"); // "realtime" | "recent" | "search"
+  // 地震タブの表示。"realtime"(強震モニタ・緊急地震速報・地震リスト) | "search"(地震検索)。
+  // 旧「地震一覧」タブはリアルタイムに統合し、地震検索はリアルタイム上の虫眼鏡ボタンから開く。
+  const [quakeViewMode, setQuakeViewMode] = useState("realtime");
   // (effectiveNav / effectiveQuakeViewMode は、緊急地震速報の状態に依存するため、
   //  effectiveEews の定義の直後(下)で求める。)
   // 揺れ検知・震度の計算は、どのタブでも止めない(従来のB=KyoshinViewerと同じ)。
@@ -526,6 +526,19 @@ export default function App() {
      独立して保持し、それぞれ個別に続報・最終報・取消・削除ができるようにしている。
      ───────────────────────────────────────────────────── */
   const [testEews, setTestEews] = useState([]);
+  // テストEEWも実際のEEWと同じく、取消報はEEW_CANCEL_LINGER_MS(10秒)経つと自動的に削除する。
+  // (取消以外のテストEEWは、手動で削除するまで残す。)
+  useEffect(() => {
+    const id = setInterval(() => {
+      setTestEews(prev => {
+        const now = Date.now();
+        const next = prev.filter(e => !(e.cancelled && now - (e.cancelledLocalAt || 0) >= EEW_CANCEL_LINGER_MS));
+        return next.length === prev.length ? prev : next;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
 
   // カスタムパラメータ(地震タブのカスタムEEWエディタ相当)から1件のテストEEWカードを組み立てる。
   // areas・maxIntensityKeyは呼び出し側で(距離減衰式により)計算済みのものを渡す。
@@ -722,14 +735,18 @@ export default function App() {
   // 以降のEEW関連の判定はこちら(effectiveEews)を使う。
   const effectiveEews = testEews.length > 0 ? [...testEews, ...eews] : eews;
 
-  // 緊急地震速報(取消済みでないもの)が出ている間は、地震タブを「リアルタイム」に固定する
-  // (フローティング上部の切り替えバーは隠す。BottomDock側)。速報が終われば、速報前に選んでいた
-  // 項目(リアルタイム/地震一覧/地震検索)に戻る。
+  // 緊急地震速報(取消済みでないもの)が新たに発表された瞬間は、地震タブを「リアルタイム」に
+  // 切り替えて速報を見落とさないようにする。その後は固定せず、虫眼鏡ボタンから地震検索を
+  // 開くこともできる(検索中はEEW FABから速報の詳細を開ける)。
   const eewActive = effectiveEews.some(e => !e.cancelled);
-  const effectiveQuakeViewMode = eewActive ? "realtime" : quakeViewMode;
-  // 実際に表示している内容。地震タブのバーが「リアルタイム」の間(速報中の固定を含む)は
-  // "realtime"として扱い、旧リアルタイムタブ向けの分岐(地図レイヤー・EEW表示・選択の反映範囲など)を
-  // そのまま使う。
+  const prevEewActiveRef = useRef(false);
+  useEffect(() => {
+    if (eewActive && !prevEewActiveRef.current) setQuakeViewMode("realtime");
+    prevEewActiveRef.current = eewActive;
+  }, [eewActive]);
+  const effectiveQuakeViewMode = quakeViewMode;
+  // 実際に表示している内容。地震タブが「リアルタイム」の間は"realtime"として扱い、
+  // 旧リアルタイムタブ向けの分岐(地図レイヤー・EEW表示・選択の反映範囲など)をそのまま使う。
   const effectiveNav = (activeNav === "quake" && effectiveQuakeViewMode === "realtime") ? "realtime" : activeNav;
 
   // リアルタイム(強震モニタ/S-net)は、一度開いたらアプリを閉じるまで接続を維持する。
@@ -762,11 +779,13 @@ export default function App() {
      更新され続ける)とは別のstateに持たせ、使う場面(effectiveQuakes)でだけ合成する。
      ①震度速報→②震源に関する情報→③震度に関する情報、と段階を追って配信できる
      ようにし、実際のmergeQuakeCards(dedupeQuakeList)がそのまま使えることを
-     確認できるようにする。EEWと違い複数イベントを同時管理する必要は薄いため、
-     testEews(配列)ではなく1件のtestQuakeだけを持つ簡易な設計にしている。
+     確認できるようにする。EEWのtestEewsと同様に、複数のテスト地震をtestQuakes
+     (配列)にスタックでき、それぞれ個別に段階配信・編集・削除できる。発生日時も指定できる。
      ───────────────────────────────────────────────────── */
   function defaultQuakeTestForm() {
     return {
+      editingId: null, // nullなら「新しいテスト地震として配信」、グループidが入っていれば「その地震への続報」
+      dateTime: "",    // 発生日時(datetime-localの値)。空なら配信時の現在時刻を使う
       place: "テスト震源(相模湾)",
       latitude: 35.2,
       longitude: 139.3,
@@ -776,21 +795,30 @@ export default function App() {
     };
   }
   const [quakeTestForm, setQuakeTestForm] = useState(defaultQuakeTestForm);
-  const [testQuake, setTestQuake] = useState(null); // mergeQuakeCardsで段階的に更新される1件のテスト地震
+  // 配信中のテスト地震(複数スタック可)。1要素 = 1つの地震。
+  //   { gid, form(配信に使った震源等のスナップショット。「編集」で読み込み直す用), card(mergeQuakeCardsで段階的に更新されるカード) }
+  const [testQuakes, setTestQuakes] = useState([]);
+  // 非同期(loadGeoData解決後)のコールバックから最新の配列を読むためのミラー。
+  const testQuakesRef = useRef([]);
+  function commitTestQuakes(next) {
+    testQuakesRef.current = next;
+    setTestQuakes(next);
+  }
   const [quakeEpicenterPickActive, setQuakeEpicenterPickActive] = useState(false);
   const [quakeTestAutoPlaying, setQuakeTestAutoPlaying] = useState(false);
-  // 配信中のテスト地震の発生時刻(time)。①〜③を同じ地震の続報として統合するための
-  // グループキー。「新規」でクリアするまで、続けて②③を押しても同じ地震として扱われる。
-  const testQuakeTimeRef = useRef(null);
 
   /**
    * 地震情報テスト配信パネルからの操作を受け付けるディスパッチャ。
    * action:
    *   "patchForm"           フォームの値を部分更新する
    *   "broadcastStage"      { stage: "prompt"|"destination"|"detail" } の段階を配信する。
-   *                         同じテスト地震(testQuakeTimeRef)への続報として、既存の
-   *                         testQuakeとmergeQuakeCardsで統合する。
-   *   "autoPlaySequence"    新規のテスト地震を①→②→③の順に数秒間隔で自動配信する
+   *                         フォームのeditingIdが指す地震があれば、その地震への続報として
+   *                         mergeQuakeCardsで統合する(日時を変えていればその地震の発生日時も更新)。
+   *                         無ければ新しい地震としてスタックの先頭に追加し、以降の配信先にする。
+   *   "autoPlaySequence"    新しいテスト地震を追加し、①→②→③の順に数秒間隔で自動配信する
+   *   "editLoad"            { gid } 既存のテスト地震の内容をフォームに読み込み、配信先にする
+   *   "newTarget"           配信先を「新しい地震」に切り替える(日時は現在時刻に戻す)
+   *   "remove"              { gid } 指定したテスト地震を削除する
    *   "startEpicenterPick" / "cancelEpicenterPick"  地図タップでの震源指定モードの開始/終了
    *   "resetForm"           フォームを初期値に戻す
    *   "clearAll"            配信中のテスト地震・フォームをすべて片付ける
@@ -812,54 +840,84 @@ export default function App() {
       setQuakeTestForm(defaultQuakeTestForm());
       return;
     }
+    if (action === "newTarget") {
+      setQuakeTestForm(prev => ({ ...prev, editingId: null, dateTime: "" }));
+      return;
+    }
+    if (action === "editLoad") {
+      const g = testQuakesRef.current.find(x => x.gid === payload?.gid);
+      if (!g) return;
+      setQuakeTestForm({ ...defaultQuakeTestForm(), ...g.form, editingId: g.gid, dateTime: testQuakeTimeToInput(g.card.time) });
+      return;
+    }
+    if (action === "remove") {
+      const g = testQuakesRef.current.find(x => x.gid === payload?.gid);
+      if (!g) return;
+      commitTestQuakes(testQuakesRef.current.filter(x => x.gid !== g.gid));
+      if (selectedQuakeIdRef.current === g.card.id) selectQuake(null);
+      setQuakeTestForm(prev => (prev.editingId === g.gid ? { ...prev, editingId: null } : prev));
+      return;
+    }
     if (action === "clearAll") {
-      setTestQuake(null);
-      testQuakeTimeRef.current = null;
+      const selected = selectedQuakeIdRef.current;
+      if (selected != null && testQuakesRef.current.some(g => g.card.id === selected)) selectQuake(null);
+      commitTestQuakes([]);
       setQuakeTestAutoPlaying(false);
       setQuakeTestForm(defaultQuakeTestForm());
       return;
     }
     if (action === "broadcastStage") {
-      const { stage } = payload;
-      if (!testQuakeTimeRef.current) {
-        const now = new Date();
-        const pad2 = n => String(n).padStart(2, "0");
-        testQuakeTimeRef.current = `${now.getFullYear()}/${pad2(now.getMonth() + 1)}/${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
-      }
-      const time = testQuakeTimeRef.current;
-      const now2 = new Date();
-      const pad2b = n => String(n).padStart(2, "0");
-      const issueTimeStr = `${now2.getFullYear()}/${pad2b(now2.getMonth() + 1)}/${pad2b(now2.getDate())} ${pad2b(now2.getHours())}:${pad2b(now2.getMinutes())}:${pad2b(now2.getSeconds())}`;
+      const { stage, gid: gidArg, form: formArg } = payload;
+      const form = formArg || quakeTestForm;
+      // 配信先: 明示指定(自動配信)→フォームのeditingId の順。実在しなければ新規扱い。
+      let gid = gidArg || form.editingId;
+      const existing = testQuakesRef.current.find(g => g.gid === gid);
+      if (!existing) gid = gidArg || `tq_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      // 発生日時: フォームで指定があればそれ、無ければ既存の地震の日時、それも無ければ今。
+      const time = testQuakeTimeFromInput(form.dateTime) || existing?.card.time || formatTestQuakeNow();
+      const issueTimeStr = formatTestQuakeNow();
+      setQuakeTestForm(prev => ({ ...prev, editingId: gid }));
+      const snapshot = {
+        place: form.place, latitude: form.latitude, longitude: form.longitude,
+        depth: form.depth, magnitude: form.magnitude, domesticTsunami: form.domesticTsunami,
+      };
       // 各地域の震度分布は細分区域.jsonが要るため、loadGeoData()の解決を待ってから計算する
       // (地図表示時に読み込み済みなので、実際にはほぼ即座に解決する)。
       loadGeoData().then(({ areas: areasGeoJSON }) => {
-        const card = buildTestQuakeStageCard(stage, quakeTestForm, time, issueTimeStr, areasGeoJSON);
-        setTestQuake(prev => {
-          const merged = mergeQuakeCards(prev, card);
-          // 段階が進むとtestQuakeのid(test_..._prompt→test_..._destination等)が
-          // 変わるため、実際のP2P地震情報のWebSocket受信時と同じ理由で、選択中の
-          // まま何もしないと選択が外れて詳細画面が一覧表示に戻ってしまう。
-          // 選択中のテスト地震がこの続報の対象そのものであれば、新しいidへ
-          // 選択を引き継ぐ。
-          if (prev && selectedQuakeIdRef.current === prev.id && merged.id !== prev.id) {
-            selectQuake(merged.id);
-          }
-          return merged;
-        });
+        const card = buildTestQuakeStageCard(stage, form, time, issueTimeStr, areasGeoJSON, gid);
+        const list = testQuakesRef.current;
+        const prevGroup = list.find(g => g.gid === gid) || null;
+        // 日時を変えて続報した場合、既存カードの発生日時も更新してからマージする
+        // (mergeQuakeCardsはtimeに先に渡した側の値を使うため)。
+        const merged = mergeQuakeCards(prevGroup ? { ...prevGroup.card, time } : null, card);
+        // 段階が進むとカードのid(..._prompt→..._destination等)が変わるため、選択中のまま
+        // 何もしないと選択が外れて詳細画面が一覧表示に戻ってしまう。選択中のテスト地震が
+        // この続報の対象そのものであれば、新しいidへ選択を引き継ぐ。
+        if (prevGroup && selectedQuakeIdRef.current === prevGroup.card.id && merged.id !== prevGroup.card.id) {
+          selectQuake(merged.id);
+        }
+        const group = { gid, form: snapshot, card: merged };
+        commitTestQuakes(prevGroup
+          ? list.map(g => (g.gid === gid ? group : g))
+          : [group, ...list]);
       }).catch(err => {
         console.error("細分区域データの読み込みに失敗しました(地震情報テスト):", err);
       });
       return;
     }
     if (action === "autoPlaySequence") {
-      // 新規のテスト地震として、①→②→③を数秒間隔で自動配信する。
-      testQuakeTimeRef.current = null;
-      setTestQuake(null);
+      // 新しいテスト地震を追加し、①→②→③を数秒間隔で自動配信する(既存のテスト地震は残る)。
+      // 日時が未入力なら、3段階で同じ発生時刻になるよう開始時点の時刻で固定する。
+      const gid = `tq_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      const form = {
+        ...quakeTestForm, editingId: null,
+        dateTime: quakeTestForm.dateTime || testQuakeTimeToInput(formatTestQuakeNow()),
+      };
       setQuakeTestAutoPlaying(true);
       const stages = ["prompt", "destination", "detail"];
       let i = 0;
       const step = () => {
-        handleTestQuakeAction("broadcastStage", { stage: stages[i] });
+        handleTestQuakeAction("broadcastStage", { stage: stages[i], gid, form });
         i += 1;
         if (i < stages.length) {
           setTimeout(step, 3000);
@@ -1034,7 +1092,11 @@ export default function App() {
 
   // テスト配信中は、実際の一覧の先頭にテストデータを合成する。地震タブに関する
   // App側の判定(一覧・選択中の地震・地図表示)は、以降すべてこちらを使う。
-  const effectiveQuakes = testQuake ? [testQuake, ...quakes] : quakes;
+  // テスト地震は発生日時を自由に変えられるため、テスト配信中だけ発生日時の新しい順に並べ直して
+  // 実データと混ぜる(Array.sortは安定ソートなので、同時刻の実データ同士の順序は変わらない)。
+  const effectiveQuakes = testQuakes.length > 0
+    ? [...testQuakes.map(g => g.card), ...quakes].sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0))
+    : quakes;
 
   /* ─────────────────────────────────────────────────────
      実験的機能: 津波警報テスト配信
@@ -3055,11 +3117,12 @@ export default function App() {
                   eewTestForm={eewTestForm}
                   eewEpicenterPickActive={eewEpicenterPickActive}
                   eews={displayedEews}
+                  eewIssued={eewActive}
                   eewDetailOpen={displayedEewDetailOpen}
                   eewOpenSignal={eewOpenSignal}
                   onOpenEewDetail={() => { setEewDetailOpen(true); setEewOpenSignal(s => s + 1); }}
                   onCloseEewDetail={() => setEewDetailOpen(false)}
-                  testQuake={testQuake}
+                  testQuakes={testQuakes}
                   onTestQuakeAction={handleTestQuakeAction}
                   quakeTestForm={quakeTestForm}
                   quakeEpicenterPickActive={quakeEpicenterPickActive}
@@ -3200,11 +3263,12 @@ export default function App() {
               eewTestForm={eewTestForm}
               eewEpicenterPickActive={eewEpicenterPickActive}
               eews={displayedEews}
+              eewIssued={eewActive}
               eewDetailOpen={displayedEewDetailOpen}
               eewOpenSignal={eewOpenSignal}
               onOpenEewDetail={() => { setEewDetailOpen(true); setEewOpenSignal(s => s + 1); }}
               onCloseEewDetail={() => setEewDetailOpen(false)}
-              testQuake={testQuake}
+              testQuakes={testQuakes}
               onTestQuakeAction={handleTestQuakeAction}
               quakeTestForm={quakeTestForm}
               quakeEpicenterPickActive={quakeEpicenterPickActive}

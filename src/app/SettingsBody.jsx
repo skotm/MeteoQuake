@@ -38,7 +38,7 @@ export function SettingsBody({
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
   eewTestForm, eewEpicenterPickActive,
-  testQuake, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeTestAutoPlaying,
+  testQuakes, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeTestAutoPlaying,
   shakeTests, onShakeTestAction, shakeTestForm, shakeTestEpicenterPickActive,
   epicenterEstimates,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
@@ -673,7 +673,7 @@ export function SettingsBody({
       <>
         <SettingsHeader title="地震情報テスト配信"/>
         <QuakeTestBroadcastPanel
-          testQuake={testQuake}
+          testQuakes={testQuakes}
           onAction={onTestQuakeAction}
           quakeTestForm={quakeTestForm}
           quakeEpicenterPickActive={quakeEpicenterPickActive}

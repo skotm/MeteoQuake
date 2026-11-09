@@ -148,14 +148,17 @@ function calcTestQuakePointsByAttenuation(areasGeoJSON, lat, lon, magnitude, dep
 // ③震度に関する情報(detail): 震源・震度分布ともに確定。津波はフォームの指定値。
 // time(発生時刻)は同じ地震の複数段階を通じて固定し、issueTimeStrだけ毎回「今」を渡す
 // ことで、実際のmergeQuakeCards(dedupeQuakeList)と同じ仕組みでApp側が段階的に統合できる。
-export function buildTestQuakeStageCard(stage, form, time, issueTimeStr, areasGeoJSON) {
+export function buildTestQuakeStageCard(stage, form, time, issueTimeStr, areasGeoJSON, gid) {
+  // カードidはグループ(gid)ごとに固有にする。発生時刻が同じ別のテスト地震を積む場合でも
+  // idが衝突しないようにするため(gid未指定時は従来通り発生時刻をキーにする)。
+  const idKey = gid || time;
   const { points, maxIntensityKey } = calcTestQuakePointsByAttenuation(
     areasGeoJSON, form.latitude, form.longitude, form.magnitude, form.depth
   );
 
   if (stage === "prompt") {
     return {
-      id: `test_${time}_prompt`,
+      id: `test_${idKey}_prompt`,
       time, issueTime: issueTimeStr, stage: "prompt",
       place: "震源調査中",
       maxIntensity: maxIntensityKey,
@@ -169,7 +172,7 @@ export function buildTestQuakeStageCard(stage, form, time, issueTimeStr, areasGe
   }
   if (stage === "destination") {
     return {
-      id: `test_${time}_destination`,
+      id: `test_${idKey}_destination`,
       time, issueTime: issueTimeStr, stage: "destination",
       place: form.place || "震源地不明",
       maxIntensity: "?",
@@ -183,7 +186,7 @@ export function buildTestQuakeStageCard(stage, form, time, issueTimeStr, areasGe
   }
   // detail(確定)
   return {
-    id: `test_${time}_detail`,
+    id: `test_${idKey}_detail`,
     time, issueTime: issueTimeStr, stage: "detail",
     place: form.place || "震源地不明",
     maxIntensity: maxIntensityKey,
@@ -194,4 +197,31 @@ export function buildTestQuakeStageCard(stage, form, time, issueTimeStr, areasGe
     freeFormComment: null,
     isTest: true,
   };
+}
+
+/* ─────────────────────────────────────────────────────
+   地震情報テスト配信: 発生日時の変換ヘルパー
+   カードのtimeは"YYYY/MM/DD HH:mm:ss"、<input type="datetime-local">の値は
+   "YYYY-MM-DDTHH:mm[:ss]"なので、相互に変換する。
+   ───────────────────────────────────────────────────── */
+const pad2 = n => String(n).padStart(2, "0");
+
+// 現在時刻を"YYYY/MM/DD HH:mm:ss"で返す。
+export function formatTestQuakeNow() {
+  const d = new Date();
+  return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+// datetime-localの値 → カードのtime。空・不正ならnull。
+export function testQuakeTimeFromInput(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(v || "");
+  if (!m) return null;
+  return `${m[1]}/${m[2]}/${m[3]} ${m[4]}:${m[5]}:${m[6] ?? "00"}`;
+}
+
+// カードのtime → datetime-localの値。不正なら空文字。
+export function testQuakeTimeToInput(t) {
+  const m = /^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2}):(\d{2})/.exec(t || "");
+  if (!m) return "";
+  return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}`;
 }

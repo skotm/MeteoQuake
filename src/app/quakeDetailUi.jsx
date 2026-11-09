@@ -5,7 +5,8 @@ import { QUAKE_STAGE_LABEL, buildQuakeMessage, formatQuakeTimeShort } from "./qu
 import { INTENSITY_ORDER } from "./stationIcons";
 import { Glass, PressableButton } from "./glass";
 import { useIsStandalonePwa } from "./layoutHooks";
-import { fetchCmtDetail, findCmtMatchForQuake } from "./cmt";
+import { fetchCmtDetail, findCmtMatchForQuake, findUsgsCmtForQuake } from "./cmt";
+import { loadStoredCmtSourcePref, saveCmtSourcePref } from "./settingsStorage";
 
 
 /* ─────────────────────────────────────────────────────
@@ -583,8 +584,11 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
 /* ─────────────────────────────────────────────────────
    QUAKE MECH DETAIL PANEL — 「この地震の詳細」画面
    
-   気象庁の発震機構解(CMT解)を取得して表示する。M5.0以上でないとそもそも
-   解析されないため、見つからない場合はその旨を案内する(エラーではない)。
+   気象庁とUSGSの発震機構解(CMT解)を並行して取得して表示する。気象庁の解は公開が
+   遅いため、USGSの解も探す。両方に解がある場合は、画面上のトグルで表示する方を選べる
+   (選択は保存される)。片方にしか無い場合は、ある方を表示する。
+   M5.0以上でないとそもそも解析されないため、どちらにも無い場合はその旨を案内する
+   (エラーではない)。
    ───────────────────────────────────────────────────── */
 export function QuakeMechDetailPanel({ quake }) {
   const { tokens } = useContext(ThemeContext);
@@ -596,40 +600,93 @@ export function QuakeMechDetailPanel({ quake }) {
   // スタンドアロン時だけtarget="_blank"を外し、同じWebView内で遷移させることで、
   // これを避ける。
   const isStandalonePwa = useIsStandalonePwa();
-  // "loading" | "found" | "not_found" | "error"
-  const [status, setStatus] = useState("loading");
-  const [detail, setDetail] = useState(null);
-  const [matchedRow, setMatchedRow] = useState(null);
+  // 情報源ごとの取得状態。status: "loading" | "found" | "not_found" | "error"
+  const [jma, setJma] = useState({ status: "loading", detail: null });
+  const [usgs, setUsgs] = useState({ status: "loading", detail: null });
+  // 両方に解がある時にどちらを表示するか("jma" | "usgs")。保存して次回以降も使う。
+  const [sourcePref, setSourcePref] = useState(loadStoredCmtSourcePref);
   // 震源球画像のURLが取れても、実際には読み込みに失敗する(ページ構成の想定違いで
   // 誤ったURLを組み立ててしまった等)ことがあるため、<img>のonErrorで検知して
-  // 壊れた画像アイコンの代わりに案内文を出す。
-  const [imgLoadFailed, setImgLoadFailed] = useState(false);
+  // 壊れた画像アイコンの代わりに案内文を出す。URLごとに記録するので、情報源を
+  // 切り替えても他方の画像の判定には影響しない。
+  const [failedImgUrl, setFailedImgUrl] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
-    setStatus("loading");
-    setDetail(null);
-    setMatchedRow(null);
-    setImgLoadFailed(false);
+    setJma({ status: "loading", detail: null });
+    setUsgs({ status: "loading", detail: null });
+    setFailedImgUrl(null);
 
+    // 気象庁とUSGSは互いに独立に取得する(片方が遅い・失敗しても、もう片方は表示できる)。
     (async () => {
       try {
         const match = await findCmtMatchForQuake(quake);
         if (cancelled) return;
-        if (!match) { setStatus("not_found"); return; }
-        setMatchedRow(match);
+        if (!match) { setJma({ status: "not_found", detail: null }); return; }
         const d = await fetchCmtDetail(match.detailUrlStamp);
         if (cancelled) return;
-        setDetail(d);
-        setStatus("found");
+        setJma({
+          status: "found",
+          detail: {
+            ...d, source: "jma",
+            metrics: [
+              { label: "使用観測点数", value: d.stationCount },
+              { label: "解の精度(V.R.)", value: d.varianceReduction },
+            ],
+          },
+        });
       } catch (err) {
-        console.error("発震機構解の取得に失敗:", err);
-        if (!cancelled) setStatus("error");
+        console.error("発震機構解(気象庁)の取得に失敗:", err);
+        if (!cancelled) setJma({ status: "error", detail: null });
+      }
+    })();
+
+    (async () => {
+      try {
+        const d = await findUsgsCmtForQuake(quake);
+        if (cancelled) return;
+        setUsgs(d ? { status: "found", detail: d } : { status: "not_found", detail: null });
+      } catch (err) {
+        console.error("発震機構解(USGS)の取得に失敗:", err);
+        if (!cancelled) setUsgs({ status: "error", detail: null });
       }
     })();
 
     return () => { cancelled = true; };
   }, [quake.id]);
+
+  const SOURCE_LABEL = { jma: "気象庁", usgs: "USGS" };
+  const bothFound = jma.status === "found" && usgs.status === "found";
+  // 表示する情報源: 両方あれば選択に従い、片方だけならある方。
+  const shownSource = bothFound
+    ? sourcePref
+    : jma.status === "found" ? "jma"
+    : usgs.status === "found" ? "usgs"
+    : null;
+  const detail = shownSource === "jma" ? jma.detail : shownSource === "usgs" ? usgs.detail : null;
+  const pending = jma.status === "loading" || usgs.status === "loading";
+  const status = detail ? "found"
+    : pending ? "loading"
+    : (jma.status === "error" || usgs.status === "error") ? "error"
+    : "not_found";
+  // 震源球画像の読み込みに失敗した時は、自前で描いた震源球(USGSのみ)に切り替える。
+  const primaryImgFailed = !!detail && failedImgUrl != null && failedImgUrl === detail.beachballImageUrl;
+  const beachballSrc = !detail ? null
+    : (primaryImgFailed && detail.beachballFallbackUrl) ? detail.beachballFallbackUrl
+    : detail.beachballImageUrl;
+  const imgLoadFailed = primaryImgFailed && !detail?.beachballFallbackUrl;
+  const beachballDrawn = !!detail && !!detail.beachballFallbackUrl && beachballSrc === detail.beachballFallbackUrl;
+  // 片方だけ解があり、もう片方は確認済みで「無い」場合の補足表示用
+  const otherSource = shownSource === "jma" ? "usgs" : "jma";
+  const otherState = shownSource === "jma" ? usgs : jma;
+  const singleSourceNote = detail && !bothFound && otherState.status === "not_found"
+    ? `${SOURCE_LABEL[shownSource]}の解のみ掲載されています(${SOURCE_LABEL[otherSource]}には該当する解がありません)`
+    : null;
+
+  function handleChangeSourcePref(next) {
+    setSourcePref(next);
+    saveCmtSourcePref(next);
+  }
 
   const rowLabelStyle = { fontSize: 11, color: tokens.textSecondary };
   const rowValueStyle = { fontSize: 13, fontWeight: 700, color: tokens.text };
@@ -675,7 +732,7 @@ export function QuakeMechDetailPanel({ quake }) {
       <div style={{ padding: "2px 14px 16px" }}>
       {status === "loading" && (
         <Glass radius={14} style={{ padding: "24px 16px", textAlign: "center" }}>
-          <div style={{ fontSize: 12, color: tokens.textSecondary }}>気象庁のデータを確認しています…</div>
+          <div style={{ fontSize: 12, color: tokens.textSecondary }}>気象庁・USGSのデータを確認しています…</div>
         </Glass>
       )}
 
@@ -691,13 +748,44 @@ export function QuakeMechDetailPanel({ quake }) {
       {status === "error" && (
         <Glass radius={14} style={{ padding: "24px 16px", textAlign: "center" }}>
           <div style={{ fontSize: 12, color: "rgba(255,140,140,0.9)", lineHeight: 1.6 }}>
-            気象庁のデータ取得に失敗しました。時間をおいて再度お試しください。
+            発震機構解の取得に失敗しました。時間をおいて再度お試しください。
           </div>
         </Glass>
       )}
 
       {status === "found" && detail && (
         <>
+          {/* 気象庁とUSGSの両方に解がある時だけ、表示する方を選べる。 */}
+          {bothFound && (
+            <Glass radius={14} style={{ padding: 4, marginBottom: 10 }}>
+              <div style={{ display: "flex", gap: 4 }}>
+                {["jma", "usgs"].map(src => {
+                  const selectedSrc = shownSource === src;
+                  return (
+                    <PressableButton
+                      key={src}
+                      type="button"
+                      onClick={() => handleChangeSourcePref(src)}
+                      style={{
+                        flex: 1, padding: "8px 0", borderRadius: 10, border: "none", cursor: "pointer",
+                        background: selectedSrc ? `rgba(${tokens.ink},0.14)` : "transparent",
+                        color: selectedSrc ? tokens.text : tokens.textSecondary,
+                        fontSize: 13, fontWeight: selectedSrc ? 700 : 600,
+                      }}
+                    >
+                      {SOURCE_LABEL[src]}
+                    </PressableButton>
+                  );
+                })}
+              </div>
+            </Glass>
+          )}
+          {singleSourceNote && (
+            <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.5, padding: "0 4px 8px" }}>
+              {singleSourceNote}
+            </div>
+          )}
+
           {/* 使用観測点数・精度(左)と震源球の図(右)を横並びにする。
               左側は中身の幅だけ確保し(space-betweenで間延びさせない)、
               余った分は震源球の画像を大きく見せる方に回す。
@@ -706,22 +794,23 @@ export function QuakeMechDetailPanel({ quake }) {
           <Glass radius={14} style={{ padding: 16, marginBottom: 10 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, minWidth: 0 }}>
               <div style={{ flexShrink: 1, minWidth: 0 }}>
-                <DataRow label="使用観測点数" value={detail.stationCount} />
-                <DataRow label="解の精度(V.R.)" value={detail.varianceReduction} />
-                {detail.beachballImageUrl && !imgLoadFailed && (
-                  <div style={{ fontSize: 10, color: tokens.textSecondary, marginTop: 6 }}>
-                    震源球(下半球等積投影)→
+                {(detail.metrics || []).map(m => (
+                  <DataRow key={m.label} label={m.label} value={m.value} />
+                ))}
+                {beachballSrc && !imgLoadFailed && (
+                  <div style={{ fontSize: 10, color: tokens.textSecondary, marginTop: 6, lineHeight: 1.5 }}>
+                    震源球(下半球等積投影{beachballDrawn ? "・断層面解1から描画" : ""})→
                   </div>
                 )}
               </div>
-              {detail.beachballImageUrl && (
+              {beachballSrc && (
                 <div style={{ flex: "0 1 150px", minWidth: 0, maxWidth: 150, textAlign: "center" }}>
                   {!imgLoadFailed ? (
                     <img
-                      src={detail.beachballImageUrl}
+                      src={beachballSrc}
                       alt="震源球(発震機構解)"
                       style={{ display: "block", width: "100%", maxWidth: "100%", height: "auto", borderRadius: 8, background: "#fff" }}
-                      onError={() => setImgLoadFailed(true)}
+                      onError={() => setFailedImgUrl(detail.beachballImageUrl)}
                     />
                   ) : (
                     <div style={{ fontSize: 10, color: tokens.textSecondary, lineHeight: 1.5 }}>
@@ -796,7 +885,7 @@ export function QuakeMechDetailPanel({ quake }) {
               textDecoration: "none",
             }}
           >
-            気象庁の該当ページを開く ↗
+            {SOURCE_LABEL[shownSource]}の該当ページを開く ↗
           </a>
         </>
       )}
@@ -807,8 +896,10 @@ export function QuakeMechDetailPanel({ quake }) {
           発震機構解(CMT解)
         </div>
         <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.5 }}>
-          気象庁の解析結果です。マグニチュード5.0程度以上の地震のみ解析されるため、
-          対象の地震でも掲載されていない場合があります。
+          気象庁とUSGSの解析結果です。気象庁の解は公開が遅れることがあり、USGSの解の方が
+          先に公開される場合があります(両方ある場合は上のボタンで切り替えられます)。
+          マグニチュード5.0程度以上の地震のみ解析されるため、対象の地震でも掲載されていない
+          場合があります。
         </div>
       </Glass>
       </div>

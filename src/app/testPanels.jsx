@@ -244,7 +244,7 @@ const QUAKE_TEST_TSUNAMI_OPTIONS = [
   { value: "MajorWarning", label: "大津波警報等" },
 ];
 
-export function QuakeTestBroadcastPanel({ testQuake, onAction, quakeTestForm, quakeEpicenterPickActive, quakeTestAutoPlaying }) {
+export function QuakeTestBroadcastPanel({ testQuakes = [], onAction, quakeTestForm, quakeEpicenterPickActive, quakeTestAutoPlaying }) {
   const { tokens, mode } = useContext(ThemeContext);
   const f = quakeTestForm;
 
@@ -272,6 +272,8 @@ export function QuakeTestBroadcastPanel({ testQuake, onAction, quakeTestForm, qu
   }
 
   const disabled = !!quakeTestAutoPlaying;
+  // 今の配信先(フォームのeditingIdが指す、実在するテスト地震)。無ければ「新規追加」。
+  const targetGroup = testQuakes.find(g => g.gid === f.editingId) || null;
 
   return (
     <>
@@ -280,16 +282,44 @@ export function QuakeTestBroadcastPanel({ testQuake, onAction, quakeTestForm, qu
         ③震度に関する情報、と実際の発表段階を再現して個別に配信できるほか、まとめて自動再生も
         できます。①②の震度分布はM・深さ・震源からの距離による減衰式で自動計算されます
         (簡略化のため、実際の観測点単位ではなく細分区域単位で生成しています)。
-        「配信を削除」で元に戻ります。
+        複数のテスト地震を同時にスタックでき、発生日時も自由に指定できます。
+        「全て削除」で元に戻ります。
       </div>
 
-      <div style={{ margin: "18px 14px 6px" }}>
+      <div style={{ margin: "18px 14px 6px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={{ fontSize: 12.5, fontWeight: 700, color: `rgba(${tokens.ink},0.7)` }}>
           震源(②③で使用。①は震源不明のまま配信されます)
         </span>
       </div>
       <SettingsCard>
         <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div>
+            <label style={labelStyle}>発生日時(未入力なら配信時の現在時刻)</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="datetime-local"
+                step="1"
+                value={f.dateTime || ""}
+                onChange={e => patchForm({ dateTime: e.target.value })}
+                disabled={disabled}
+                style={{ ...inputStyle, flex: 1, minWidth: 0 }}
+              />
+              <PressableButton
+                type="button"
+                onClick={() => patchForm({ dateTime: "" })}
+                disabled={disabled || !f.dateTime}
+                style={{
+                  flexShrink: 0, padding: "8px 12px", borderRadius: 8, border: "none",
+                  cursor: (disabled || !f.dateTime) ? "default" : "pointer",
+                  background: `rgba(${tokens.ink},0.08)`, color: tokens.text,
+                  fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
+                  opacity: (disabled || !f.dateTime) ? 0.4 : 1,
+                }}
+              >
+                現在時刻
+              </PressableButton>
+            </div>
+          </div>
           <div>
             <label style={labelStyle}>震源</label>
             <PressableButton
@@ -363,10 +393,25 @@ export function QuakeTestBroadcastPanel({ testQuake, onAction, quakeTestForm, qu
         </div>
       </SettingsCard>
 
-      <div style={{ margin: "18px 14px 6px" }}>
+      <div style={{ margin: "18px 14px 6px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={{ fontSize: 12.5, fontWeight: 700, color: `rgba(${tokens.ink},0.7)` }}>
-          段階を配信
+          段階を配信{targetGroup ? "(続報)" : "(新規追加)"}
         </span>
+        {targetGroup && (
+          <PressableButton
+            type="button"
+            onClick={() => onAction?.("newTarget")}
+            disabled={disabled}
+            style={{ padding: "4px 8px", border: "none", cursor: disabled ? "default" : "pointer", background: "transparent", fontSize: 12, fontWeight: 700, color: `rgba(${tokens.ink},0.5)`, opacity: disabled ? 0.4 : 1 }}
+          >
+            新しい地震にする
+          </PressableButton>
+        )}
+      </div>
+      <div style={{ margin: "0 14px 8px", fontSize: 11, color: `rgba(${tokens.ink},0.5)`, lineHeight: 1.6 }}>
+        {targetGroup
+          ? `配信先: ${targetGroup.card.place}(${targetGroup.card.time})への続報として配信します。`
+          : "配信先: 新しいテスト地震として一覧に追加します。"}
       </div>
       <SettingsCard>
         <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -393,36 +438,72 @@ export function QuakeTestBroadcastPanel({ testQuake, onAction, quakeTestForm, qu
               opacity: disabled ? 0.6 : 1,
             }}
           >
-            {quakeTestAutoPlaying ? "自動配信中…(①→②→③を3秒間隔で配信しています)" : "①→②→③を自動配信(新規)"}
+            {quakeTestAutoPlaying ? "自動配信中…(①→②→③を3秒間隔で配信しています)" : "①→②→③を自動配信(新しい地震として追加)"}
           </PressableButton>
           <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.6 }}>
             ①②③は好きな順番・組み合わせで押せます(実際の電文の届く順序が前後することがあるため)。
-            同じテスト地震への続報として、これまでの配信内容と自動的に統合されます
-            (震源は分かっている方を、震度分布はより詳しい方を優先)。新しい地震として最初からやり直すには
-            「配信を削除」を押してください。
+            配信先の地震への続報として、これまでの配信内容と自動的に統合されます
+            (震源は分かっている方を、震度分布はより詳しい方を優先)。別の地震を追加するには
+            「新しい地震にする」を押してから配信してください。
           </div>
         </div>
       </SettingsCard>
 
-      <SettingsCard>
-        <PressableButton
-          type="button"
-          onClick={() => onAction?.("clearAll")}
-          style={{
-            width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
-            background: "transparent", textAlign: "center",
-            fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.45)`,
-          }}
-        >
-          配信を削除(片付ける)
-        </PressableButton>
-      </SettingsCard>
-
-      {testQuake && (
-        <div style={{ margin: "6px 14px 10px", fontSize: 11, color: `rgba(${tokens.ink},0.5)`, lineHeight: 1.7 }}>
-          現在の配信状況: {QUAKE_STAGE_LABEL[testQuake.stage] || "確定"}
-          ・{testQuake.place}・最大震度{testQuake.maxIntensity === "?" ? "不明" : testQuake.maxIntensity}
-        </div>
+      {testQuakes.length > 0 && (
+        <>
+          <div style={{ margin: "18px 14px 6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: `rgba(${tokens.ink},0.7)` }}>
+              配信中のテスト地震({testQuakes.length}件)
+            </span>
+            <PressableButton
+              type="button"
+              onClick={() => onAction?.("clearAll")}
+              style={{ padding: "4px 8px", border: "none", cursor: "pointer", background: "transparent", fontSize: 12, fontWeight: 700, color: "#FF453A" }}
+            >
+              全て削除
+            </PressableButton>
+          </div>
+          <SettingsCard>
+            {testQuakes.map((g, i) => {
+              const q = g.card;
+              const isTarget = g.gid === f.editingId;
+              return (
+                <Fragment key={g.gid}>
+                  {i > 0 && <SettingsCardDivider/>}
+                  <div style={{
+                    padding: "10px 14px", display: "flex", flexDirection: "column", gap: 8,
+                    background: isTarget ? "rgba(48,209,88,0.08)" : undefined,
+                  }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: tokens.text }}>
+                      {q.place}
+                    </div>
+                    <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.5)`, lineHeight: 1.6 }}>
+                      {q.time} ・ {QUAKE_STAGE_LABEL[q.stage] || "確定"} ・ 最大震度{q.maxIntensity === "?" ? "不明" : q.maxIntensity}
+                      {q.magnitude != null && <> ・ M{q.magnitude.toFixed(1)}</>}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <PressableButton
+                        type="button"
+                        onClick={() => onAction?.("editLoad", { gid: g.gid })}
+                        disabled={disabled}
+                        style={{ padding: "6px 12px", borderRadius: 999, border: "1px solid #30D15855", cursor: disabled ? "default" : "pointer", background: "#30D1581F", color: "#30D158", fontSize: 12, fontWeight: 700, opacity: disabled ? 0.4 : 1 }}
+                      >
+                        {isTarget ? "編集中" : "編集して続報"}
+                      </PressableButton>
+                      <PressableButton
+                        type="button"
+                        onClick={() => onAction?.("remove", { gid: g.gid })}
+                        style={{ padding: "6px 12px", borderRadius: 999, border: `1px solid rgba(${tokens.ink},0.2)`, cursor: "pointer", background: `rgba(${tokens.ink},0.06)`, color: `rgba(${tokens.ink},0.6)`, fontSize: 12, fontWeight: 700 }}
+                      >
+                        削除
+                      </PressableButton>
+                    </div>
+                  </div>
+                </Fragment>
+              );
+            })}
+          </SettingsCard>
+        </>
       )}
     </>
   );

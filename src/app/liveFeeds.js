@@ -18,7 +18,7 @@ import { toTsunamiCard } from "./tsunamiData";
        kmoni版にあった「警報/予報」の区別は行わない(常に警報級として扱う)
    ───────────────────────────────────────────────────── */
 export const EEW_STALE_MS = 90000;        // 最終報(とみなせる、最後に届いた続報)から、この時間表示を残してから自動的に消す
-export const EEW_CANCEL_LINGER_MS = 8000; // 取消受信後、この時間はパネルに「取消」表示を残してから消す
+export const EEW_CANCEL_LINGER_MS = 10000; // 取消受信後、この時間はパネルに「取消」表示を残してから消す
 export const EEW_MAX_CONCURRENT = 3;      // 同時に画面へ出すEEWの最大件数(UIが煩雑にならないよう抑える)
 export const EEW_P_WAVE_SPEED_KM_S = 6.0; // P波の伝播速度(kmoni版index.htmlと同じ簡易値)
 export const EEW_S_WAVE_SPEED_KM_S = 3.5; // S波の伝播速度
