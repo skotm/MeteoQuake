@@ -41,13 +41,15 @@ export function eqdbIntensityThresholdScale(raw) {
 export const EQDB_MAX_INT_SCALE = { "1": 10, "2": 20, "3": 30, "4": 40, "A": 45, "B": 50, "C": 55, "D": 60, "7": 70 };
 
 // 「この震源の近傍で発生した地震」ボタンを出す条件。
-// P2P地震情報(リアルタイム)側の地震であれば、震度・マグニチュードに関わらず表示する。
+// P2P地震情報(リアルタイム)側の地震も、気象庁 震度データベースの検索から開いた地震も、
+// 震度・マグニチュードに関わらず表示する(近傍検索は震源地名で気象庁 震度データベースを
+// 検索するため、検索結果の地震でもそのまま使える)。
 // ただし震源がまだ判明していない段階(震度速報「震源調査中」・稀な「震源地不明」)は、
 // 検索条件になる震源地名そのものが無いため、気象庁震度データベースを検索しても
 // 一致するはずがない(=ボタンを出しても必ず0件になる)。そのため震源が判明してから
 // (震源に関する情報 or 確定報が届いてから)だけボタンを表示するようにする。
 export function shouldShowNearbyQuakeButton(quake) {
-  return !!quake && !quake.isEqdb && hasKnownHypocenter(quake);
+  return !!quake && hasKnownHypocenter(quake);
 }
 
 export const EQDB_SORT_OPTIONS = [

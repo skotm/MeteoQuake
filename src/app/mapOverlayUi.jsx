@@ -579,6 +579,45 @@ export function BackToListButton({ onClick, label = "地震一覧に戻る" }) {
 }
 
 /* ─────────────────────────────────────────────────────
+   地震検索FABボタン — EewFabButton・BackToListButtonと同じ丸型Glassの形状・押下演出を
+   使った、虫眼鏡アイコンのボタン。リアルタイム(地震タブ)で一覧を見ている間、
+   フローティングの上に浮かび、押すと気象庁 震度データベースの地震検索画面を開く。
+   ───────────────────────────────────────────────────── */
+export function SearchFabButton({ onClick, label = "地震検索" }) {
+  const { tokens } = useContext(ThemeContext);
+  const [pressed, setPressed] = useState(false);
+
+  return (
+    <Glass
+      radius={999}
+      style={{
+        width: 44, height: 44,
+        transform: pressed ? "scale(1.16)" : "scale(1)",
+        transformOrigin: "center",
+        transition: "transform 0.18s cubic-bezier(.22,1,.36,1)",
+      }}
+    >
+      <button
+        onClick={onClick}
+        onPointerDown={() => setPressed(true)}
+        onPointerUp={() => setPressed(false)}
+        onPointerCancel={() => setPressed(false)}
+        onPointerLeave={() => setPressed(false)}
+        aria-label={label}
+        style={{
+          position: "relative", zIndex: 1,
+          width: "100%", height: "100%",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          color: tokens.text,
+        }}
+      >
+        <SearchGlassIcon size={19}/>
+      </button>
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    LAYERS TOGGLE ICON
    ───────────────────────────────────────────────────── */
 function LayersIcon() {

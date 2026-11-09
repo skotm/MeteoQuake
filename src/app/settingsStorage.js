@@ -416,7 +416,32 @@ export function loadStoredStationListDisplayMode() {
   } catch (err) {
     console.warn("震度観測点リストの表示設定を読み込めませんでした:", err);
   }
-  return "list"; // 既定は一覧表示
+  return "grouped"; // 既定は階層表示
+}
+
+/* ─────────────────────────────────────────────────────
+   発震機構解(CMT解)の表示ソース。気象庁(jma)とUSGS(usgs)の両方に解がある地震で、
+   どちらを表示するかの選択(「この地震の詳細」画面で切り替え、次回以降も覚えておく)。
+   片方にしか解が無い場合は、設定に関わらず解がある方を表示する。既定は気象庁。
+   ───────────────────────────────────────────────────── */
+const CMT_SOURCE_PREF_STORAGE_KEY = "cmtSourcePref";
+
+export function loadStoredCmtSourcePref() {
+  try {
+    const saved = localStorage.getItem(CMT_SOURCE_PREF_STORAGE_KEY);
+    if (saved === "jma" || saved === "usgs") return saved;
+  } catch (err) {
+    console.warn("発震機構解の表示ソース設定を読み込めませんでした:", err);
+  }
+  return "jma";
+}
+
+export function saveCmtSourcePref(pref) {
+  try {
+    localStorage.setItem(CMT_SOURCE_PREF_STORAGE_KEY, pref);
+  } catch (err) {
+    console.warn("発震機構解の表示ソース設定を保存できませんでした:", err);
+  }
 }
 
 export function saveStationListDisplayMode(mode) {

@@ -12,13 +12,14 @@ import { resolveStationPoints } from "./stations";
 import { NearbyQuakesPanel, QuakeListRow, QuakeListToolbar, QuakeSearchPanel, TSUNAMI_TOOLBAR_ITEMS, defaultEqdbDateRange } from "./quakeSearchUi";
 import { NAV_ICONS, useSnapDrag } from "./navUi";
 import { NAV } from "./navigation";
-import { BackToListButton, RealtimeDataTimeBadge, ShakeEventCard, ShakeTestRunningBadge, StationMarkerToggleButton } from "./mapOverlayUi";
+import { BackToListButton, RealtimeDataTimeBadge, SearchFabButton, ShakeEventCard, ShakeTestRunningBadge, StationMarkerToggleButton } from "./mapOverlayUi";
 import { EewDetailFloatingCard, EewFabButton } from "./eewUi";
 import { PanelDragHandoffCard, QuakeDetailCard, QuakeMechDetailPanel, QuakeMessageCard, StationPointsList } from "./quakeDetailUi";
 import { TsunamiTabBody } from "./tsunamiTideUi";
 import { SettingsBody } from "./SettingsBody";
 import { derivePrefFromEewAreaName } from "./eewUi";
 import { fastDist2 } from "./geo";
+import { CMT_BUTTON_MIN_MAGNITUDE } from "./cmt";
 import { NowcastColorSchemeContext, formatWdistFrameLabel, loadNowcastFrames, loadPrecipFrames, loadStoredTyphoonForecastInterval, loadWdistFrames, nowcastNearestIndexToNow, saveTyphoonForecastInterval } from "./weather/nowcast";
 import { fetchActiveTyphoonExists, fetchTyphoonData } from "./weather/typhoon";
 import { fetchAreaTimeSeries, fetchCurrentLocationForecast } from "./weather/location";
@@ -51,7 +52,7 @@ import { NowcastTimeSlider, PrecipTimeSlider } from "./weatherLegends";
 export function BottomDock({
   // active は「実際に表示している内容」(地震タブのバーが「リアルタイム」の間は"realtime")、
   // navActive はナビ行でハイライトするタブ(リアルタイムでも"quake")。
-  // quakeViewMode("realtime" | "recent" | "search")はApp側で保持する。
+  // quakeViewMode("realtime" | "search")はApp側で保持する。
   // 気象タブ(雨雲レーダー・降水量・天気分布・台風・地点の天気予報)用。App側(地図レイヤー)へ伝えるコールバック。
   onCurrentLocationChange, onNowcastChange, onPrecipChange, onWdistChange, onTyphoonChange,
   onSelectTyphoon, selectedTyphoonInfo, onClearSelectedTyphoon, onSelectTyphoonDetail,
@@ -95,10 +96,10 @@ export function BottomDock({
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
   eewTestForm, eewEpicenterPickActive,
-  testQuake, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeTestAutoPlaying,
+  testQuakes, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeTestAutoPlaying,
   shakeTests, onShakeTestAction, shakeTestForm, shakeTestEpicenterPickActive,
   epicenterEstimates,
-  eews = EMPTY_EQDB_LIST, eewDetailOpen, eewOpenSignal, onOpenEewDetail, onCloseEewDetail,
+  eews = EMPTY_EQDB_LIST, eewIssued = false, eewDetailOpen, eewOpenSignal, onOpenEewDetail, onCloseEewDetail,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
   pickedTsunamiHeights, onChangeTsunamiHeightPick, onRemoveTsunamiHeightPick,
@@ -113,7 +114,7 @@ export function BottomDock({
   const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
 
   const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)。
-                            // 地震タブでは直下のQuakeListToolbarが縦ドラッグをこのハンドルへ
+                            // 津波タブでは直下のQuakeListToolbarが縦ドラッグをこのハンドルへ
                             // 引き渡す(onHandoffToPanelDrag)ため、ハンドル自体を広げる必要はない。
   const isWide = useIsWideLayout(); // 横画面スマホ・タブレット・PCなどの広い画面かどうか
   const scrollRef = useRef(null);
@@ -166,23 +167,22 @@ export function BottomDock({
     return () => window.removeEventListener("resize", update);
   }, [isWide, active, selectedQuakeId, settingsPath]);
 
-  // 地震タブの表示モード。"recent" = 直近の地震一覧(P2P地震情報フィード)、
-  // "search" = 気象庁 震度データベースを検索するUI。
-  // タブを離れたら次に開いた時は必ず「一覧」から始まるようにリセットする。
+  // 地震タブの表示モード。"realtime" = リアルタイム(強震モニタ・緊急地震速報・地震リスト)、
+  // "search" = 気象庁 震度データベースを検索するUI(リアルタイム上の虫眼鏡ボタンから開く)。
+  // 「地震一覧」タブはリアルタイムに統合したため廃止した。
+  // タブを離れたら次に開いた時は必ず「リアルタイム」から始まるようにリセットする。
   // ただし、検索結果から地震を選択して詳細カードを表示している間に他のタブへ
   // 移動した場合はリセットしない。ここでリセットしてしまうと、タブを行き来して
   // 地震タブに戻ってきた時点では detail カードがそのまま表示され続けるため
-  // 気づきにくいが、その後「戻る」を押した瞬間にquakeViewModeが既に"recent"に
-  // 書き換わっており、本来戻るべき検索結果ではなく直近一覧に戻ってしまう
-  // (=検索経由で選択→他タブ→戻る→「戻る」ボタンでリストタブになる不具合)。
-  // quakeViewMode は App 側の state(リアルタイムタブ廃止に伴い、地震タブのバーの
-  // 左端「リアルタイム」も同じ切り替えで扱うため)。"search" だけは従来どおり、
-  // タブを離れたら「一覧」に戻す(リアルタイム/一覧は離れても保持する)。
+  // 気づきにくいが、その後「戻る」を押した瞬間にquakeViewModeが既に"realtime"に
+  // 書き換わっており、本来戻るべき検索結果ではなくリアルタイムに戻ってしまう
+  // (=検索経由で選択→他タブ→戻る→「戻る」ボタンでリアルタイムになる不具合)。
+  // quakeViewMode は App 側の state。
   const setQuakeViewMode = onQuakeViewModeChange;
   const nowcastColorSchemeId = useContext(NowcastColorSchemeContext);
   useEffect(() => {
     if (active !== "quake" && active !== "realtime" && selectedQuakeId == null && quakeViewMode === "search") {
-      setQuakeViewMode("recent");
+      setQuakeViewMode("realtime");
     }
   }, [active, selectedQuakeId, quakeViewMode]);
 
@@ -1289,6 +1289,7 @@ export function BottomDock({
     stationDetailOpenKey != null ? "地震の詳細に戻る" :
     nearbyQuakeFor ? "地震の詳細に戻る" :
     nearbyOriginId ? "近傍地震一覧に戻る" :
+    active === "quake" ? "検索結果に戻る" :
     "地震一覧に戻る";
 
   // 気象庁 震度データベース検索フォーム・結果一覧の状態。
@@ -1366,7 +1367,10 @@ export function BottomDock({
       el.scrollTop = nearbyListScrollTopRef.current;
       pendingNearbyScrollRestoreRef.current = false;
     } else {
-      el.scrollTop = onlyDeselected ? listScrollTopRef.current : 0;
+      // 緊急地震速報が発表中の時は、戻った一覧の先頭に速報カードが並ぶ(選択中は隠れていた)
+      // ため、保存した位置ではなく先頭へ戻して、速報が見える状態にする。
+      // eewIssuedは「発表中の速報があるか」で、選択中に速報の表示を隠している間もtrueのまま。
+      el.scrollTop = (onlyDeselected && !eewIssued) ? listScrollTopRef.current : 0;
     }
     prevScrollDepsRef.current = { active, quakeViewMode, tsunamiViewMode, selectedQuakeId };
     // settingsPath(設定の階層メニュー内の画面遷移。例: ライセンス一覧→個別ライセンス詳細)や
@@ -1955,6 +1959,62 @@ export function BottomDock({
         )
       )}
 
+      {/* 地震検索FAB — リアルタイム(地震タブ)で地震を選択しておらず、緊急地震速報の詳細も
+          開いていない間、パネルのすぐ上(戻るボタンと同じ位置)に浮かぶ虫眼鏡の丸ボタン
+          (緊急地震速報の発表中も出す)。
+          押すと地震検索画面(quakeViewMode: "search")に切り替わる。地震を選択している間は、
+          同じ位置を戻るボタンが使うため出さない。 */}
+      {!eewDetailOpen && active === "realtime" && selectedQuakeId == null && (
+        isWide && wideAnchorRect ? createPortal(
+          <div style={{
+            position: "fixed",
+            left: wideAnchorRect.right + 12,
+            top: wideAnchorRect.top + 16,
+            zIndex: 50,
+          }}>
+            <SearchFabButton onClick={() => { killScrollMomentum(); setQuakeViewMode("search"); }}/>
+          </div>,
+          document.body
+        ) : (
+        <div style={{
+          position: "absolute",
+          right: 16,
+          bottom: backButtonBottom,
+          transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
+          zIndex: 10,
+        }}>
+          <SearchFabButton onClick={() => { killScrollMomentum(); setQuakeViewMode("search"); }}/>
+        </div>
+        )
+      )}
+
+      {/* 地震検索画面の「戻る」ボタン — 検索画面(地震を選択していない状態)から
+          リアルタイムへ戻る。地震を選択している間は、下の地震用の戻るボタン
+          (選択解除→検索結果に戻る)が同じ位置を使う。 */}
+      {!eewDetailOpen && active === "quake" && selectedQuakeId == null && (
+        isWide && wideAnchorRect ? createPortal(
+          <div style={{
+            position: "fixed",
+            left: wideAnchorRect.right + 12,
+            top: wideAnchorRect.top + 16,
+            zIndex: 50,
+          }}>
+            <BackToListButton onClick={() => { killScrollMomentum(); setQuakeViewMode("realtime"); }} label="リアルタイムに戻る"/>
+          </div>,
+          document.body
+        ) : (
+        <div style={{
+          position: "absolute",
+          right: 16,
+          bottom: backButtonBottom,
+          transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
+          zIndex: 10,
+        }}>
+          <BackToListButton onClick={() => { killScrollMomentum(); setQuakeViewMode("realtime"); }} label="リアルタイムに戻る"/>
+        </div>
+        )
+      )}
+
       {/* 戻るボタン — 地震を選択している間だけ、パネルのすぐ上に浮かぶ。
           Glass(パネル本体)の兄弟として置くことで、currentHeightの変化
           (ドラッグ含む)にそのまま追従できるようにしている。
@@ -2479,24 +2539,6 @@ export function BottomDock({
         </div>
         )}
 
-        {/* 地震タブの「一覧⇄検索」切り替えバー — ハンドル直下に固定表示し、
-            スクロールしても本体と一緒には動かない(検索/一覧の入口を常に見せておく)。
-            地震を選択してカード表示になっている間、および緊急地震速報の詳細を
-            表示している間は不要なので隠す。 */}
-        {/* 緊急地震速報が出ている間は、地震タブは「リアルタイム」固定にして、切り替えバーは隠す。 */}
-        {!eewDetailOpen && !hasActiveEew && (active === "quake" || active === "realtime") && selectedQuakeId == null && (
-          <QuakeListToolbar
-            mode={quakeViewMode}
-            onModeChange={(mode) => {
-              killScrollMomentum();
-              setQuakeViewMode(mode);
-              // 旧リアルタイムタブと同様、リアルタイムは一段低い「中中」で開く
-              if (mode === "realtime" && snapIndex > 2) setSnapIndex(2);
-            }}
-            onHandoffToPanelDrag={handlePointerDown}
-          />
-        )}
-
         {/* 津波タブの「一覧⇄過去」切り替えバー — 地震タブと全く同じ考え方。
             津波情報を選択してカード表示になっている間、または(モードを切り替えずに
             その場で表示している)潮位観測点の詳細を表示している間、および緊急地震速報の
@@ -2558,29 +2600,6 @@ export function BottomDock({
               </>
             ) : active === "quake" ? (
               <>
-                {quakeViewMode !== "search" && quakeStatus === "loading" && quakes.length === 0 && (
-                  <div style={{
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    gap: 8, padding: "18px 0", color: `rgba(${tokens.ink},0.45)`,
-                  }}>
-                    <div style={{
-                      width: 16, height: 16, borderRadius: "50%",
-                      border: `2px solid rgba(${tokens.ink},0.15)`,
-                      borderTopColor: `rgba(${tokens.ink},0.6)`,
-                      animation: "spin 0.8s linear infinite",
-                    }}/>
-                    <span style={{ fontSize: 12 }}>地震情報を取得中…</span>
-                  </div>
-                )}
-
-                {quakeViewMode !== "search" && quakeStatus === "error" && quakes.length === 0 && (
-                  <div style={{ padding: "18px 16px", textAlign: "center" }}>
-                    <span style={{ fontSize: 12, color: "rgba(255,140,140,0.9)" }}>
-                      地震情報の取得に失敗しました
-                    </span>
-                  </div>
-                )}
-
                 {(() => {
                   // 選択中の地震は、直近一覧(quakes)だけでなく、気象庁 震度データベース検索
                   // から開いた地震(searchQuake)も対象に探す(検索結果はquakesには入れていないため)。
@@ -2649,9 +2668,9 @@ export function BottomDock({
                           <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
                             openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>
                         )}
-                        {/* 発震機構解はおおむねM5.0以上でないと気象庁側で解析されないため、
+                        {/* 発震機構解は、気象庁はおおむねM5.0以上、USGSはM4台前半から解析されるため、
                             それ未満の地震ではボタン自体を出さない。 */}
-                        {selected.magnitude != null && selected.magnitude >= 5.0 && (
+                        {selected.magnitude != null && selected.magnitude >= CMT_BUTTON_MIN_MAGNITUDE && (
                           <div style={{ margin: "8px 14px 4px" }}>
                             <PressableButton
                               type="button"
@@ -2696,22 +2715,12 @@ export function BottomDock({
                     );
                   }
 
-                  return (
-                    <>
-                      {quakes.map((q, i) => (
-                        <QuakeListRow
-                          key={q.id}
-                          quake={q}
-                          showDivider={i > 0}
-                          colorScheme={colorScheme}
-                          onSelect={() => handleSelectQuakeForScroll(q.id)}
-                        />
-                      ))}
-                    </>
-                  );
+                  // 「地震一覧」タブはリアルタイムに統合したため、地震タブ(active === "quake")は
+                  // 地震検索(search)または選択した地震の詳細だけを表示する。
+                  return null;
                 })()}
 
-                {/* フローティング部分(地震一覧)とボタン類(ナビ行)の境界線 */}
+                {/* フローティング部分(地震検索/詳細)とボタン類(ナビ行)の境界線 */}
                 <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
               </>
             ) : active === "tsunami" ? (
@@ -2806,7 +2815,7 @@ export function BottomDock({
                   onTestEewAction={onTestEewAction}
                   eewTestForm={eewTestForm}
                   eewEpicenterPickActive={eewEpicenterPickActive}
-                  testQuake={testQuake}
+                  testQuakes={testQuakes}
                   onTestQuakeAction={onTestQuakeAction}
                   quakeTestForm={quakeTestForm}
                   quakeEpicenterPickActive={quakeEpicenterPickActive}
@@ -2911,6 +2920,14 @@ export function BottomDock({
                     の1番上に緊急地震速報カードを表示する(地図側の予想震度凡例と
                     同じ考え方)。ただし他タブと違い、平常時の内容(直近の地震一覧/
                     詳細)を隠して置き換えるのではなく、その下に続けて表示する。 */}
+                {/* 速報が出ていない時だけ、地震リスト表示の最上部に小さく案内を出す。
+                    スクロール内の先頭に置くので、速報のカードが出れば入れ替わるだけで
+                    上部に隙間は残らない。地震を選択して詳細を見ている間は出さない。 */}
+                {!hasActiveEew && selectedQuakeId == null && (
+                  <div style={{ textAlign: "center", padding: "0 0 6px", fontSize: 10.5, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, letterSpacing: 0.2 }}>
+                    現在緊急地震速報は発表されていません
+                  </div>
+                )}
                 {hasActiveEew && eews.map(eew => (
                   <EewDetailFloatingCard key={eew.eventId} eew={eew} onHandoffToPanelDrag={handlePointerDown}/>
                 ))}
@@ -2988,9 +3005,9 @@ export function BottomDock({
                         <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
                           openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>
                       )}
-                      {/* 発震機構解はおおむねM5.0以上でないと気象庁側で解析されないため、
+                      {/* 発震機構解は、気象庁はおおむねM5.0以上、USGSはM4台前半から解析されるため、
                           それ未満の地震ではボタン自体を出さない。 */}
-                      {selected.magnitude != null && selected.magnitude >= 5.0 && (
+                      {selected.magnitude != null && selected.magnitude >= CMT_BUTTON_MIN_MAGNITUDE && (
                         <div style={{ margin: "8px 14px 4px" }}>
                           <PressableButton
                             type="button"
@@ -3015,30 +3032,45 @@ export function BottomDock({
                     </div>
                   );
                 })() : (
-                  <div style={{ margin: "8px 6px" }}>
+                  <>
+                    {/* 地震リスト — 旧「地震一覧」タブの中身をそのまま移植したもの
+                        (「直近で発生した地震」の枠・見出し・5件制限は廃止し、全件を表示する)。 */}
+                {quakeViewMode !== "search" && quakeStatus === "loading" && quakes.length === 0 && (
+                  <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    gap: 8, padding: "18px 0", color: `rgba(${tokens.ink},0.45)`,
+                  }}>
                     <div style={{
-                      fontSize: 12, fontWeight: 700,
-                      color: `rgba(${tokens.ink},0.5)`,
-                      padding: "0 6px 6px",
-                    }}>
-                      直近で発生した地震
-                    </div>
-                    <Glass radius={14} style={{ overflow: "hidden" }}>
-                      {quakes.slice(0, 5).map((q, i) => (
-                        <QuakeListRow
-                          key={q.id}
-                          quake={q}
-                          showDivider={i > 0}
-                          colorScheme={colorScheme}
-                          onSelect={() => handleSelectQuakeForScroll(q.id)}
-                          horizontalPadding={8}
-                        />
-                      ))}
-                    </Glass>
+                      width: 16, height: 16, borderRadius: "50%",
+                      border: `2px solid rgba(${tokens.ink},0.15)`,
+                      borderTopColor: `rgba(${tokens.ink},0.6)`,
+                      animation: "spin 0.8s linear infinite",
+                    }}/>
+                    <span style={{ fontSize: 12 }}>地震情報を取得中…</span>
                   </div>
                 )}
 
-                {/* フローティング部分(直近の地震一覧/詳細)とボタン類(ナビ行)の境界線 */}
+                {quakeViewMode !== "search" && quakeStatus === "error" && quakes.length === 0 && (
+                  <div style={{ padding: "18px 16px", textAlign: "center" }}>
+                    <span style={{ fontSize: 12, color: "rgba(255,140,140,0.9)" }}>
+                      地震情報の取得に失敗しました
+                    </span>
+                  </div>
+                )}
+
+                    {quakes.map((q, i) => (
+                      <QuakeListRow
+                        key={q.id}
+                        quake={q}
+                        showDivider={i > 0}
+                        colorScheme={colorScheme}
+                        onSelect={() => handleSelectQuakeForScroll(q.id)}
+                      />
+                    ))}
+                  </>
+                )}
+
+                {/* フローティング部分(地震リスト/詳細)とボタン類(ナビ行)の境界線 */}
                 <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
               </>
             )}

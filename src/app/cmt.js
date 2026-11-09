@@ -15,6 +15,11 @@
       詳しい情報を得る。
    ───────────────────────────────────────────────────── */
 
+// 「この地震の詳細」(発震機構解)ボタンを出すマグニチュードの下限。
+// 気象庁のCMT解はおおむねM5.0以上だが、USGSのモーメントテンソル解はM4台前半からあるため、
+// USGSも参照する今は下限を下げる(解が無ければ画面で「見つかりません」と案内する)。
+export const CMT_BUTTON_MIN_MAGNITUDE = 4.0;
+
 const CMT_LIST_BASE = "https://www.data.jma.go.jp/eqev/data/mech/cmt/";
 const CMT_FIG_BASE = "https://www.data.jma.go.jp/eqev/data/mech/cmt/fig/";
 
@@ -224,4 +229,206 @@ export async function fetchCmtDetail(detailUrlStamp) {
     beachballImageUrl: beachballImg,
     surroundingMapImageUrl: surroundingMapImg,
   };
+}
+
+/* ─────────────────────────────────────────────────────
+   USGSのモーメントテンソル解
+   気象庁のCMT解は公開が遅いため、USGSのFDSN Event API(CORS対応)からも探す。
+     1. 発生時刻の前後±5分・震源付近でmoment-tensorを持つイベントを検索
+     2. 時刻・位置が最も近いイベントを採用(気象庁と同じ許容範囲)
+     3. そのイベントの詳細(geojson)からmoment-tensorプロダクトを読み、
+        気象庁のfetchCmtDetailと同じ形に正規化して返す
+   ───────────────────────────────────────────────────── */
+const USGS_QUERY_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query";
+// 気象庁とUSGSでは震源決定の時刻・位置が数十秒・1〜2度ずれることがあるため、
+// 気象庁側より少し広めに許容する。
+const USGS_SEARCH_WINDOW_MS = 10 * 60 * 1000;
+const USGS_MATCH_TOLERANCE_MS = 5 * 60 * 1000;
+const USGS_MATCH_MAX_DEGREES = 3.0;
+const USGS_BBOX_DEGREES = 5;
+
+const usgsNum = v => {
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+// エポックミリ秒 → 日本時間の"YYYY/MM/DD HH:mm:ss"。
+function formatJstFromMs(ms) {
+  if (ms == null || !Number.isFinite(ms)) return null;
+  const d = new Date(ms + 9 * 3600 * 1000);
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}/${p(d.getUTCMonth() + 1)}/${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
+const usgsLat = lat => (lat == null ? null : `${Math.abs(lat).toFixed(2)}°${lat >= 0 ? "N" : "S"}`);
+const usgsLon = lon => (lon == null ? null : `${Math.abs(lon).toFixed(2)}°${lon >= 0 ? "E" : "W"}`);
+const usgsDepth = km => (km == null ? null : `${Math.round(km)} km`);
+const usgsDeg = v => (usgsNum(v) == null ? null : String(Math.round(usgsNum(v))));
+
+export async function findUsgsCmtForQuake(quake) {
+  const quakeMs = quakeTimeToEpochMs(quake.time);
+  if (quakeMs == null) return null;
+
+  const iso = ms => new Date(ms).toISOString().slice(0, 19);
+  const params = new URLSearchParams({
+    format: "geojson",
+    producttype: "moment-tensor",
+    orderby: "time",
+    starttime: iso(quakeMs - USGS_SEARCH_WINDOW_MS),
+    endtime: iso(quakeMs + USGS_SEARCH_WINDOW_MS),
+  });
+  if (quake.latitude != null && quake.longitude != null) {
+    params.set("minlatitude", String(quake.latitude - USGS_BBOX_DEGREES));
+    params.set("maxlatitude", String(quake.latitude + USGS_BBOX_DEGREES));
+    params.set("minlongitude", String(quake.longitude - USGS_BBOX_DEGREES));
+    params.set("maxlongitude", String(quake.longitude + USGS_BBOX_DEGREES));
+  }
+
+  // 設定の「ログ」画面で原因を追えるよう、検索条件と結果を残す。
+  const queryUrl = `${USGS_QUERY_URL}?${params.toString()}`;
+  console.log("[usgs-cmt] 検索開始", { quakeTime: quake.time, place: quake.place, queryUrl });
+  const res = await fetch(queryUrl);
+  // 該当なしは204(本文なし)で返ることがある。
+  if (res.status === 204) { console.log("[usgs-cmt] 該当イベントなし(204)"); return null; }
+  if (!res.ok) throw new Error(`USGSの検索に失敗しました(status ${res.status})`);
+  const json = await res.json();
+
+  console.log("[usgs-cmt] 検索結果", {
+    件数: (json.features || []).length,
+    候補: (json.features || []).map(f => ({
+      id: f.id, 時刻差秒: Math.round(((f.properties?.time ?? NaN) - quakeMs) / 1000),
+      lat: f.geometry?.coordinates?.[1], lon: f.geometry?.coordinates?.[0], mag: f.properties?.mag,
+    })),
+  });
+  let best = null, bestDiff = Infinity;
+  for (const f of json.features || []) {
+    const diff = Math.abs((f.properties?.time ?? Infinity) - quakeMs);
+    if (diff > USGS_MATCH_TOLERANCE_MS) continue;
+    const [lon, lat] = f.geometry?.coordinates || [];
+    if (quake.latitude != null && quake.longitude != null && lat != null && lon != null) {
+      if (Math.abs(lat - quake.latitude) + Math.abs(lon - quake.longitude) > USGS_MATCH_MAX_DEGREES) continue;
+    }
+    if (diff < bestDiff) { bestDiff = diff; best = f; }
+  }
+  if (!best || !best.properties?.detail) { console.log("[usgs-cmt] 許容範囲内の一致なし"); return null; }
+  console.log("[usgs-cmt] 一致", { id: best.id, detail: best.properties.detail });
+
+  const detailRes = await fetch(best.properties.detail);
+  if (!detailRes.ok) throw new Error(`USGSの詳細取得に失敗しました(status ${detailRes.status})`);
+  const detailJson = await detailRes.json();
+  // プロダクトは優先度順に並ぶため、先頭が採用されている解。
+  const mt = detailJson.properties?.products?.["moment-tensor"]?.[0];
+  if (!mt) { console.log("[usgs-cmt] moment-tensorプロダクトなし", Object.keys(detailJson.properties?.products || {})); return null; }
+  const p = mt.properties || {};
+
+  // 震源球画像(beachball)。含まれていない場合は画像なしで数値だけ表示する。
+  const contents = mt.contents || {};
+  const bbKey = Object.keys(contents).find(k => /beachball.*\.(png|jpe?g|gif)$/i.test(k))
+    || Object.keys(contents).find(k => /beachball.*\.svg$/i.test(k));
+  const foundBeachballUrl = bbKey ? contents[bbKey].url || null : null;
+  // 画像が無い・読み込めない場合に備え、断層面解1から震源球を描いたものを必ず用意する。
+  const drawnBeachballUrl = renderBeachballDataUrl(
+    p["nodal-plane-1-strike"], p["nodal-plane-1-dip"], p["nodal-plane-1-rake"]
+  );
+  console.log("[usgs-cmt] 震源球", { 画像キー: bbKey, 含まれるファイル: Object.keys(contents), 描画: !!drawnBeachballUrl });
+
+  const [evLon, evLat, evDepth] = best.geometry?.coordinates || [];
+  const magText = best.properties.mag != null
+    ? `${Number(best.properties.mag).toFixed(1)}${best.properties.magType ? ` (${best.properties.magType})` : ""}`
+    : null;
+  const derivedMs = p["derived-eventtime"] ? Date.parse(p["derived-eventtime"]) : null;
+  const derivedMag = usgsNum(p["derived-magnitude"]);
+  const pdc = usgsNum(p["percent-double-couple"]);
+  const stations = p["num-stations-used"] ?? p["num-stations"] ?? null;
+
+  const metrics = [];
+  if (pdc != null) metrics.push({ label: "ダブルカップル成分", value: `${Math.round(pdc <= 1 ? pdc * 100 : pdc)}%` });
+  if (stations != null) metrics.push({ label: "使用観測点数", value: String(stations) });
+  if (p["review-status"]) metrics.push({ label: "レビュー状況", value: String(p["review-status"]) });
+
+  return {
+    source: "usgs",
+    sourceUrl: best.properties.url || null,
+    hypo: {
+      time: formatJstFromMs(best.properties.time),
+      lat: usgsLat(evLat), lon: usgsLon(evLon),
+      depth: usgsDepth(evDepth), magnitude: magText,
+    },
+    centroid: {
+      time: formatJstFromMs(derivedMs),
+      lat: usgsLat(usgsNum(p["derived-latitude"])), lon: usgsLon(usgsNum(p["derived-longitude"])),
+      depth: usgsDepth(usgsNum(p["derived-depth"])),
+      mw: derivedMag != null ? `${derivedMag.toFixed(1)}${p["derived-magnitude-type"] ? ` (${p["derived-magnitude-type"]})` : ""}` : null,
+    },
+    plane1: { strike: usgsDeg(p["nodal-plane-1-strike"]), dip: usgsDeg(p["nodal-plane-1-dip"]), rake: usgsDeg(p["nodal-plane-1-rake"]) },
+    plane2: { strike: usgsDeg(p["nodal-plane-2-strike"]), dip: usgsDeg(p["nodal-plane-2-dip"]), rake: usgsDeg(p["nodal-plane-2-rake"]) },
+    axes: {
+      p: { azimuth: usgsDeg(p["p-axis-azimuth"]), plunge: usgsDeg(p["p-axis-plunge"]) },
+      t: { azimuth: usgsDeg(p["t-axis-azimuth"]), plunge: usgsDeg(p["t-axis-plunge"]) },
+      n: { azimuth: usgsDeg(p["n-axis-azimuth"]), plunge: usgsDeg(p["n-axis-plunge"]) },
+    },
+    metrics,
+    beachballImageUrl: foundBeachballUrl || drawnBeachballUrl,
+    beachballFallbackUrl: drawnBeachballUrl,
+    surroundingMapImageUrl: null,
+  };
+}
+
+/* ─────────────────────────────────────────────────────
+   震源球(ビーチボール)の自前描画
+   USGSのプロダクトには震源球画像が含まれない・名前が想定と違うことがあるため、
+   断層面解(走向・傾斜・すべり角)から下半球等積投影の震源球を描いて、
+   PNGのデータURLとして返す。
+     - 各点の方位・射出角から、ダブルカップルの放射パターンの符号を求める
+       (符号 = (n·r)(u·r)、n=断層面の法線、u=すべり方向、r=その方向の単位ベクトル)
+     - 押し(P波初動が上向き)の領域を黒、引きの領域を白で塗る
+   座標系は北(x)・東(y)・下(z)。
+   ───────────────────────────────────────────────────── */
+export function renderBeachballDataUrl(strikeDeg, dipDeg, rakeDeg, size = 360) {
+  const strike = parseFloat(strikeDeg), dip = parseFloat(dipDeg), rake = parseFloat(rakeDeg);
+  if (![strike, dip, rake].every(Number.isFinite)) return null;
+  if (typeof document === "undefined") return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+
+  const rad = d => (d * Math.PI) / 180;
+  const phi = rad(strike), del = rad(dip), lam = rad(rake);
+  // 走向方向 s、傾斜方向(下向き) d、上盤側の法線 n、すべり方向 u
+  const s = [Math.cos(phi), Math.sin(phi), 0];
+  const d = [-Math.sin(phi) * Math.cos(del), Math.cos(phi) * Math.cos(del), Math.sin(del)];
+  const n = [-Math.sin(phi) * Math.sin(del), Math.cos(phi) * Math.sin(del), -Math.cos(del)];
+  const u = [
+    Math.cos(lam) * s[0] - Math.sin(lam) * d[0],
+    Math.cos(lam) * s[1] - Math.sin(lam) * d[1],
+    Math.cos(lam) * s[2] - Math.sin(lam) * d[2],
+  ];
+
+  const img = ctx.createImageData(size, size);
+  const c = size / 2, R = size / 2 - 3;
+  for (let py = 0; py < size; py++) {
+    for (let px = 0; px < size; px++) {
+      const x = (px + 0.5 - c) / R;  // 右が東
+      const y = (c - (py + 0.5)) / R; // 上が北
+      const rho = Math.hypot(x, y);
+      const idx = (py * size + px) * 4;
+      if (rho > 1) { img.data[idx + 3] = 0; continue; } // 円の外は透明
+      // 等積投影: rho = √2·sin(i/2) (i = 鉛直下向きからの角度)
+      const inc = 2 * Math.asin(Math.min(1, rho / Math.SQRT2));
+      const az = Math.atan2(x, y); // 北から東回り
+      const r = [Math.sin(inc) * Math.cos(az), Math.sin(inc) * Math.sin(az), Math.cos(inc)];
+      const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      const compression = dot(n, r) * dot(u, r) > 0;
+      const v = compression ? 20 : 255;
+      img.data[idx] = v; img.data[idx + 1] = v; img.data[idx + 2] = v; img.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  ctx.beginPath();
+  ctx.arc(c, c, R, 0, Math.PI * 2);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "#141414";
+  ctx.stroke();
+  return canvas.toDataURL("image/png");
 }
