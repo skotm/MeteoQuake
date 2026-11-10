@@ -84,7 +84,17 @@ export const Glass = forwardRef(function Glass({
   // 屈折フィルタは「ぼかされた背景を歪ませる」演出のため、ぼかし自体が
   // 効いていない状態でfilter:url(...)だけ生かしても視覚的な意味がない。
   const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
-  const { tokens } = useContext(ThemeContext);
+  const { tokens, glare } = useContext(ThemeContext);
+
+  // 眩しさ抑制(theme.jsのcomputeGlareGuard): 地図の色が明るすぎる時だけ、背後の明るさ・彩度の
+  // 強調・縁光を弱める。補正なし(既定配色など)の時は、brightness()を付けず従来と同じ
+  // フィルタ文字列になるので、見た目も負荷も変わらない。
+  // brightnessは下のぼかし層(1枚目)だけに掛ける。屈折層(2枚目)はその上に重なって1枚目の
+  // 結果を背景として受けるため、そちらにも掛けると二重に暗くなる(彩度は両層で同じ値)。
+  const guardOn = !!glare?.active;
+  const saturatePct = guardOn ? glare.saturate : 140;
+  const baseBackdropFilter = `blur(${blur}px) saturate(${saturatePct}%)${guardOn ? ` brightness(${glare.brightness})` : ""}`;
+  const refractBackdropFilter = `blur(${blur}px) saturate(${saturatePct}%)`;
 
   // filterSize="none" の場合は屈折SVGフィルタを外し、単純なbackdrop blurのみにする
   // （リサイズや角丸トランジション中など、フィルタの再計算コストが重くなる場面用の軽量モード）
@@ -128,8 +138,8 @@ export const Glass = forwardRef(function Glass({
           borderRadius: "inherit",
           // ぼかしが実効しない環境ではbackdrop-filter自体を外す
           // (どうせ効かない処理をGPUにやらせ続けるコストを避ける)。
-          backdropFilter: glassOpaque ? "none" : `blur(${blur}px) saturate(140%)`,
-          WebkitBackdropFilter: glassOpaque ? "none" : `blur(${blur}px) saturate(140%)`,
+          backdropFilter: glassOpaque ? "none" : baseBackdropFilter,
+          WebkitBackdropFilter: glassOpaque ? "none" : baseBackdropFilter,
           background: backdropBackground,
           zIndex: 0,
         }}
@@ -146,8 +156,8 @@ export const Glass = forwardRef(function Glass({
             position: "absolute",
             inset: 0,
             borderRadius: "inherit",
-            backdropFilter: `blur(${blur}px) saturate(140%)`,
-            WebkitBackdropFilter: `blur(${blur}px) saturate(140%)`,
+            backdropFilter: refractBackdropFilter,
+            WebkitBackdropFilter: refractBackdropFilter,
             filter: `url(#${filterId})`,
             zIndex: 0,
             pointerEvents: "none",
@@ -167,6 +177,8 @@ export const Glass = forwardRef(function Glass({
           `,
           pointerEvents: "none",
           zIndex: 1,
+          // 明るい地図色の時は縁光(白い縁)も弱める(補正なしの時はopacityを指定しない)。
+          ...(guardOn && !glassOpaque ? { opacity: glare.rim } : null),
         }}
       />
       {/* コンテンツ層: 歪みフィルタの影響を一切受けない */}

@@ -121,8 +121,8 @@ export function SettingsBody({
   const categoryLabel = (SETTINGS_MENU.find(m => m.id === category)
     || TAB_SETTINGS_CATEGORIES.find(m => m.id === category))?.label || "";
 
-  // 震度配色(地震カテゴリの項目)の中身
-  if (category === "quake" && leaf === "colorScheme") {
+  // 震度配色(表示設定の項目)の中身
+  if (category === "display" && leaf === "colorScheme") {
     return (
       <>
         <SettingsHeader title="震度配色"/>
@@ -131,9 +131,9 @@ export function SettingsBody({
     );
   }
 
-  // 地図塗りつぶし(地震カテゴリの項目)の中身。
+  // 地図塗りつぶし(表示設定の項目)の中身。
   // 「細分区域を震度で塗りつぶす」「推計震度分布を表示」の2つのON/OFFをまとめる。
-  if (category === "quake" && leaf === "mapFill") {
+  if (category === "display" && leaf === "mapFill") {
     return (
       <>
         <SettingsHeader title="地図塗りつぶし"/>
@@ -156,12 +156,12 @@ export function SettingsBody({
     );
   }
 
-  // 断層・プレート境界(地震カテゴリの項目)の中身。
+  // 断層・プレート境界(表示設定の項目)の中身。
   // いずれもファイルサイズが大きいデータのため、初期設定は両方OFF。
   // 縁取り(halo)はライト/ダーク共通の固定色だが、枠内の色はここで選べる。
   // ヘッダー・カードを1つにまとめてコンパクトにし、パネルの高さ「中高」
   // (MIDHIGH_FIXED)だけでスクロールなしに全項目が収まるようにしている。
-  if (category === "quake" && leaf === "boundaries") {
+  if (category === "display" && leaf === "boundaries") {
     return (
       <>
         <SettingsHeader title="断層・プレート境界"/>
@@ -189,8 +189,8 @@ export function SettingsBody({
     );
   }
 
-  // 各地の震度リストの表示方法(地震カテゴリの項目)の中身
-  if (category === "quake" && leaf === "stationListDisplay") {
+  // 各地の震度リストの表示方法(表示設定の項目)の中身
+  if (category === "display" && leaf === "stationListDisplay") {
     return (
       <>
         <SettingsHeader title="各地の震度の表示方法"/>
@@ -209,8 +209,8 @@ export function SettingsBody({
     );
   }
 
-  // 雨雲レーダー配色(気象カテゴリの項目)の中身
-  if (category === "weather" && leaf === "nowcastColorScheme") {
+  // 雨雲レーダー配色(表示設定の項目)の中身
+  if (category === "display" && leaf === "nowcastColorScheme") {
     return (
       <>
         <SettingsHeader title="雨雲レーダー配色"/>
@@ -222,8 +222,8 @@ export function SettingsBody({
     );
   }
 
-  // 台風予報円の表示間隔(気象カテゴリの項目)の中身
-  if (category === "weather" && leaf === "typhoonForecastInterval") {
+  // 台風予報円の表示間隔(表示設定の項目)の中身
+  if (category === "display" && leaf === "typhoonForecastInterval") {
     return (
       <>
         <SettingsHeader title="台風予報円の表示間隔"/>
@@ -239,18 +239,30 @@ export function SettingsBody({
     );
   }
 
-  // 地震カテゴリのトップ(震度配色・地図塗りつぶし・取得件数への入口)。
-  // 他のカテゴリと違い項目を専用に組み立てているため、汎用のitems一覧ループとは別扱いにする。
-  if (category === "quake" && !leaf) {
+  // 表示設定(トップ階層のカテゴリ)。地図・地震・気象の「見た目」に関する設定への入口を
+  // まとめている。各項目の画面の中身は、以前の置き場所(地震・気象・詳細設定)から
+  // そのまま移したもの(保存する値も同じ)。
+  if (category === "display" && !leaf) {
+    const captionStyle = { margin: "16px 14px 6px", fontSize: 12.5, fontWeight: 700, color: `rgba(${tokens.ink},0.7)` };
     return (
       <>
-        <SettingsHeader title="地震"/>
+        <SettingsHeader title="表示設定"/>
+        <SettingsCard>
+          <SettingsMenuRow label="外観" onClick={() => onNavigate([...path, "appearance"])}/>
+        </SettingsCard>
+
+        <div style={captionStyle}>地図</div>
+        <SettingsCard>
+          <SettingsMenuRow label="地図の色" onClick={() => onNavigate([...path, "mapColors"])}/>
+          <SettingsCardDivider/>
+          <SettingsMenuRow label="断層・プレート境界" onClick={() => onNavigate([...path, "boundaries"])}/>
+        </SettingsCard>
+
+        <div style={captionStyle}>地震</div>
         <SettingsCard>
           <SettingsMenuRow label="震度配色" onClick={() => onNavigate([...path, "colorScheme"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="地図塗りつぶし" onClick={() => onNavigate([...path, "mapFill"])}/>
-          <SettingsCardDivider/>
-          <SettingsMenuRow label="断層・プレート境界" onClick={() => onNavigate([...path, "boundaries"])}/>
           <SettingsCardDivider/>
           <SettingsToggleRow
             label="震央分布を表示"
@@ -260,7 +272,27 @@ export function SettingsBody({
           />
           <SettingsCardDivider/>
           <SettingsMenuRow label="各地の震度の表示方法" onClick={() => onNavigate([...path, "stationListDisplay"])}/>
+        </SettingsCard>
+
+        <div style={captionStyle}>気象</div>
+        <SettingsCard>
+          <SettingsMenuRow label="雨雲レーダー配色" onClick={() => onNavigate([...path, "nowcastColorScheme"])}/>
           <SettingsCardDivider/>
+          <SettingsMenuRow label="台風予報円の表示間隔" onClick={() => onNavigate([...path, "typhoonForecastInterval"])}/>
+        </SettingsCard>
+      </>
+    );
+  }
+
+  // 地震カテゴリのトップ(取得件数・リアルタイム・リプレイ・カメラの動きへの入口)。
+  // 震度配色・地図塗りつぶし・断層・プレート境界・震央分布・各地の震度の表示方法は、
+  // 「表示設定」(トップ階層)に移した。
+  // 他のカテゴリと違い項目を専用に組み立てているため、汎用のitems一覧ループとは別扱いにする。
+  if (category === "quake" && !leaf) {
+    return (
+      <>
+        <SettingsHeader title="地震"/>
+        <SettingsCard>
           <SettingsMenuRow label="取得件数" onClick={() => onNavigate([...path, "fetchLimit"])}/>
         </SettingsCard>
         {/* 地震タブのフローティングバー左端「リアルタイム」まわりの設定(旧リアルタイムタブ・詳細設定から移動) */}
@@ -502,13 +534,13 @@ export function SettingsBody({
     );
   }
 
-  // 外観(詳細設定カテゴリの項目)の中身。
+  // 外観(表示設定の項目)の中身。
   // 「デバイスの設定に合わせる」が初期設定(ON)で、端末のライト/ダーク設定に
   // 自動追従する。OFFにした場合のみ、ライト/ダークを手動で選べる。
   // ここではUIチューム(背景・カード・文字色など)の基礎トークンだけを
   // 切り替えており、地図の基本配色や震度配色スキームは対象外
   // (別途テーマ対応が必要)。
-  if (category === "advanced" && leaf === "appearance") {
+  if (category === "display" && leaf === "appearance") {
     const followSystem = themeModePref === "system";
     return (
       <>
@@ -549,8 +581,8 @@ export function SettingsBody({
     );
   }
 
-  // 地図の色(詳細設定の項目)。海・陸・都道府県の境界線・国境線の色を、ライト/ダーク別に変える。
-  if (category === "advanced" && leaf === "mapColors") {
+  // 地図の色(表示設定の項目)。海・陸・都道府県の境界線・国境線の色を、ライト/ダーク別に変える。
+  if (category === "display" && leaf === "mapColors") {
     return (
       <>
         <SettingsHeader title="地図の色"/>
