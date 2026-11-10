@@ -9,7 +9,7 @@ import { QuakeColorSchemeContext, REALTIME_API_BASE_URL, loadStoredQuakeColorSch
 import { Filters, LAYERS } from "./app/navigation";
 import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layoutHooks";
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
-import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
+import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, computeGlareGuard, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
 import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, saveGridDetectionEnabled, saveGridCellsVisible, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
 import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
@@ -189,7 +189,7 @@ export default function App() {
     setOverride: handleChangeGlassOpaqueOverride,
   }), [glassOpaque, glassOpaqueOverride, suspectedBackdropFilterBroken, handleChangeGlassOpaqueOverride]);
 
-  // ライト/ダークモード。設定タブの「詳細設定」→「外観」から切り替える。
+  // ライト/ダークモード。設定タブの「表示設定」→「外観」から切り替える。
   // 初期設定は"system"(デバイスの設定に合わせる)。ユーザーの選択は
   // localStorageに保存し、次回起動時も復元する。
   // "system"のときはuseSystemThemeMode()でデバイスのprefers-color-schemeを
@@ -223,12 +223,18 @@ export default function App() {
     setMapColorOverrides({ light: {}, dark: {} });
   }
 
-  const themeContextValue = useMemo(() => ({
-    mode: themeMode,
-    tokens: applyMapColorOverrides(THEME_TOKENS[themeMode], themeMode, mapColorOverrides),
-    modePref: themeModePref,
-    setModePref: handleChangeThemeModePref,
-  }), [themeMode, themeModePref, mapColorOverrides]);
+  const themeContextValue = useMemo(() => {
+    const tokens = applyMapColorOverrides(THEME_TOKENS[themeMode], themeMode, mapColorOverrides);
+    return {
+      mode: themeMode,
+      tokens,
+      // 地図の色が明るすぎる時にフローティングの眩しさを抑える補正値。tokensと同じ
+      // useMemoで求めるので、色を変えても再描画は増えない(既定配色では補正なし)。
+      glare: computeGlareGuard(themeMode, tokens),
+      modePref: themeModePref,
+      setModePref: handleChangeThemeModePref,
+    };
+  }, [themeMode, themeModePref, mapColorOverrides]);
 
   // App自身はThemeContext.Providerを作る側なので、自分に対してはuseContextせず
   // 計算済みのthemeContextValueから直接参照する。

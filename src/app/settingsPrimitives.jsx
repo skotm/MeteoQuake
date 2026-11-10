@@ -6,7 +6,7 @@ import { Toggle } from "./navUi";
 
 /* ─────────────────────────────────────────────────────
    SETTINGS TAB — 階層メニュー
-   設定タブを開くとまずカテゴリ一覧(地震/津波/気象/警報/詳細設定)を表示し、
+   設定タブを開くとまずカテゴリ一覧(タブ設定/表示設定/利用規約等/詳細設定)を表示し、
    カテゴリを選ぶとその中の項目一覧へ、項目を選ぶと実際の設定内容へ、と
    BottomDockパネルの中身をその場で差し替えながら掘り下げていく構成。
    現在地は親(BottomDock)がsettingsPath(配列)として持ち、このコンポーネントは
@@ -20,6 +20,7 @@ import { Toggle } from "./navUi";
 // 詳細設定の下ではなくトップ階層に置く。
 export const SETTINGS_MENU = [
   { id: "tabSettings", label: "タブ設定" },
+  { id: "display",     label: "表示設定" },
   { id: "terms",       label: "利用規約等・注意事項" },
   { id: "advanced",    label: "詳細設定" },
 ];
@@ -37,13 +38,10 @@ export const TAB_SETTINGS_CATEGORIES = [
 // カテゴリごとの項目一覧。地震・利用規約等の各カテゴリはSettingsBody内で専用に
 // 組み立てるためここには含めない。他のカテゴリは現状すべて骨組み(空のプレースホルダー画面)。
 export const SETTINGS_ITEMS = {
-  weather: [
-    { id: "nowcastColorScheme", label: "雨雲レーダー配色" },
-    { id: "typhoonForecastInterval", label: "台風予報円の表示間隔" },
-  ],
+  // 気象: 雨雲レーダー配色・台風予報円の表示間隔は「表示設定」に移したため、現状は空(津波と同様の骨組み)。
+  weather: [],
   advanced: [
-    { id: "appearance", label: "外観" },
-    { id: "mapColors", label: "地図の色" },
+    // 外観・地図の色は「表示設定」に移した。
     // 【廃止】APIトークン入力機能を廃止したため、設定メニューからも除外。
     // { id: "realtimeApi", label: "リアルタイムAPI" },
     { id: "experimental", label: "実験的・テスト機能" },

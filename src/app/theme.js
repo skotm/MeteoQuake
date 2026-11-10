@@ -60,6 +60,57 @@ export function applyMapColorOverrides(tokens, mode, overrides) {
   return next || tokens;
 }
 
+/* ─────────────────────────────────────────────────────
+   フローティングの「眩しさ抑制」
+   フローティング(Glass)は背後の地図を透かして見せる作りで、既定の暗い/淡い地図色を
+   前提にしている。ユーザーが地図の色を明るくすると、その明るさがほぼそのまま透け、
+   さらに彩度の強調(saturate)で目立って眩しくなる。そこで、地図の色から「フローティングの
+   下に来る明るさ」を推定し、上限を超えるときだけ背後の明るさ(brightness)と彩度の強調、
+   縁光を弱める。
+     - 推定: 海・陸(日本)・陸(海外)の塗りのうち最も明るい色の相対輝度(WCAG)。
+     - 上限: モードごとの輝度(GLARE_LUMINANCE_CEILING)。既定配色の明るさ以下に置いてあるので、
+       地図の色を変えていなければ補正は入らず、見た目・負荷とも今まで通り。
+     - 補正量は連続: brightness = (上限 ÷ 推定輝度)^(1/2.2) で、上限を超えた分だけ下がる
+       (CSSのbrightness()はsRGB値に掛かるため、輝度に対してガンマ2.2を逆算している)。
+   ───────────────────────────────────────────────────── */
+// フローティングの背後の輝度の上限(0〜1)。実機で見ながら調整できるよう定数にしている。
+//   dark : 白い文字が読める暗さ(既定配色の最大輝度≒0.04より十分上に置く)
+//   light: 既定配色の最大輝度(陸(日本)の#f2f0ea≒0.87)のすぐ上
+export const GLARE_LUMINANCE_CEILING = { dark: 0.12, light: 0.88 };
+
+export const NO_GLARE_GUARD = Object.freeze({ active: false, brightness: 1, saturate: 140, rim: 1 });
+
+// "#rrggbb" → WCAGの相対輝度(0〜1)。不正な値はnull。
+export function relativeLuminance(hex) {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || "");
+  if (!m) return null;
+  const [r, g, b] = [m[1], m[2], m[3]].map(h => {
+    const c = parseInt(h, 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+// 反映済みのトークン(applyMapColorOverrides後)から、眩しさ抑制の補正値を求める。
+//   brightness: 背後に掛ける明るさ(1=補正なし)  saturate: 彩度の強調(%、補正なしは140)
+//   rim       : 縁光の濃さの倍率(1=補正なし)
+export function computeGlareGuard(mode, tokens) {
+  const lums = ["mapBg", "mapPrefFill", "mapWorldFill"]
+    .map(k => relativeLuminance(tokens[k]))
+    .filter(v => v != null);
+  const ceiling = GLARE_LUMINANCE_CEILING[mode];
+  if (lums.length === 0 || ceiling == null) return NO_GLARE_GUARD;
+  const lMax = Math.max(...lums);
+  if (lMax <= ceiling) return NO_GLARE_GUARD;
+  const brightness = Math.round(Math.pow(ceiling / lMax, 1 / 2.2) * 1000) / 1000;
+  return {
+    active: true,
+    brightness,
+    saturate: Math.round(100 + 40 * brightness),
+    rim: Math.round((0.4 + 0.6 * brightness) * 1000) / 1000,
+  };
+}
+
 export const THEME_TOKENS = {
   dark: {
     pageBg: "#121214",
@@ -125,6 +176,7 @@ export const THEME_TOKENS = {
 export const ThemeContext = createContext({
   mode: "dark",
   tokens: THEME_TOKENS.dark,
+  glare: NO_GLARE_GUARD, // フローティングの眩しさ抑制の補正値(computeGlareGuard)
   modePref: "system",
   setModePref: () => {},
 });
