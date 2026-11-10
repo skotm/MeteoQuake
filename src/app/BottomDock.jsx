@@ -19,7 +19,7 @@ import { TsunamiTabBody } from "./tsunamiTideUi";
 import { SettingsBody } from "./SettingsBody";
 import { derivePrefFromEewAreaName } from "./eewUi";
 import { fastDist2 } from "./geo";
-import { CMT_BUTTON_MIN_MAGNITUDE } from "./cmt";
+import { shouldShowMechanismButton } from "./cmt";
 import { NowcastColorSchemeContext, formatWdistFrameLabel, loadNowcastFrames, loadPrecipFrames, loadStoredTyphoonForecastInterval, loadWdistFrames, nowcastNearestIndexToNow, saveTyphoonForecastInterval } from "./weather/nowcast";
 import { fetchActiveTyphoonExists, fetchTyphoonData } from "./weather/typhoon";
 import { fetchAreaTimeSeries, fetchCurrentLocationForecast } from "./weather/location";
@@ -2668,9 +2668,9 @@ export function BottomDock({
                           <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
                             openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>
                         )}
-                        {/* 発震機構解は、気象庁はおおむねM5.0以上、USGSはM4台前半から解析されるため、
-                            それ未満の地震ではボタン自体を出さない。 */}
-                        {selected.magnitude != null && selected.magnitude >= CMT_BUTTON_MIN_MAGNITUDE && (
+                        {/* 震央地名が陸域なら初動解の対象なのでMに関わらず出し、海域・その他は
+                            CMT解/USGSの対象になるM4.5以上のときだけ出す(cmt.jsのshouldShowMechanismButton)。 */}
+                        {shouldShowMechanismButton(selected) && (
                           <div style={{ margin: "8px 14px 4px" }}>
                             <PressableButton
                               type="button"
@@ -3005,9 +3005,9 @@ export function BottomDock({
                         <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
                           openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>
                       )}
-                      {/* 発震機構解は、気象庁はおおむねM5.0以上、USGSはM4台前半から解析されるため、
-                          それ未満の地震ではボタン自体を出さない。 */}
-                      {selected.magnitude != null && selected.magnitude >= CMT_BUTTON_MIN_MAGNITUDE && (
+                      {/* 震央地名が陸域なら初動解の対象なのでMに関わらず出し、海域・その他は
+                          CMT解/USGSの対象になるM4.5以上のときだけ出す(cmt.jsのshouldShowMechanismButton)。 */}
+                      {shouldShowMechanismButton(selected) && (
                         <div style={{ margin: "8px 14px 4px" }}>
                           <PressableButton
                             type="button"
