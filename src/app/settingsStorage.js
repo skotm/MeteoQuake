@@ -1,5 +1,6 @@
 import { MIN_INTENSITY as SHINDO_MIN_INTENSITY, MAX_INTENSITY as SHINDO_MAX_INTENSITY } from "../shindoColorScale";
 import { BOUNDARY_LINE_COLORS } from "./stationIcons";
+import { MAP_COLOR_ITEMS } from "./theme";
 
 
 
@@ -361,6 +362,58 @@ export function saveBoundaryLineColorId(id) {
     localStorage.setItem(BOUNDARY_LINE_COLOR_STORAGE_KEY, id);
   } catch (err) {
     console.warn("断層・プレート境界の色設定を保存できませんでした:", err);
+  }
+}
+
+/* ─────────────────────────────────────────────────────
+   地図の色(海・陸・都道府県境界線・国境線)のカスタマイズ。
+   ライト/ダークで別々に、ユーザーが変えた項目だけを保存する(変えていない項目は
+   既定値のまま。保存が空なら既定の配色)。
+     { light: { mapBg: "#rrggbb", mapPrefLine: { color: "#rrggbb", opacity: 0〜1 }, ... }, dark: {...} }
+   ───────────────────────────────────────────────────── */
+const MAP_COLOR_OVERRIDES_STORAGE_KEY = "mapColorOverrides";
+const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i;
+
+// 壊れた値・未知のキーを取り除き、必ず { light: {}, dark: {} } の形にそろえる。
+export function sanitizeMapColorOverrides(raw) {
+  const out = { light: {}, dark: {} };
+  if (!raw || typeof raw !== "object") return out;
+  for (const mode of ["light", "dark"]) {
+    const src = raw[mode];
+    if (!src || typeof src !== "object") continue;
+    for (const item of MAP_COLOR_ITEMS) {
+      const v = src[item.key];
+      if (item.type === "fill") {
+        if (typeof v === "string" && HEX_COLOR_RE.test(v)) out[mode][item.key] = v.toLowerCase();
+      } else if (v && typeof v === "object" && typeof v.color === "string" && HEX_COLOR_RE.test(v.color)) {
+        const opacity = Number(v.opacity);
+        if (Number.isFinite(opacity)) {
+          out[mode][item.key] = { color: v.color.toLowerCase(), opacity: Math.min(1, Math.max(0, opacity)) };
+        }
+      }
+    }
+  }
+  return out;
+}
+
+export function loadStoredMapColorOverrides() {
+  try {
+    const saved = localStorage.getItem(MAP_COLOR_OVERRIDES_STORAGE_KEY);
+    if (saved) return sanitizeMapColorOverrides(JSON.parse(saved));
+  } catch (err) {
+    console.warn("地図の色の設定を読み込めませんでした:", err);
+  }
+  return { light: {}, dark: {} };
+}
+
+export function saveMapColorOverrides(overrides) {
+  try {
+    const clean = sanitizeMapColorOverrides(overrides);
+    const empty = Object.keys(clean.light).length === 0 && Object.keys(clean.dark).length === 0;
+    if (empty) localStorage.removeItem(MAP_COLOR_OVERRIDES_STORAGE_KEY);
+    else localStorage.setItem(MAP_COLOR_OVERRIDES_STORAGE_KEY, JSON.stringify(clean));
+  } catch (err) {
+    console.warn("地図の色の設定を保存できませんでした:", err);
   }
 }
 

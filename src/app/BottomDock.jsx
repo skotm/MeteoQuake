@@ -78,6 +78,7 @@ export function BottomDock({
   plateBoundariesEnabled, onChangePlateBoundariesEnabled,
   epicenterCirclesEnabled, onChangeEpicenterCirclesEnabled,
   boundaryLineColorId, onChangeBoundaryLineColorId,
+  mapColorOverrides, onChangeMapColor, onResetMapColor, onResetAllMapColors,
   quakeFetchLimit, onChangeQuakeFetchLimit,
   stationListDisplayMode, onChangeStationListDisplayMode,
   experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
@@ -2779,6 +2780,10 @@ export function BottomDock({
                   epicenterCirclesEnabled={epicenterCirclesEnabled}
                   onChangeEpicenterCirclesEnabled={onChangeEpicenterCirclesEnabled}
                   boundaryLineColorId={boundaryLineColorId}
+                  mapColorOverrides={mapColorOverrides}
+                  onChangeMapColor={onChangeMapColor}
+                  onResetMapColor={onResetMapColor}
+                  onResetAllMapColors={onResetAllMapColors}
                   onChangeBoundaryLineColorId={onChangeBoundaryLineColorId}
                   quakeFetchLimit={quakeFetchLimit}
                   onChangeQuakeFetchLimit={onChangeQuakeFetchLimit}
