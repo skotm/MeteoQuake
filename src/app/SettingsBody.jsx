@@ -5,7 +5,7 @@ import { GlassOpaqueContext } from "./glass";
 import { ThemeContext } from "./theme";
 import { SETTINGS_ITEMS, SETTINGS_MENU, SettingsCard, SettingsCardDivider, SettingsHeader, SettingsMenuRow, SettingsSegmentRow, SettingsToggleRow, TAB_SETTINGS_CATEGORIES } from "./settingsPrimitives";
 import { APP_VERSION } from "./consent";
-import { BoundaryLineColorSettings, LicenseFileCard, LogViewerPanel, MarkdownFileCard, QuakeColorSchemeSettings, QuakeFetchLimitSettings, StationListDisplayModeSettings } from "./settingsPanels";
+import { BoundaryLineColorSettings, LicenseFileCard, LogViewerPanel, MapColorSettings, MarkdownFileCard, QuakeColorSchemeSettings, QuakeFetchLimitSettings, StationListDisplayModeSettings } from "./settingsPanels";
 import { EewTestBroadcastPanel, QuakeTestBroadcastPanel, ShakeDetectionTestPanel, TsunamiTestBroadcastPanel } from "./testPanels";
 import { DEFAULT_CAMERA_SETTINGS } from "./settingsStorage";
 import { NowcastColorSchemeSettings, TyphoonForecastIntervalSettings } from "./weatherSettings";
@@ -22,6 +22,7 @@ export function SettingsBody({
   plateBoundariesEnabled, onChangePlateBoundariesEnabled,
   epicenterCirclesEnabled, onChangeEpicenterCirclesEnabled,
   boundaryLineColorId, onChangeBoundaryLineColorId,
+  mapColorOverrides, onChangeMapColor = () => {}, onResetMapColor = () => {}, onResetAllMapColors = () => {},
   quakeFetchLimit, onChangeQuakeFetchLimit,
   stationListDisplayMode, onChangeStationListDisplayMode,
   experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
@@ -544,6 +545,21 @@ export function SettingsBody({
             disabled={glassOpaqueSuspectedBroken}
           />
         </SettingsCard>
+      </>
+    );
+  }
+
+  // 地図の色(詳細設定の項目)。海・陸・都道府県の境界線・国境線の色を、ライト/ダーク別に変える。
+  if (category === "advanced" && leaf === "mapColors") {
+    return (
+      <>
+        <SettingsHeader title="地図の色"/>
+        <MapColorSettings
+          overrides={mapColorOverrides}
+          onChange={onChangeMapColor}
+          onResetItem={onResetMapColor}
+          onResetAll={onResetAllMapColors}
+        />
       </>
     );
   }

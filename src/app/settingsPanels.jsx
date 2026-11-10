@@ -1,5 +1,5 @@
 import { useContext, useState, useEffect, Fragment } from "react";
-import { ThemeContext } from "./theme";
+import { MAP_COLOR_DEFAULTS, MAP_COLOR_ITEMS, ThemeContext, mapLineToCss } from "./theme";
 import { SettingsCard, SettingsCardDivider } from "./settingsPrimitives";
 import { QUAKE_FETCH_LIMIT_DEFAULT, QUAKE_FETCH_LIMIT_MAX, QUAKE_FETCH_LIMIT_MIN, STATION_LIST_DISPLAY_MODES, clampQuakeFetchLimit } from "./settingsStorage";
 import { PressableButton } from "./glass";
@@ -639,7 +639,7 @@ export function BoundaryLineColorSettings({ boundaryLineColorId, onChangeBoundar
   return (
     <div style={{ padding: "10px 14px 12px" }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: tokens.textSecondary, marginBottom: 9 }}>
-        枠内の色
+        線の色(プレート境界・断層)
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "center" }}>
         {entries.map(([id, entry]) => {
@@ -668,5 +668,170 @@ export function BoundaryLineColorSettings({ boundaryLineColorId, onChangeBoundar
         })}
       </div>
     </div>
+  );
+}
+
+
+// 色のスウォッチ(丸)。見た目は自前の丸にし、透明な<input type="color">を重ねて
+// タップした時にOS標準のカラーピッカーを開く(iOS Safariでも動く)。
+// MapColorSettingsの内側で定義すると、色を選ぶたびの再描画で<input>が作り直されて
+// ピッカーが閉じてしまうため、モジュール直下に置いている。
+function MapColorSwatch({ value, onPick, label }) {
+  const { tokens } = useContext(ThemeContext);
+  return (
+    <div style={{
+      position: "relative", width: 32, height: 32, borderRadius: 16, flexShrink: 0,
+      background: value, boxShadow: `0 0 0 1px rgba(${tokens.ink},0.25)`, overflow: "hidden",
+    }}>
+      <input
+        type="color" value={value} aria-label={label}
+        onChange={e => onPick(e.target.value)}
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", border: "none", padding: 0 }}
+      />
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   地図の色(海・陸・都道府県の境界線・国境線)の設定。
+   ライト/ダークで別々に保存する。編集対象のモードは上のトグルで切り替えられ(初期値は
+   今のモード)、変更はその場で地図に反映される(今のモードの色を編集している場合)。
+   線は半透明が既定なので、色と「濃さ(不透明度)」を別々に調整できる。
+   「初期設定に戻す」は、ライト・ダーク両方の全項目を一括で戻す(誤タップ防止に2回押し)。
+   ───────────────────────────────────────────────────── */
+export function MapColorSettings({ overrides, onChange, onResetItem, onResetAll }) {
+  const { tokens, mode } = useContext(ThemeContext);
+  const [editMode, setEditMode] = useState(mode);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+
+  // 「もう一度押すと戻ります」状態は数秒で自動的に解除する。
+  useEffect(() => {
+    if (!confirmingReset) return;
+    const id = setTimeout(() => setConfirmingReset(false), 4000);
+    return () => clearTimeout(id);
+  }, [confirmingReset]);
+
+  const defaults = MAP_COLOR_DEFAULTS[editMode];
+  const custom = (overrides && overrides[editMode]) || {};
+  const valueOf = key => (custom[key] != null ? custom[key] : defaults[key]);
+  const anyCustomized = ["light", "dark"].some(m => overrides && overrides[m] && Object.keys(overrides[m]).length > 0);
+
+  // プレビュー: 海の上に、日本・海外の陸を並べ、それぞれの境界線を引いた小さな図。
+  const sea = valueOf("mapBg");
+  const prefFill = valueOf("mapPrefFill");
+  const worldFill = valueOf("mapWorldFill");
+  const prefLine = mapLineToCss(valueOf("mapPrefLine"));
+  const worldLine = mapLineToCss(valueOf("mapWorldLine"));
+
+  const labelStyle = { fontSize: 13, fontWeight: 600, color: tokens.text };
+  const smallBtn = (enabled) => ({
+    padding: "4px 10px", borderRadius: 999, border: `1px solid rgba(${tokens.ink},0.2)`,
+    background: "transparent", color: tokens.textSecondary, fontSize: 11, fontWeight: 600,
+    cursor: enabled ? "pointer" : "default", opacity: enabled ? 1 : 0.35, flexShrink: 0,
+  });
+
+  return (
+    <>
+      <div style={{ display: "flex", gap: 4, padding: 4, margin: "0 14px 10px", borderRadius: 12, background: `rgba(${tokens.ink},0.07)` }}>
+        {[["light", "ライト"], ["dark", "ダーク"]].map(([m, label]) => {
+          const selected = editMode === m;
+          return (
+            <PressableButton
+              key={m}
+              type="button"
+              onClick={() => setEditMode(m)}
+              style={{
+                flex: 1, padding: "7px 0", borderRadius: 9, border: "none", cursor: "pointer",
+                background: selected ? `rgba(${tokens.ink},0.14)` : "transparent",
+                color: selected ? tokens.text : tokens.textSecondary,
+                fontSize: 13, fontWeight: selected ? 700 : 600,
+              }}
+            >
+              {label}{m === mode ? "(表示中)" : ""}
+            </PressableButton>
+          );
+        })}
+      </div>
+
+      <div style={{ margin: "0 14px 10px", height: 64, borderRadius: 12, background: sea, position: "relative", overflow: "hidden", boxShadow: `0 0 0 1px rgba(${tokens.ink},0.12)` }}>
+        <div style={{ position: "absolute", left: "-6%", top: "-18%", width: "46%", height: "140%", background: worldFill, border: `1px solid ${worldLine}`, borderRadius: "0 40% 30% 0" }}/>
+        <div style={{ position: "absolute", left: "52%", top: "12%", width: "36%", height: "76%", background: prefFill, border: `1px solid ${prefLine}`, borderRadius: "30% 50% 40% 30%" }}/>
+        <div style={{ position: "absolute", left: "70%", top: "34%", width: "16%", height: "34%", background: prefFill, border: `1px solid ${prefLine}`, borderRadius: "40%" }}/>
+      </div>
+
+      <SettingsCard>
+        {MAP_COLOR_ITEMS.map((item, i) => {
+          const value = valueOf(item.key);
+          const isLine = item.type === "line";
+          const color = isLine ? value.color : value;
+          const customized = custom[item.key] != null;
+          return (
+            <Fragment key={item.key}>
+              {i > 0 && <SettingsCardDivider/>}
+              <div style={{ padding: "10px 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <MapColorSwatch
+                    value={color}
+                    label={item.label}
+                    onPick={hex => onChange(editMode, item.key, isLine ? { color: hex, opacity: value.opacity } : hex)}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={labelStyle}>{item.label}</div>
+                    <div style={{ fontSize: 11, color: tokens.textSecondary, marginTop: 2 }}>{color.toUpperCase()}</div>
+                  </div>
+                  <PressableButton
+                    type="button"
+                    disabled={!customized}
+                    onClick={() => onResetItem(editMode, item.key)}
+                    style={smallBtn(customized)}
+                  >
+                    戻す
+                  </PressableButton>
+                </div>
+                {isLine && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, paddingLeft: 44 }}>
+                    <span style={{ fontSize: 11, color: tokens.textSecondary, flexShrink: 0 }}>濃さ</span>
+                    <input
+                      type="range" min={0} max={100} step={1}
+                      value={Math.round(value.opacity * 100)}
+                      onChange={e => onChange(editMode, item.key, { color: value.color, opacity: Number(e.target.value) / 100 })}
+                      style={{ flex: 1, minWidth: 0, accentColor: tokens.accentText }}
+                    />
+                    <span style={{ fontSize: 11, color: tokens.textSecondary, width: 34, textAlign: "right", flexShrink: 0 }}>
+                      {Math.round(value.opacity * 100)}%
+                    </span>
+                  </div>
+                )}
+              </div>
+            </Fragment>
+          );
+        })}
+      </SettingsCard>
+
+      <SettingsCard>
+        <PressableButton
+          type="button"
+          disabled={!anyCustomized}
+          onClick={() => {
+            if (confirmingReset) { setConfirmingReset(false); onResetAll(); }
+            else setConfirmingReset(true);
+          }}
+          style={{
+            width: "100%", padding: "13px 14px", border: "none", background: "transparent",
+            cursor: anyCustomized ? "pointer" : "default", textAlign: "center",
+            fontSize: 14, fontWeight: 600,
+            color: confirmingReset ? "#FF453A" : (anyCustomized ? tokens.text : tokens.textSecondary),
+            opacity: anyCustomized ? 1 : 0.5,
+          }}
+        >
+          {confirmingReset ? "もう一度押すと、ライト・ダークとも初期設定に戻します" : "地図の色を初期設定に戻す"}
+        </PressableButton>
+      </SettingsCard>
+
+      <div style={{ margin: "0 14px 16px", fontSize: 11, color: tokens.textSecondary, lineHeight: 1.6 }}>
+        色はライトとダークで別々に保存されます。地図の色を大きく変えると、震度の塗りつぶしや
+        観測点の表示が見づらくなることがあります。その場合は「初期設定に戻す」で元に戻せます。
+      </div>
+    </>
   );
 }

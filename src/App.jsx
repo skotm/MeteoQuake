@@ -9,8 +9,8 @@ import { QuakeColorSchemeContext, REALTIME_API_BASE_URL, loadStoredQuakeColorSch
 import { Filters, LAYERS } from "./app/navigation";
 import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layoutHooks";
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
-import { THEME_TOKENS, ThemeContext, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
-import { clampQuakeFetchLimit, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, saveGridDetectionEnabled, saveGridCellsVisible, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
+import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
+import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, saveGridDetectionEnabled, saveGridCellsVisible, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
 import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
 import { loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
@@ -203,12 +203,32 @@ export default function App() {
     saveThemeModePref(next);
   }
 
+  // 地図の色(海・陸・都道府県の境界線・国境線)のユーザー設定。ライト/ダーク別に、変えた項目だけを持つ
+  // ({ light: {...}, dark: {...} })。themeContextValueのtokensの地図用の値だけを上書きするので、
+  // 地図(初期描画・テーマ切替時の更新・コンテナ背景)はこの変更に自動で追従する。
+  const [mapColorOverrides, setMapColorOverrides] = useState(loadStoredMapColorOverrides);
+  useEffect(() => { saveMapColorOverrides(mapColorOverrides); }, [mapColorOverrides]);
+
+  function handleChangeMapColor(modeKey, itemKey, value) {
+    setMapColorOverrides(prev => ({ ...prev, [modeKey]: { ...prev[modeKey], [itemKey]: value } }));
+  }
+  function handleResetMapColor(modeKey, itemKey) {
+    setMapColorOverrides(prev => {
+      const nextMode = { ...prev[modeKey] };
+      delete nextMode[itemKey];
+      return { ...prev, [modeKey]: nextMode };
+    });
+  }
+  function handleResetAllMapColors() {
+    setMapColorOverrides({ light: {}, dark: {} });
+  }
+
   const themeContextValue = useMemo(() => ({
     mode: themeMode,
-    tokens: THEME_TOKENS[themeMode],
+    tokens: applyMapColorOverrides(THEME_TOKENS[themeMode], themeMode, mapColorOverrides),
     modePref: themeModePref,
     setModePref: handleChangeThemeModePref,
-  }), [themeMode, themeModePref]);
+  }), [themeMode, themeModePref, mapColorOverrides]);
 
   // App自身はThemeContext.Providerを作る側なので、自分に対してはuseContextせず
   // 計算済みのthemeContextValueから直接参照する。
@@ -3079,6 +3099,10 @@ export default function App() {
                   onChangeEpicenterCirclesEnabled={handleChangeEpicenterCirclesEnabled}
                   boundaryLineColorId={boundaryLineColorId}
                   onChangeBoundaryLineColorId={handleChangeBoundaryLineColorId}
+                  mapColorOverrides={mapColorOverrides}
+                  onChangeMapColor={handleChangeMapColor}
+                  onResetMapColor={handleResetMapColor}
+                  onResetAllMapColors={handleResetAllMapColors}
                   quakeFetchLimit={quakeFetchLimit}
                   onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
                   stationListDisplayMode={stationListDisplayMode}
@@ -3225,6 +3249,10 @@ export default function App() {
               onChangeEpicenterCirclesEnabled={handleChangeEpicenterCirclesEnabled}
               boundaryLineColorId={boundaryLineColorId}
               onChangeBoundaryLineColorId={handleChangeBoundaryLineColorId}
+              mapColorOverrides={mapColorOverrides}
+              onChangeMapColor={handleChangeMapColor}
+              onResetMapColor={handleResetMapColor}
+              onResetAllMapColors={handleResetAllMapColors}
               quakeFetchLimit={quakeFetchLimit}
               onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
               stationListDisplayMode={stationListDisplayMode}

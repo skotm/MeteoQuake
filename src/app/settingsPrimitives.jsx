@@ -43,6 +43,7 @@ export const SETTINGS_ITEMS = {
   ],
   advanced: [
     { id: "appearance", label: "外観" },
+    { id: "mapColors", label: "地図の色" },
     // 【廃止】APIトークン入力機能を廃止したため、設定メニューからも除外。
     // { id: "realtimeApi", label: "リアルタイムAPI" },
     { id: "experimental", label: "実験的・テスト機能" },

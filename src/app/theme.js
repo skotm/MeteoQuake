@@ -11,6 +11,55 @@ import { createContext, useState, useEffect } from "react";
    含めない(それらは別途テーマ対応が必要)。まずは背景・カード・文字色
    など、UIチューム全体に効いてくる基礎トークンをテーマ切り替え対象にする。
    ───────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────
+   地図の基本配色(海・陸・境界線)の既定値と、ユーザーによる上書き
+   ライト/ダークで別々に持つ。線(境界線)は半透明なので、色と不透明度の組で扱う。
+   THEME_TOKENSの地図用トークンはここの既定値から作り、ユーザーが色を変えた場合だけ
+   applyMapColorOverridesで上書きする(UI用の色には影響しない)。
+   ───────────────────────────────────────────────────── */
+export const MAP_COLOR_ITEMS = [
+  { key: "mapBg",        label: "海",               type: "fill" },
+  { key: "mapPrefFill",  label: "陸(日本)",         type: "fill" },
+  { key: "mapWorldFill", label: "陸(海外)",         type: "fill" },
+  { key: "mapPrefLine",  label: "都道府県の境界線", type: "line" },
+  { key: "mapWorldLine", label: "国境線",           type: "line" },
+];
+
+export const MAP_COLOR_DEFAULTS = {
+  dark: {
+    mapBg: "#121214", mapPrefFill: "#3a3a3c", mapWorldFill: "#2c2c2e",
+    mapPrefLine: { color: "#ffffff", opacity: 0.18 },
+    mapWorldLine: { color: "#ffffff", opacity: 0.08 },
+  },
+  light: {
+    mapBg: "#aecbe8", mapPrefFill: "#f2f0ea", mapWorldFill: "#e4e2dc",
+    mapPrefLine: { color: "#15161a", opacity: 0.22 },
+    mapWorldLine: { color: "#15161a", opacity: 0.12 },
+  },
+};
+
+// {color:"#rrggbb", opacity:0〜1} → "rgba(r,g,b,a)"(MapLibreのline-colorにそのまま渡せる形)
+export function mapLineToCss({ color, opacity }) {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color || "");
+  if (!m) return "rgba(0,0,0,0)";
+  const [r, g, b] = [m[1], m[2], m[3]].map(h => parseInt(h, 16));
+  return `rgba(${r},${g},${b},${opacity})`;
+}
+
+// モード別のユーザー設定(overrides = { light: {...}, dark: {...} })を、地図用トークンに反映する。
+export function applyMapColorOverrides(tokens, mode, overrides) {
+  const o = overrides && overrides[mode];
+  if (!o) return tokens;
+  let next = null;
+  for (const item of MAP_COLOR_ITEMS) {
+    const v = o[item.key];
+    if (v == null) continue;
+    next = next || { ...tokens };
+    next[item.key] = item.type === "line" ? mapLineToCss(v) : v;
+  }
+  return next || tokens;
+}
+
 export const THEME_TOKENS = {
   dark: {
     pageBg: "#121214",
@@ -36,11 +85,11 @@ export const THEME_TOKENS = {
     // ライトモードではやや濃い標準的なシステムブルーにする。
     accentText: "#64D2FF",
     // 地図の基本配色(海・陸・都道府県境界線)
-    mapBg: "#121214",         // 海
-    mapWorldFill: "#2c2c2e",  // 陸地(海外)
-    mapWorldLine: "rgba(255,255,255,0.08)",
-    mapPrefFill: "#3a3a3c",   // 都道府県(日本)
-    mapPrefLine: "rgba(255,255,255,0.18)",
+    mapBg: MAP_COLOR_DEFAULTS.dark.mapBg,                       // 海
+    mapWorldFill: MAP_COLOR_DEFAULTS.dark.mapWorldFill,         // 陸地(海外)
+    mapWorldLine: mapLineToCss(MAP_COLOR_DEFAULTS.dark.mapWorldLine),
+    mapPrefFill: MAP_COLOR_DEFAULTS.dark.mapPrefFill,           // 都道府県(日本)
+    mapPrefLine: mapLineToCss(MAP_COLOR_DEFAULTS.dark.mapPrefLine),
   },
   light: {
     pageBg: "#eef0f3",
@@ -61,11 +110,11 @@ export const THEME_TOKENS = {
     ink: "21,22,26",
     accentText: "#0A84FF",
     // 地図の基本配色(海・陸・都道府県境界線)
-    mapBg: "#aecbe8",         // 海
-    mapWorldFill: "#e4e2dc",  // 陸地(海外)
-    mapWorldLine: "rgba(21,22,26,0.12)",
-    mapPrefFill: "#f2f0ea",   // 都道府県(日本)
-    mapPrefLine: "rgba(21,22,26,0.22)",
+    mapBg: MAP_COLOR_DEFAULTS.light.mapBg,                      // 海
+    mapWorldFill: MAP_COLOR_DEFAULTS.light.mapWorldFill,        // 陸地(海外)
+    mapWorldLine: mapLineToCss(MAP_COLOR_DEFAULTS.light.mapWorldLine),
+    mapPrefFill: MAP_COLOR_DEFAULTS.light.mapPrefFill,          // 都道府県(日本)
+    mapPrefLine: mapLineToCss(MAP_COLOR_DEFAULTS.light.mapPrefLine),
   },
 };
 
