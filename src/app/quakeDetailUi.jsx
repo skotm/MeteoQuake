@@ -5,7 +5,7 @@ import { QUAKE_STAGE_LABEL, buildQuakeMessage, formatQuakeTimeShort } from "./qu
 import { INTENSITY_ORDER } from "./stationIcons";
 import { Glass, PressableButton } from "./glass";
 import { useIsStandalonePwa } from "./layoutHooks";
-import { fetchCmtDetail, findCmtMatchForQuake, findUsgsCmtForQuake } from "./cmt";
+import { findJmaMechanism, findUsgsCmtForQuake } from "./cmt";
 import { loadStoredCmtSourcePref, saveCmtSourcePref } from "./settingsStorage";
 
 
@@ -584,11 +584,10 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
 /* ─────────────────────────────────────────────────────
    QUAKE MECH DETAIL PANEL — 「この地震の詳細」画面
    
-   気象庁とUSGSの発震機構解(CMT解)を並行して取得して表示する。気象庁の解は公開が
-   遅いため、USGSの解も探す。両方に解がある場合は、画面上のトグルで表示する方を選べる
-   (選択は保存される)。片方にしか無い場合は、ある方を表示する。
-   M5.0以上でないとそもそも解析されないため、どちらにも無い場合はその旨を案内する
-   (エラーではない)。
+   気象庁(精査版・速報値のCMT解/初動解/遠地地震CMT)とUSGSの発震機構解を並行して取得して
+   表示する。気象庁の中では、CMT解 > 初動解、同じ種別なら精査版 > 速報値の順に1つ採用する。
+   気象庁とUSGSの両方に解がある場合は、画面上のトグルで表示する方を選べる(選択は保存される)。
+   片方にしか無い場合は、ある方を表示する。どちらにも無い場合はその旨を案内する(エラーではない)。
    ───────────────────────────────────────────────────── */
 export function QuakeMechDetailPanel({ quake }) {
   const { tokens } = useContext(ThemeContext);
@@ -620,21 +619,10 @@ export function QuakeMechDetailPanel({ quake }) {
     // 気象庁とUSGSは互いに独立に取得する(片方が遅い・失敗しても、もう片方は表示できる)。
     (async () => {
       try {
-        const match = await findCmtMatchForQuake(quake);
+        // 気象庁の5系統(精査版CMT・速報値・初動・遠地CMT)から、優先順位が最も高い解を1つ得る。
+        const d = await findJmaMechanism(quake);
         if (cancelled) return;
-        if (!match) { setJma({ status: "not_found", detail: null }); return; }
-        const d = await fetchCmtDetail(match.detailUrlStamp);
-        if (cancelled) return;
-        setJma({
-          status: "found",
-          detail: {
-            ...d, source: "jma",
-            metrics: [
-              { label: "使用観測点数", value: d.stationCount },
-              { label: "解の精度(V.R.)", value: d.varianceReduction },
-            ],
-          },
-        });
+        setJma(d ? { status: "found", detail: d } : { status: "not_found", detail: null });
       } catch (err) {
         console.error("発震機構解(気象庁)の取得に失敗:", err);
         if (!cancelled) setJma({ status: "error", detail: null });
@@ -780,6 +768,21 @@ export function QuakeMechDetailPanel({ quake }) {
               </div>
             </Glass>
           )}
+          {/* 表示中の解の種別(例: CMT解(国内)・精査版 / 初動解・速報値 / USGS モーメントテンソル解)と、
+              速報値・「参考」(精度が低く節面が無い解)の注意書き。 */}
+          <div style={{ fontSize: 12, fontWeight: 700, color: tokens.text, padding: "0 4px 2px" }}>
+            {detail.sourceLabel}
+          </div>
+          {detail.grade === "prelim" && (
+            <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.5, padding: "0 4px 8px" }}>
+              自動解析の速報値です。後日の精査で変更されることがあります。
+            </div>
+          )}
+          {detail.reference && (
+            <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.5, padding: "0 4px 8px" }}>
+              精度が低い参考の解のため、断層面解は求められていません(震源球は押し引きの分布のみ)。
+            </div>
+          )}
           {singleSourceNote && (
             <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.5, padding: "0 4px 8px" }}>
               {singleSourceNote}
@@ -831,6 +834,8 @@ export function QuakeMechDetailPanel({ quake }) {
             />
           </Glass>
 
+          {/* 初動解にはセントロイド・Mwが無いので、値が無い時はカードごと隠す。 */}
+          {(detail.centroid.time || detail.centroid.mw) && (
           <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: tokens.text, padding: "8px 0 2px" }}>
               セントロイド・モーメントマグニチュード
@@ -842,9 +847,11 @@ export function QuakeMechDetailPanel({ quake }) {
               right={{ label: "Mw", value: detail.centroid.mw }}
             />
           </Glass>
+          )}
 
           {/* 断層面解1・2は片方ずつだと余白が目立つため、真ん中に区切り線を入れて
               横に2つ並べる。 */}
+          {detail.plane1.strike != null && (
           <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
             <div style={{ display: "flex", gap: 14 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -866,7 +873,9 @@ export function QuakeMechDetailPanel({ quake }) {
               </div>
             </div>
           </Glass>
+          )}
 
+          {detail.axes.p.azimuth != null && (
           <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: tokens.text, padding: "8px 0 2px" }}>
               P軸・T軸・N軸(方位 / 傾斜)
@@ -875,6 +884,7 @@ export function QuakeMechDetailPanel({ quake }) {
             <DataRow label="T軸" value={detail.axes.t.azimuth && detail.axes.t.plunge ? `${detail.axes.t.azimuth}° / ${detail.axes.t.plunge}°` : null} />
             <DataRow label="N軸" value={detail.axes.n.azimuth && detail.axes.n.plunge ? `${detail.axes.n.azimuth}° / ${detail.axes.n.plunge}°` : null} />
           </Glass>
+          )}
 
           <a
             href={detail.sourceUrl}
@@ -896,10 +906,12 @@ export function QuakeMechDetailPanel({ quake }) {
           発震機構解(CMT解)
         </div>
         <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.5 }}>
-          気象庁とUSGSの解析結果です。気象庁の解は公開が遅れることがあり、USGSの解の方が
-          先に公開される場合があります(両方ある場合は上のボタンで切り替えられます)。
-          マグニチュード5.0程度以上の地震のみ解析されるため、対象の地震でも掲載されていない
-          場合があります。
+          気象庁とUSGSの解析結果です。気象庁は、モーメントテンソル(CMT)解を日本周辺の
+          Mw5.0以上と海外の大きな地震、初動解を主に内陸の地震について解析しており、
+          自動解析の速報値と精査版の両方を参照しています(CMT解があれば初動解より優先し、
+          精査版があれば速報値より優先します)。USGSは日本周辺のM4.5以上を収録しています。
+          気象庁とUSGSの両方に解がある場合は上のボタンで切り替えられます。対象の地震でも
+          掲載されていない場合があります。
         </div>
       </Glass>
       </div>
