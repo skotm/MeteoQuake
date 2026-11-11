@@ -63,31 +63,46 @@ export function applyMapColorOverrides(tokens, mode, overrides) {
 /* ─────────────────────────────────────────────────────
    フローティングの「眩しさ抑制」
    フローティング(Glass)は背後の地図を透かして見せる作りで、既定の暗い/淡い地図色を
-   前提にしている。ユーザーが地図の色を明るくすると、その明るさがほぼそのまま透け、
+   前提にしている。ユーザーが地図の色を明るく・鮮やかにすると、その色がほぼそのまま透け、
    さらに彩度の強調(saturate)で目立って眩しくなる。そこで、地図の色から「フローティングの
-   下に来る明るさ」を推定し、上限を超えるときだけ背後の明るさ(brightness)と彩度の強調、
-   縁光を弱める。
-     - 推定: 海・陸(日本)・陸(海外)の塗りのうち最も明るい色の相対輝度(WCAG)。
-     - 上限: モードごとの輝度(GLARE_LUMINANCE_CEILING)。既定配色の明るさ以下に置いてあるので、
-       地図の色を変えていなければ補正は入らず、見た目・負荷とも今まで通り。
-     - 補正量は連続: brightness = (上限 ÷ 推定輝度)^(1/2.2) で、上限を超えた分だけ下がる
-       (CSSのbrightness()はsRGB値に掛かるため、輝度に対してガンマ2.2を逆算している)。
+   下に来る眩しさ」を推定し、上限を超えるときだけ背後の明るさ(brightness)・色の強調
+   (saturate)・縁光を弱める。
+     - 推定は3つの指標のうち、最も眩しいものに合わせる(海・陸(日本)・陸(海外)の最も強い色で評価)。
+         輝度  : 相対輝度(WCAG)。白・黄・水色のような「明るい色」を捉える。
+         最大値: 最大チャンネル(HSVのV)。画面が実際に強く光る度合い。輝度では暗く扱われる
+                 純色の青(#0000ff)や、輝度の低い鮮やかな青紫なども捉える。
+         鮮やかさ: クロマ((最大-最小)÷255)。赤・青・緑などの原色の「色の濃さ」を捉える。
+     - 上限は各指標ごと・モードごとに持ち、既定配色の値より上に置く。地図の色を変えていなければ
+       補正は入らず、見た目・負荷とも今まで通り。
+     - 補正量は連続的に変化する(上限を超えた分だけ効く)。
+       brightness = min( (輝度の上限÷輝度)^(1/2.2),  最大値の上限÷最大値 )
+         (CSSのbrightness()はsRGB値に掛かるため、輝度側はガンマ2.2を逆算している)
+       saturate   = 140%から、輝度による引き下げと、鮮やかさによる引き下げ(最大60%まで)の小さい方へ
    ───────────────────────────────────────────────────── */
-// フローティングの背後の輝度の上限(0〜1)。実機で見ながら調整できるよう定数にしている。
-//   dark : 白い文字が読める暗さ(既定配色の最大輝度≒0.04より十分上に置く)
-//   light: 既定配色の最大輝度(陸(日本)の#f2f0ea≒0.87)のすぐ上
+// 眩しさ抑制の上限。実機で見ながら調整できるよう定数にしている(いずれも既定配色の値より上)。
+//   輝度の上限(0〜1)        dark: 白い文字が読める暗さ / light: 既定の陸(日本)#f2f0ea≒0.87のすぐ上
+//   最大チャンネルの上限(0〜1) dark: 0.45(≒#737373。純色や白はここまで暗くする) / light: 既定の最大≒0.95のすぐ上
+//   鮮やかさ(クロマ)の上限(0〜1) dark: 既定の最大≒0.02より十分上 / light: 既定の海#aecbe8≒0.23のすぐ上
 export const GLARE_LUMINANCE_CEILING = { dark: 0.12, light: 0.88 };
+export const GLARE_VALUE_CEILING = { dark: 0.45, light: 0.96 };
+export const GLARE_CHROMA_CEILING = { dark: 0.12, light: 0.30 };
+// 鮮やかさが最大(クロマ1.0)の時に、彩度の強調を下げる下限(%)。140%→60%まで連続的に下げる。
+const GLARE_MIN_SATURATE = 60;
 
 export const NO_GLARE_GUARD = Object.freeze({ active: false, brightness: 1, saturate: 140, rim: 1 });
 
-// "#rrggbb" → WCAGの相対輝度(0〜1)。不正な値はnull。
-export function relativeLuminance(hex) {
+// "#rrggbb" → [r,g,b](各0〜1のsRGB値)。不正な値はnull。
+function parseHexRgb(hex) {
   const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || "");
   if (!m) return null;
-  const [r, g, b] = [m[1], m[2], m[3]].map(h => {
-    const c = parseInt(h, 16) / 255;
-    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-  });
+  return [m[1], m[2], m[3]].map(h => parseInt(h, 16) / 255);
+}
+
+// "#rrggbb" → WCAGの相対輝度(0〜1)。不正な値はnull。
+export function relativeLuminance(hex) {
+  const rgb = parseHexRgb(hex);
+  if (!rgb) return null;
+  const [r, g, b] = rgb.map(c => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
@@ -95,18 +110,38 @@ export function relativeLuminance(hex) {
 //   brightness: 背後に掛ける明るさ(1=補正なし)  saturate: 彩度の強調(%、補正なしは140)
 //   rim       : 縁光の濃さの倍率(1=補正なし)
 export function computeGlareGuard(mode, tokens) {
-  const lums = ["mapBg", "mapPrefFill", "mapWorldFill"]
-    .map(k => relativeLuminance(tokens[k]))
-    .filter(v => v != null);
-  const ceiling = GLARE_LUMINANCE_CEILING[mode];
-  if (lums.length === 0 || ceiling == null) return NO_GLARE_GUARD;
-  const lMax = Math.max(...lums);
-  if (lMax <= ceiling) return NO_GLARE_GUARD;
-  const brightness = Math.round(Math.pow(ceiling / lMax, 1 / 2.2) * 1000) / 1000;
+  const colors = ["mapBg", "mapPrefFill", "mapWorldFill"]
+    .map(k => parseHexRgb(tokens[k]))
+    .filter(Boolean);
+  const lumCeil = GLARE_LUMINANCE_CEILING[mode];
+  const valCeil = GLARE_VALUE_CEILING[mode];
+  const chrCeil = GLARE_CHROMA_CEILING[mode];
+  if (colors.length === 0 || lumCeil == null) return NO_GLARE_GUARD;
+
+  let lMax = 0, vMax = 0, cMax = 0;
+  for (const rgb of colors) {
+    const hex = "#" + rgb.map(c => Math.round(c * 255).toString(16).padStart(2, "0")).join("");
+    lMax = Math.max(lMax, relativeLuminance(hex));
+    const hi = Math.max(...rgb), lo = Math.min(...rgb);
+    vMax = Math.max(vMax, hi);
+    cMax = Math.max(cMax, hi - lo);
+  }
+
+  // 明るさ: 輝度側・最大チャンネル側のうち、より強く下げる方
+  const bLum = lMax > lumCeil ? Math.pow(lumCeil / lMax, 1 / 2.2) : 1;
+  const bVal = vMax > valCeil ? valCeil / vMax : 1;
+  const brightness = Math.min(bLum, bVal);
+  // 彩度の強調: 明るさに応じた引き下げと、鮮やかさ(クロマ)に応じた引き下げの小さい方
+  const satByBright = 100 + 40 * brightness;
+  const excessChroma = cMax > chrCeil ? (cMax - chrCeil) / (1 - chrCeil) : 0;
+  const satByChroma = 140 - (140 - GLARE_MIN_SATURATE) * excessChroma;
+  const saturate = Math.min(satByBright, satByChroma);
+
+  if (brightness >= 1 && saturate >= 140) return NO_GLARE_GUARD;
   return {
     active: true,
-    brightness,
-    saturate: Math.round(100 + 40 * brightness),
+    brightness: Math.round(brightness * 1000) / 1000,
+    saturate: Math.round(saturate),
     rim: Math.round((0.4 + 0.6 * brightness) * 1000) / 1000,
   };
 }
