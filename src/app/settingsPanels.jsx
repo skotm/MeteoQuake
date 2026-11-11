@@ -831,8 +831,8 @@ export function MapColorSettings({ overrides, onChange, onResetItem, onResetAll 
       <div style={{ margin: "0 14px 16px", fontSize: 11, color: tokens.textSecondary, lineHeight: 1.6 }}>
         色はライトとダークで別々に保存されます。地図の色を大きく変えると、震度の塗りつぶしや
         観測点の表示が見づらくなることがあります。その場合は「初期設定に戻す」で元に戻せます。
-        地図を明るい色にした時は、フローティングが眩しくならないよう、背景の明るさと色の強調を
-        自動で抑えます(初期設定の色では変化しません)。
+        地図を明るい色や鮮やかな色(赤・青など)にした時は、フローティングが眩しくならないよう、
+        背景の明るさと色の強調を自動で抑えます(初期設定の色では変化しません)。
       </div>
     </>
   );
