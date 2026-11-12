@@ -2,6 +2,7 @@ import { useContext, useState, useEffect } from "react";
 import { ThemeContext } from "./theme";
 import { Glass } from "./glass";
 import { splitIntensityLabel, useIntensityStyle } from "./colorSchemes";
+import { IntensityNumWithSuffix } from "./intensityLabel";
 import { AutoFitText, PanelDragHandoffCard } from "./quakeDetailUi";
 import { formatEewTimeShort } from "./quakeCards";
 
@@ -283,13 +284,8 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
                   }}
                 >
                   {suffix ? (
-                    <>
-                      <span className="mono" style={{ fontSize: 29, fontWeight: 800, lineHeight: 1 }}>{num}</span>
-                      <span style={{
-                        fontSize: 14, fontWeight: 700, lineHeight: 1,
-                        marginLeft: 2, alignSelf: "flex-end", marginBottom: 12,
-                      }}>{suffix}</span>
-                    </>
+                    // 弱/強の下端は数字の下端(ベースライン)に揃える(intensityLabel.jsx)
+                    <IntensityNumWithSuffix num={num} suffix={suffix} numSize={29} suffixSize={14} />
                   ) : (
                     <span className="mono" style={{ fontSize: 29, fontWeight: 800, lineHeight: 1 }}>{num}</span>
                   )}

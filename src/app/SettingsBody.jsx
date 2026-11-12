@@ -1,4 +1,5 @@
-import { useContext, useEffect } from "react";
+import { Fragment, useContext, useEffect } from "react";
+import { MAPLIBRE_VERSION, TURF_VERSION } from "./mapDataLoaders";
 import { ESTIMATE_MIN_DISPLAY_CONFIDENCE } from "../engines/epicenterConfidence";
 import { EMPTY_EQDB_LIST } from "./eqdb";
 import { GlassOpaqueContext } from "./glass";
@@ -11,6 +12,27 @@ import { DEFAULT_CAMERA_SETTINGS } from "./settingsStorage";
 import { NowcastColorSchemeSettings, TyphoonForecastIntervalSettings } from "./weatherSettings";
 
 
+
+// 設定 → 利用規約等・注意事項 → ライセンス に全文を掲載する、第三者のライセンス(MIT License)。
+// 全文は public/licenses/ のテキストを取得して表示する(LicenseFileCard)。追加する時は、
+// ここに1件足し、public/licenses/ に全文のテキストを置く。
+//   sub  : 設定画面の階層(path)に入る識別子  label: 項目の表示名  file: 全文のファイル
+const THIRD_PARTY_MIT_LICENSES = [
+  { sub: "mit-eqmonitor", label: "EQMonitor — MIT License 2022 YumNumm", file: "licenses/MIT-EQMonitor.txt" },
+  { sub: "mit-kyoshin-monitor-observation-points", label: "kyoshin-monitor-observation-points — MIT License 2025 ingen084", file: "licenses/MIT-KyoshinMonitorObservationPoints.txt" },
+  { sub: "mit-kyoshin-eew-viewer-ingen", label: "KyoshinEewViewerIngen — MIT License 2019 ingen084", file: "licenses/MIT-KyoshinEewViewerIngen.txt" },
+  { sub: "mit-snet-viewer", label: "S-net_Viewer — MIT License 2022 Ichihai1415", file: "licenses/MIT-SnetViewer.txt" },
+];
+
+// ライブラリ(アプリの中で実際に動くソフトウェア)のライセンス。Reactなどは配布物に同梱され、
+// MapLibre GL JS・Turf.jsはCDNから実行時に読み込まれる(mapDataLoaders.js)。
+// 全文は public/licenses/ にあり、MapLibreの全文はそのバージョンの公式LICENSE.txt。
+const LIBRARY_LICENSES = [
+  { sub: "lib-react", label: "React / React DOM — MIT License", file: "licenses/MIT-React.txt" },
+  { sub: "lib-maplibre", label: `MapLibre GL JS ${MAPLIBRE_VERSION} — BSD 3-Clause License`, file: "licenses/BSD3-MapLibreGL.txt" },
+  { sub: "lib-turf", label: `Turf.js ${TURF_VERSION} — MIT License`, file: "licenses/MIT-Turf.txt" },
+  { sub: "lib-workbox", label: "Workbox — MIT License", file: "licenses/MIT-Workbox.txt" },
+];
 
 export function SettingsBody({
   path, onNavigate, colorSchemeId, onChangeColorScheme,
@@ -812,14 +834,100 @@ export function SettingsBody({
           <SettingsCardDivider/>
           <div style={{ padding: "14px 14px", fontSize: 12, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.8, textAlign: "left" }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: tokens.text, marginBottom: 4 }}>
+              UIデザインの参考
+            </div>
+            EQMonitor(YumNumm氏)
+          </div>
+          <SettingsCardDivider/>
+          <div style={{ padding: "14px 14px", fontSize: 12, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.8, textAlign: "left" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: tokens.text, marginBottom: 4 }}>
+              プログラムの参考
+            </div>
+            KyoshinEewViewerIngen(ingen084氏) / S-net_Viewer(Ichihai1415氏)
+          </div>
+          <SettingsCardDivider/>
+          <div style={{ padding: "14px 14px", fontSize: 12, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.8, textAlign: "left" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: tokens.text, marginBottom: 4 }}>
+              観測点データ
+            </div>
+            kyoshin-monitor-observation-points(ingen084氏)
+          </div>
+          <SettingsCardDivider/>
+          <div style={{ padding: "14px 14px", fontSize: 12, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.8, textAlign: "left" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: tokens.text, marginBottom: 4 }}>
               オープンソースソフトウェア
             </div>
-            React
+            React / React DOM / MapLibre GL JS / Turf.js / Workbox
+            <div style={{ marginTop: 4 }}>
+              ライセンスの全文は下の項目から確認できます。フォントの配信には Fontsource のパッケージを利用しています(フォントのライセンスは下の「フォント」を参照)。
+            </div>
+          </div>
+          <SettingsCardDivider/>
+          <div style={{ padding: "14px 14px", fontSize: 12, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.8, textAlign: "left" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: tokens.text, marginBottom: 4 }}>
+              フォント
+            </div>
+            Noto Sans JP(日本語) / Inter(数字・英字)
+            <div style={{ marginTop: 4 }}>
+              どちらも SIL Open Font License 1.1 で配布されているフォントを、アプリに同梱して使用しています。
+              ライセンスの全文は下の項目から確認できます。
+            </div>
           </div>
         </SettingsCard>
         <SettingsCard>
           <SettingsMenuRow label="MIT License 2026 skotm" onClick={() => onNavigate([...path, "mit"])}/>
+          {THIRD_PARTY_MIT_LICENSES.map(lic => (
+            <Fragment key={lic.sub}>
+              <SettingsCardDivider/>
+              <SettingsMenuRow label={lic.label} onClick={() => onNavigate([...path, lic.sub])}/>
+            </Fragment>
+          ))}
         </SettingsCard>
+        <SettingsCard>
+          {LIBRARY_LICENSES.map((lic, i) => (
+            <Fragment key={lic.sub}>
+              {i > 0 && <SettingsCardDivider/>}
+              <SettingsMenuRow label={lic.label} onClick={() => onNavigate([...path, lic.sub])}/>
+            </Fragment>
+          ))}
+        </SettingsCard>
+        <SettingsCard>
+          <SettingsMenuRow label="Noto Sans JP — SIL Open Font License 1.1" onClick={() => onNavigate([...path, "ofl-noto-sans-jp"])}/>
+          <SettingsCardDivider/>
+          <SettingsMenuRow label="Inter — SIL Open Font License 1.1" onClick={() => onNavigate([...path, "ofl-inter"])}/>
+        </SettingsCard>
+      </>
+    );
+  }
+
+  // 第三者のライセンス全文(THIRD_PARTY_MIT_LICENSES・LIBRARY_LICENSESの各項目)。
+  if (category === "terms" && leaf === "license" && sub) {
+    const lic = THIRD_PARTY_MIT_LICENSES.find(l => l.sub === sub) || LIBRARY_LICENSES.find(l => l.sub === sub);
+    if (lic) {
+      return (
+        <>
+          <SettingsHeader title={lic.label}/>
+          <LicenseFileCard fileName={lic.file}/>
+        </>
+      );
+    }
+  }
+
+  // フォントのライセンス全文(MITライセンスと同じく、ライセンス項目のさらに下の階層)。
+  // 全文は public/licenses/ のテキストを取得して表示する(Service Workerが事前キャッシュ)。
+  if (category === "terms" && leaf === "license" && sub === "ofl-noto-sans-jp") {
+    return (
+      <>
+        <SettingsHeader title="Noto Sans JP — SIL Open Font License 1.1"/>
+        <LicenseFileCard fileName="licenses/OFL-NotoSansJP.txt"/>
+      </>
+    );
+  }
+  if (category === "terms" && leaf === "license" && sub === "ofl-inter") {
+    return (
+      <>
+        <SettingsHeader title="Inter — SIL Open Font License 1.1"/>
+        <LicenseFileCard fileName="licenses/OFL-Inter.txt"/>
       </>
     );
   }

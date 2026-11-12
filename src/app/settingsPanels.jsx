@@ -3,7 +3,7 @@ import { MAP_COLOR_DEFAULTS, MAP_COLOR_ITEMS, ThemeContext, mapLineToCss } from 
 import { SettingsCard, SettingsCardDivider } from "./settingsPrimitives";
 import { QUAKE_FETCH_LIMIT_DEFAULT, QUAKE_FETCH_LIMIT_MAX, QUAKE_FETCH_LIMIT_MIN, STATION_LIST_DISPLAY_MODES, clampQuakeFetchLimit } from "./settingsStorage";
 import { PressableButton } from "./glass";
-import { QUAKE_COLOR_SCHEMES, QuakeColorSchemeContext, getIntensityStyleFromScheme } from "./colorSchemes";
+import { QUAKE_COLOR_SCHEMES, QUAKE_COLOR_SCHEME_ORDER, QuakeColorSchemeContext, getIntensityStyleFromScheme } from "./colorSchemes";
 import { BOUNDARY_LINE_COLORS, INTENSITY_ORDER } from "./stationIcons";
 import { DEBUG_LOG_MAX, clearDebugLog, useDebugLog } from "./debugLog";
 
@@ -75,7 +75,12 @@ export function QuakeFetchLimitSettings({ value, onChange }) {
 export function QuakeColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
   const { tokens } = useContext(ThemeContext);
 
-  const entries = Object.entries(QUAKE_COLOR_SCHEMES);
+  // 並びは QUAKE_COLOR_SCHEME_ORDER の順。順に載っていない配色(今後追加した場合)は末尾に並べる。
+  const orderedIds = [
+    ...QUAKE_COLOR_SCHEME_ORDER.filter(id => QUAKE_COLOR_SCHEMES[id]),
+    ...Object.keys(QUAKE_COLOR_SCHEMES).filter(id => !QUAKE_COLOR_SCHEME_ORDER.includes(id)),
+  ];
+  const entries = orderedIds.map(id => [id, QUAKE_COLOR_SCHEMES[id]]);
   return (
     <SettingsCard>
       {entries.map(([id, scheme], i) => {
@@ -416,25 +421,28 @@ export function LogViewerPanel() {
 //  import.meta.env.BASE_URL でサブパスを解決しているので、コード側での
 //  対応はこれで済むが、LICENSEファイル自体を public/LICENSE にも
 //  配置(またはコピー)しておく必要がある)
-export function LicenseFileCard() {
+// fileName: publicディレクトリ配下のファイル名(既定は本アプリのMITライセンス "LICENSE"。
+// フォントのライセンス全文は "licenses/OFL-NotoSansJP.txt" のように指定する)。
+export function LicenseFileCard({ fileName = "LICENSE" }) {
   const { tokens } = useContext(ThemeContext);
 
   const [state, setState] = useState({ status: "loading", text: "" });
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${import.meta.env.BASE_URL}LICENSE`)
+    setState({ status: "loading", text: "" });
+    fetch(`${import.meta.env.BASE_URL}${fileName}`)
       .then(res => {
         if (!res.ok) throw new Error(`status ${res.status}`);
         return res.text();
       })
       .then(text => { if (!cancelled) setState({ status: "ready", text }); })
       .catch(err => {
-        console.warn("LICENSEファイルを取得できませんでした:", err);
+        console.warn(`${fileName}を取得できませんでした:`, err);
         if (!cancelled) setState({ status: "error", text: "" });
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [fileName]);
 
   return (
     <SettingsCard>
@@ -444,7 +452,7 @@ export function LicenseFileCard() {
         )}
         {state.status === "error" && (
           <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)` }}>
-            LICENSEファイルを読み込めませんでした。
+            ライセンスの全文を読み込めませんでした。
           </div>
         )}
         {state.status === "ready" && (

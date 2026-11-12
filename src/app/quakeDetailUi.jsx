@@ -5,6 +5,7 @@ import { QUAKE_STAGE_LABEL, buildQuakeMessage, formatQuakeTimeShort } from "./qu
 import { INTENSITY_ORDER } from "./stationIcons";
 import { Glass, PressableButton } from "./glass";
 import { useIsStandalonePwa } from "./layoutHooks";
+import { IntensityNumWithSuffix } from "./intensityLabel";
 import { findJmaMechanism, findUsgsCmtForQuake } from "./cmt";
 import { loadStoredCmtSourcePref, saveCmtSourcePref } from "./settingsStorage";
 
@@ -184,14 +185,9 @@ export function QuakeDetailCard({ quake }) {
               <span style={{ fontSize: 10, fontWeight: 700, marginTop: 2 }}>未入電</span>
             </div>
           ) : suffix ? (
-            <>
-              {/* 弱/強付き(5弱・5強・6弱・6強) — 数字と弱/強を近づけ、正方形の中央にまとめて配置 */}
-              <span className="mono" style={{ fontSize: 32, fontWeight: 800, lineHeight: 1 }}>{num}</span>
-              <span style={{
-                fontSize: 15, fontWeight: 700, lineHeight: 1,
-                marginLeft: 2, alignSelf: "flex-end", marginBottom: 14,
-              }}>{suffix}</span>
-            </>
+            // 弱/強付き(5弱・5強・6弱・6強) — 数字と弱/強を近づけ、正方形の中央にまとめて配置する。
+            // 弱/強の下端は数字の下端(ベースライン)に揃える(intensityLabel.jsx)。
+            <IntensityNumWithSuffix num={num} suffix={suffix} numSize={32} suffixSize={15} />
           ) : (
             // 数字のみ(1〜4,7) — 弱/強が無い分、正方形の大きさを変えずに数字だけ少し大きく
             <span className="mono" style={{ fontSize: 32, fontWeight: 800, lineHeight: 1 }}>{num}</span>

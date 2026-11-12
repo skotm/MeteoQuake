@@ -1,3 +1,4 @@
+import { FONT_SANS } from "./fonts";
 
 
 
@@ -69,8 +70,7 @@ function buildStationIconCanvas(bg, fg, label, withText, strokeColor = "#ffffff"
   if (withText) {
     // アプリ全体のCSSと同じフォントスタックに揃える。iOSではSan Francisco、
     // それ以外ではNoto Sans JP等に自然にフォールバックし、見た目を統一する。
-    const STATION_ICON_FONT_STACK =
-      '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "Noto Sans JP", sans-serif';
+    const STATION_ICON_FONT_STACK = FONT_SANS; // 同梱フォント(app/fonts.js)
     // 文字数で単純に切り替えると「5-」「6+」のような2文字が「1」等の1文字より
     // 見た目に小さくなってしまうため、実際の文字幅を測って、丸からはみ出さない
     // 範囲でできるだけ大きく表示されるようフォントサイズを自動調整する。
@@ -133,8 +133,7 @@ function buildAreaIconCanvas(bg, fg, label, withText, strokeColor = "#ffffff") {
   ctx.stroke();
 
   if (withText) {
-    const STATION_ICON_FONT_STACK =
-      '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "Noto Sans JP", sans-serif';
+    const STATION_ICON_FONT_STACK = FONT_SANS; // 同梱フォント(app/fonts.js)
     const maxTextWidth = rectSize * 0.86;
     let fontSize = rectSize * 0.66;
     ctx.font = `800 ${fontSize}px ${STATION_ICON_FONT_STACK}`;
