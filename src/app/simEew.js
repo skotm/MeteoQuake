@@ -1,4 +1,5 @@
-import { haversineKm } from "./geo";
+import { haversineKm, polygonRoughCentroid } from "./geo";
+import { INTENSITY_SCALE_CODE, instrumentalIntensityToScaleKey } from "./testSimulation";
 
 /* ─────────────────────────────────────────────────────
    地震検知テスト連動の緊急地震速報シミュレーション(非推奨・自己責任の実験的機能)。
@@ -149,4 +150,87 @@ export function buildSimEewFollowUp(card, { est, place, areas, maxIntensityKey, 
     isWarnLevel: card.isWarnLevel === true ? true : !!isWarnLevel,
     receivedLocalAt: nowMs,
   };
+}
+
+/* ─────────────────────────────────────────────────────
+   通常方式とPLUM法のハイブリッド(予想震度の広がりの再現)。
+   PLUM法は単独では発表せず、通常方式(震源推定)の第1報・更新報に、観測震度から求めた予想震度を合成する。
+     予想震度(地域) = max(通常方式の距離減衰による予測, PLUM法の予測)
+   PLUM法の予測 = その地域の代表点(細分区域の重心)から半径PLUM_RADIUS_KM以内のシミュレーション観測点の
+   うち、観測震度がPLUM_MIN_OBSERVED_INTENSITY以上のものの最大観測震度(観測点別の地盤増幅などは考慮しない簡易版)。
+   発表条件の閾値は気象庁のPLUM法(震度5弱以上)に合わせた既定値で、定数で調整できる。
+   一度出た予想震度は下げない(holdPlum)。
+   ───────────────────────────────────────────────────── */
+export const PLUM_RADIUS_KM = 30;
+export const PLUM_MIN_OBSERVED_INTENSITY = 4.5; // 計測震度4.5 = 震度5弱
+
+const centroidCache = new WeakMap();
+function areaCentroids(areasGeoJSON) {
+  let list = centroidCache.get(areasGeoJSON);
+  if (list) return list;
+  list = [];
+  for (const f of areasGeoJSON?.features || []) {
+    const name = f.properties?.name;
+    if (!name) continue;
+    const c = polygonRoughCentroid(f.geometry);
+    if (c) list.push({ name, lat: c.lat, lon: c.lon });
+  }
+  centroidCache.set(areasGeoJSON, list);
+  return list;
+}
+
+// 観測震度(values: 観測点id→計測震度)から、PLUM法の地域別予想震度を求める。
+// stations: [{ id, lat, lon }]。simStationIds以外の観測点(=シミュレーション以外)は使わない。
+// 戻り値: Map<地域名, { intensity, key }>
+export function calcPlumAreaIntensities(areasGeoJSON, stations, values, simStationIds) {
+  const result = new Map();
+  if (!areasGeoJSON || !stations || !values || !simStationIds) return result;
+  const hot = [];
+  for (const st of stations) {
+    if (!simStationIds.has(st.id)) continue;
+    const v = values.get(st.id);
+    if (Number.isFinite(v) && v >= PLUM_MIN_OBSERVED_INTENSITY) hot.push({ lat: st.lat, lon: st.lon, v });
+  }
+  if (hot.length === 0) return result;
+  for (const a of areaCentroids(areasGeoJSON)) {
+    let best = -Infinity;
+    for (const h of hot) {
+      if (h.v > best && haversineKm(h.lat, h.lon, a.lat, a.lon) <= PLUM_RADIUS_KM) best = h.v;
+    }
+    if (best > -Infinity) result.set(a.name, { intensity: best, key: instrumentalIntensityToScaleKey(best) });
+  }
+  return result;
+}
+
+// 一度出たPLUM法の予想震度を保持する(揺れが収まっても予想震度は下げない)。holdを更新して返す。
+export function holdPlum(hold, plum) {
+  for (const [name, p] of plum || []) {
+    const cur = hold.get(name);
+    if (!cur || cur.intensity < p.intensity) hold.set(name, p);
+  }
+  return hold;
+}
+
+// 通常方式の結果(calcTestEewAreasByAttenuationの戻り値)にPLUM法の予想震度を合成する。
+// PLUM法のほうが大きい地域は、その震度に置き換えて、地域単位のisPlumを立てる。
+// plumSig: PLUM法で上振れした地域と震度の署名(更新報を出すかの判定用)。
+export function mergePlumIntoAreas(base, plum) {
+  const areas = (base?.areas || []).map(a => ({ ...a }));
+  const index = new Map(areas.map((a, i) => [a.name, i]));
+  let maxKey = base?.maxIntensityKey ?? "?";
+  const upgraded = [];
+  for (const [name, p] of plum || []) {
+    const code = INTENSITY_SCALE_CODE[p.key] ?? 0;
+    const i = index.get(name);
+    if (i === undefined) {
+      areas.push({ pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: p.key, isPlum: true });
+      upgraded.push(`${name}=${p.key}`);
+    } else if ((INTENSITY_SCALE_CODE[areas[i].maxIntensityKey] ?? -1) < code) {
+      areas[i] = { ...areas[i], scaleFrom: code, scaleTo: code, maxIntensityKey: p.key, isPlum: true };
+      upgraded.push(`${name}=${p.key}`);
+    }
+    if (code > (INTENSITY_SCALE_CODE[maxKey] ?? -1)) maxKey = p.key;
+  }
+  upgraded.sort();
+  return { areas, maxIntensityKey: maxKey, plumSig: upgraded.join(",") };
 }

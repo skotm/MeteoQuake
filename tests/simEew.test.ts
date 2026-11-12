@@ -5,6 +5,7 @@ import {
   isSimEew, isRealEewActive, collectSimStationIds, isSimulationOnlyEvent,
   findOwnerTest, canIssueFromEstimate, shouldIssueFollowUp,
   buildSimEewCard, buildSimEewFollowUp,
+  calcPlumAreaIntensities, holdPlum, mergePlumIntoAreas, PLUM_RADIUS_KM,
 } from "../src/app/simEew.js";
 import { filterEstimatesNearEew, isSuppressingEew } from "../src/app/eewEstimateFilter.js";
 
@@ -89,4 +90,56 @@ test("R5: テスト(シミュレーション含む)のEEWは、実地震の推�
   // 本物のEEWは従来どおり抑制する
   const realEew = { ...simEew, isTest: false, source: "wolfx" };
   assert.equal(filterEstimatesNearEew(estimates, [realEew]).has("real"), false);
+});
+
+// ── 通常方式とPLUM法のハイブリッド ──
+// 一辺0.02度の小さな正方形(重心がほぼ中心)を、細分区域に見立てる。
+function square(name: string, lat: number, lon: number) {
+  const d = 0.01;
+  return { type: "Feature", properties: { name }, geometry: { type: "Polygon", coordinates: [[[lon - d, lat - d], [lon + d, lat - d], [lon + d, lat + d], [lon - d, lat + d]]] } };
+}
+const geo = { type: "FeatureCollection", features: [square("近い地域", 35.0, 139.0), square("遠い地域", 36.0, 139.0), square("やや近い地域", 35.15, 139.0)] };
+const stations = [{ id: 1, lat: 35.0, lon: 139.0 }, { id: 2, lat: 35.0, lon: 139.0 }];
+const simIds = new Set([1]);
+
+test("PLUM: 観測震度5弱以上の観測点から半径30km以内の地域だけが対象(5弱未満・シミュレーション外の観測点は使わない)", () => {
+  assert.equal(PLUM_RADIUS_KM, 30);
+  const hit = calcPlumAreaIntensities(geo, stations, new Map([[1, 5.2]]), simIds);
+  assert.equal(hit.get("近い地域")?.key, "5+");
+  assert.equal(hit.get("やや近い地域")?.key, "5+"); // 約17km
+  assert.equal(hit.has("遠い地域"), false);          // 約111km
+  assert.equal(calcPlumAreaIntensities(geo, stations, new Map([[1, 4.4]]), simIds).size, 0);
+  assert.equal(calcPlumAreaIntensities(geo, stations, new Map([[2, 6.0]]), simIds).size, 0); // 観測点2はシミュレーション外
+});
+
+test("ハイブリッド合成: 大きい方を採用。PLUM法で上振れした地域だけisPlum、通常方式が大きい地域はそのまま", () => {
+  const base = {
+    areas: [
+      { pref: "", name: "近い地域", scaleFrom: 40, scaleTo: 40, maxIntensityKey: "4", isPlum: false },
+      { pref: "", name: "やや近い地域", scaleFrom: 60, scaleTo: 60, maxIntensityKey: "6-", isPlum: false },
+    ],
+    maxIntensityKey: "6-",
+  };
+  const plum = calcPlumAreaIntensities(geo, stations, new Map([[1, 5.2]]), simIds);
+  const m = mergePlumIntoAreas(base, plum);
+  const near = m.areas.find((a: any) => a.name === "近い地域");
+  assert.equal(near.maxIntensityKey, "5+");
+  assert.equal(near.isPlum, true);
+  assert.equal(m.areas.find((a: any) => a.name === "やや近い地域").isPlum, false);
+  assert.equal(m.plumSig, "近い地域=5+");
+  assert.equal(m.maxIntensityKey, "6-");
+  // 通常方式に無い地域は追加され、全体の最大震度も更新される
+  const m2 = mergePlumIntoAreas({ areas: [], maxIntensityKey: "3" }, plum);
+  assert.equal(m2.areas.length, 2);
+  assert.equal(m2.maxIntensityKey, "5+");
+  assert.equal(base.areas[0].maxIntensityKey, "4"); // 元のデータは変更しない
+});
+
+test("PLUM: 一度出た予想震度は、揺れが収まっても下げない", () => {
+  const hold = new Map();
+  holdPlum(hold, calcPlumAreaIntensities(geo, stations, new Map([[1, 5.2]]), simIds));
+  holdPlum(hold, calcPlumAreaIntensities(geo, stations, new Map([[1, 2.0]]), simIds));
+  assert.equal(hold.get("近い地域").key, "5+");
+  holdPlum(hold, calcPlumAreaIntensities(geo, stations, new Map([[1, 6.2]]), simIds));
+  assert.equal(hold.get("近い地域").key, "6+");
 });

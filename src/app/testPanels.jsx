@@ -1,4 +1,4 @@
-import { useContext, Fragment } from "react";
+import { useContext, useState, Fragment } from "react";
 import { ThemeContext } from "./theme";
 import { PressableButton } from "./glass";
 import { SettingsCard, SettingsCardDivider } from "./settingsPrimitives";
@@ -530,6 +530,9 @@ export function ShakeDetectionTestPanel({ shakeTests = [], onAction, shakeTestFo
       : link.realEewActive
         ? "実際の緊急地震速報が発表中のため、開始できません。"
         : null;
+  // 連動の項目は、通常の検知テストと混同しないよう、既定で閉じておく(連動がONの間は開いたままにして状態を隠さない)。
+  const [eewOpen, setEewOpen] = useState(false);
+  const eewSectionOpen = eewOpen || !!f.eewLinked;
   const startDisabled = f.latitude == null || f.longitude == null || (!!f.eewLinked && (!f.eewConsent || !!linkBlockedReason));
 
   // 震源推定(epicenterEstimation.ts)の現在の推定結果のうち、各シミュレーション
@@ -638,67 +641,84 @@ export function ShakeDetectionTestPanel({ shakeTests = [], onAction, shakeTestFo
         </div>
       </SettingsCard>
 
-      {/* 緊急地震速報との連動。非推奨・自己責任の実験的機能。 */}
-      <div style={{ margin: "18px 14px 6px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      {/* 緊急地震速報との連動。非推奨・自己責任の実験的機能。既定で閉じておく。 */}
+      <button
+        type="button"
+        onClick={() => { if (!f.eewLinked) setEewOpen(v => !v); }}
+        aria-expanded={eewSectionOpen}
+        style={{
+          margin: "14px 14px 6px", padding: 0, border: "none", background: "none", textAlign: "left",
+          display: "flex", alignItems: "center", gap: 6, width: "calc(100% - 28px)",
+          cursor: f.eewLinked ? "default" : "pointer", fontFamily: "inherit",
+        }}
+      >
         <span style={{ fontSize: 12.5, fontWeight: 700, color: `rgba(${tokens.ink},0.7)` }}>
           緊急地震速報として表示(連動)
         </span>
-        <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: "#FF453A", borderRadius: 4, padding: "2px 6px" }}>
+        <span style={{ fontSize: 9, fontWeight: 800, color: "#fff", background: "#FF453A", borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap" }}>
           非推奨・自己責任
         </span>
-      </div>
-      <SettingsCard>
-        <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{
-            borderRadius: 10, padding: "10px 12px", fontSize: 11.5, lineHeight: 1.7, color: tokens.text,
-            background: "rgba(255,69,58,0.12)", border: "1px solid rgba(255,69,58,0.35)",
-          }}>
-            <div style={{ fontWeight: 800, color: "#FF453A", marginBottom: 2 }}>この機能は非推奨です。自己責任でご利用ください。</div>
-            MeteoQuakeの震源推定を緊急地震速報の形式で表示するシミュレーションです。気象庁の緊急地震速報ではなく、
-            精度・正確性は保証されません。避難などの判断には使用しないでください。
-            利用により生じた結果は、すべて利用者の自己責任となります。
+        {f.eewLinked && (
+          <span style={{ fontSize: 9, fontWeight: 800, color: "#FF453A", border: "1px solid #FF453A", borderRadius: 4, padding: "0 4px" }}>ON</span>
+        )}
+        <svg width="12" height="12" viewBox="0 0 12 12" style={{
+          marginLeft: "auto", flexShrink: 0, opacity: f.eewLinked ? 0.25 : 0.6,
+          transform: eewSectionOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s",
+        }}>
+          <path d="M2 4l4 4 4-4" fill="none" stroke={`rgb(${tokens.ink})`} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {eewSectionOpen && (
+        <SettingsCard>
+          <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 7 }}>
+            <div style={{
+              borderRadius: 8, padding: "5px 8px", fontSize: 10.5, lineHeight: 1.5, color: tokens.text,
+              background: "rgba(255,69,58,0.10)", border: "1px solid rgba(255,69,58,0.3)",
+            }}>
+              <b style={{ color: "#FF453A" }}>非推奨・自己責任。</b>
+              気象庁の緊急地震速報ではなく、精度は保証されません。避難などの判断には使用しないでください。
+            </div>
+            <label style={{
+              display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 600, color: tokens.text,
+              cursor: (!!linkBlockedReason && !f.eewLinked) ? "default" : "pointer",
+              opacity: (!!linkBlockedReason && !f.eewLinked) ? 0.5 : 1,
+            }}>
+              <input
+                type="checkbox"
+                checked={!!f.eewLinked}
+                disabled={!!linkBlockedReason && !f.eewLinked}
+                onChange={e => patchForm({ eewLinked: e.target.checked, eewConsent: false })}
+                style={{ accentColor: "#FF453A" }}
+              />
+              推定結果を緊急地震速報として表示する
+            </label>
+            {linkBlockedReason && (
+              <div style={{ fontSize: 10.5, color: "#FF9F0A", lineHeight: 1.5 }}>{linkBlockedReason}</div>
+            )}
+            {f.eewLinked && (
+              <>
+                <div style={{ fontSize: 10.5, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.5 }}>
+                  揺れの広がりは、PLUM法の考え方で予想震度に反映します。
+                  実行中は実際の観測データを遮断します(実際の地震の揺れ検知は止まります)。
+                  本物の緊急地震速報が発表されると自動で中止します。
+                </div>
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 11.5, fontWeight: 700, color: tokens.text, cursor: "pointer", lineHeight: 1.4 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!f.eewConsent}
+                    onChange={e => patchForm({ eewConsent: e.target.checked })}
+                    style={{ accentColor: "#FF453A", marginTop: 1 }}
+                  />
+                  非推奨であること、自己責任で利用することを理解しました
+                </label>
+              </>
+            )}
+            {link.notice && (
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#FF453A", lineHeight: 1.5 }}>{link.notice}</div>
+            )}
           </div>
-          <label style={{
-            display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: tokens.text,
-            cursor: (!!linkBlockedReason && !f.eewLinked) ? "default" : "pointer",
-            opacity: (!!linkBlockedReason && !f.eewLinked) ? 0.5 : 1,
-          }}>
-            <input
-              type="checkbox"
-              checked={!!f.eewLinked}
-              disabled={!!linkBlockedReason && !f.eewLinked}
-              onChange={e => patchForm({ eewLinked: e.target.checked, eewConsent: false })}
-              style={{ accentColor: "#FF453A" }}
-            />
-            推定結果を緊急地震速報として表示する
-          </label>
-          {linkBlockedReason && (
-            <div style={{ fontSize: 11, color: "#FF9F0A", lineHeight: 1.6 }}>{linkBlockedReason}</div>
-          )}
-          {f.eewLinked && (
-            <>
-              <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.7 }}>
-                検知が進むと、震源推定の結果(推定した位置・深さ・M)が、シミュレーションの緊急地震速報として表示され、
-                推定が更新されるたびに続報が出ます。実際の地震が誤って表示されないよう、実行中は実際の観測データを
-                遮断します(この間、実際の地震の揺れ検知は止まります)。気象庁の本物の緊急地震速報は、通常どおり表示されます。
-                本物の緊急地震速報が発表されると、このシミュレーションは自動で中止されます。
-              </div>
-              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, fontWeight: 700, color: tokens.text, cursor: "pointer", lineHeight: 1.5 }}>
-                <input
-                  type="checkbox"
-                  checked={!!f.eewConsent}
-                  onChange={e => patchForm({ eewConsent: e.target.checked })}
-                  style={{ accentColor: "#FF453A", marginTop: 2 }}
-                />
-                非推奨であること、自己責任で利用することを理解しました
-              </label>
-            </>
-          )}
-          {link.notice && (
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: "#FF453A", lineHeight: 1.6 }}>{link.notice}</div>
-          )}
-        </div>
-      </SettingsCard>
+        </SettingsCard>
+      )}
 
       <SettingsCard>
         <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>

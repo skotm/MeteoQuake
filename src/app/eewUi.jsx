@@ -238,12 +238,6 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
         </div>
       </PanelDragHandoffCard>
 
-      {eew.isSimulation && (
-        <div style={{ margin: "2px 16px 6px", fontSize: 11, fontWeight: 600, color: "#FF453A", lineHeight: 1.6 }}>
-          MeteoQuakeの震源推定によるシミュレーションです。気象庁の発表ではありません(非推奨・自己責任)。
-        </div>
-      )}
-
       {eew.cancelled ? (
         <div style={{ margin: "2px 16px 10px", fontSize: 13, color: tokens.textSecondary, lineHeight: 1.7 }}>
           この緊急地震速報は取り消されました。
@@ -364,6 +358,13 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
             </div>
           )}
         </>
+      )}
+
+      {/* シミュレーションの注意書きは、カードの最後(下)に小さく出す。 */}
+      {eew.isSimulation && (
+        <div style={{ margin: "2px 16px 4px", fontSize: 9.5, color: tokens.textSecondary, lineHeight: 1.4 }}>
+          気象庁の発表ではありません
+        </div>
       )}
     </div>
   );
