@@ -6,8 +6,12 @@ import { THEME_TOKENS } from "./theme";
    CDNからmaplibre-gl本体とCSSを動的読み込みする
    （Reactアーティファクト環境にはnpmパッケージが無いため）
    ───────────────────────────────────────────────────── */
-const MAPLIBRE_JS  = "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.js";
-const MAPLIBRE_CSS = "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.css";
+// CDNから読み込むライブラリのバージョン(固定)。設定画面のライセンス表示(SettingsBody)もこの値を使う。
+// バージョンを上げる時は、public/licenses/ のライセンス全文も、そのバージョンの上流のLICENSEに更新すること。
+export const MAPLIBRE_VERSION = "4.7.1";
+export const TURF_VERSION = "6.5.0";
+const MAPLIBRE_JS  = `https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/${MAPLIBRE_VERSION}/maplibre-gl.js`;
+const MAPLIBRE_CSS = `https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/${MAPLIBRE_VERSION}/maplibre-gl.css`;
 
 let maplibreLoadPromise = null;
 export function loadMapLibre() {
@@ -231,7 +235,7 @@ export function buildMapStyle({ world, prefectures, areas }, mapColors = THEME_T
    TURF LOADER(台風の予報円など、気象タブで使う幾何計算)
    CDNからturf.jsを動的に読み込む
    ─────────────────────────────────────── */
-const TURF_JS = "https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js";
+const TURF_JS = `https://cdn.jsdelivr.net/npm/@turf/turf@${TURF_VERSION}/turf.min.js`;
 let turfLoadPromise = null;
 
 export function loadTurf() {

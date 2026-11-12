@@ -1,4 +1,5 @@
 import { estimateDisplayLevel } from "../engines/epicenterConfidence";
+import { FONT_SANS } from "./fonts";
 
 
 
@@ -140,7 +141,7 @@ export function drawEpicenterLabelCanvas(depthKm, magnitude, confidence = null, 
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, w, h);
 
-  const FONT_STACK = '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "Noto Sans JP", sans-serif';
+  const FONT_STACK = FONT_SANS; // 同梱フォント(app/fonts.js)
   const fontSize = 20 * EPICENTER_LABEL_CANVAS_SCALE;
   const lineHeight = fontSize * 1.35;
   const paddingX = 12 * EPICENTER_LABEL_CANVAS_SCALE;

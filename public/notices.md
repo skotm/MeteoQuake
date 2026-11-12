@@ -52,6 +52,28 @@
 
 本アプリは、上記データを加工して表示している場合があります。データの一次的な正確性については、各提供元の発表をご確認ください。
 
+## ライブラリについて
+
+本アプリは、以下のオープンソースソフトウェアを使用しています。
+
+- **React / React DOM / Scheduler** — MIT License, Copyright (c) Meta Platforms, Inc. and affiliates.
+- **MapLibre GL JS** 4.7.1(CDNから読み込み) — BSD 3-Clause License, Copyright (c) 2023, MapLibre contributors
+- **Turf.js** 6.5.0(CDNから読み込み) — MIT License, Copyright (c) 2019 Morgan Herlocker
+- **Workbox**(オフライン対応のService Worker) — MIT License, Copyright 2018 Google LLC
+
+各ライセンスの全文は、アプリの「設定」→「利用規約等・注意事項」→「ライセンス」から確認できます。
+
+## フォントについて
+
+本アプリは、表示の見た目を端末によらず統一するため、以下のフォントをアプリに同梱して使用しています。いずれも SIL Open Font License, Version 1.1(OFL 1.1)のもとで配布されているフォントです。
+
+- **Noto Sans JP**(日本語): Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
+- **Inter**(数字・英字): Copyright (c) 2016 The Inter Project Authors ([github.com/rsms/inter](https://github.com/rsms/inter))
+
+フォントの配信には、[Fontsource](https://fontsource.org/) のパッケージ(@fontsource-variable/noto-sans-jp、@fontsource-variable/inter)を利用しています。フォント自体のライセンスは上記のとおりです。
+
+OFL 1.1 の全文は、アプリの「設定」→「利用規約等・注意事項」→「ライセンス」から確認できます。フォントのファイルは、表示に使われた分だけ端末に保存され、次回以降の表示に再利用されます。
+
 ## プライバシーについて
 
 本アプリが取得する情報および取り扱いについては、「プライバシーポリシー」をご確認ください。
@@ -66,4 +88,4 @@
 
 ---
 
-最終更新日: 2026年10月24日
+最終更新日: 2026年11月11日

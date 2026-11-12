@@ -67,18 +67,41 @@ Webアプリケーションのため、[ウェブサイト](https://skotm.github
 - [Natural Earth 1:10m Cultural Vectors (Japan POV)](https://www.naturalearthdata.com/downloads/10m-cultural-vectors/)
 - [NOAA ETOPO](https://www.ngdc.noaa.gov/mgg/global/)
 #### 観測点座標データ
-- [kyoshin-monitor-observation-points](https://github.com/ingen084/kyoshin-monitor-observation-points/blob/master/intensity-points.json) ([ingen084](https://github.com/ingen084)氏)
+- [kyoshin-monitor-observation-points](https://github.com/ingen084/kyoshin-monitor-observation-points/blob/master/intensity-points.json) ([ingen084](https://github.com/ingen084)氏) — MIT License, Copyright (c) 2025 ingen084。ライセンスの全文は、アプリの「設定 → 利用規約等・注意事項 → ライセンス」と、`public/licenses/MIT-KyoshinMonitorObservationPoints.txt` にあります。
 - [jma_int_stations](https://github.com/iku55/jma_int_stations) ([iku55](https://github.com/iku55)氏)
+
+#### ライブラリ
+アプリの中で動くソフトウェアとして、以下を使用しています。ライセンスの全文は、アプリの「設定 → 利用規約等・注意事項 → ライセンス」と、`public/licenses/` にあります。
+- [React](https://github.com/facebook/react) / React DOM / Scheduler — MIT License, Copyright (c) Meta Platforms, Inc. and affiliates.
+- [MapLibre GL JS](https://github.com/maplibre/maplibre-gl-js) 4.7.1(CDNから読み込み) — BSD 3-Clause License, Copyright (c) 2023, MapLibre contributors
+- [Turf.js](https://github.com/Turfjs/turf) 6.5.0(CDNから読み込み) — MIT License, Copyright (c) 2019 Morgan Herlocker
+- [Workbox](https://github.com/GoogleChrome/workbox) (オフライン対応のService Worker) — MIT License, Copyright 2018 Google LLC
+
+依存ライブラリを追加・更新したら、`npm run licenses` でライセンス表示のチェックができます(`npm run build` の前にも自動で実行されます)。CDNから読み込む MapLibre GL JS・Turf.js のバージョンを上げる時は、`src/app/mapDataLoaders.js` のバージョンと、`public/licenses/` の全文を、そのバージョンの上流の LICENSE に更新してください。
+
+#### フォント
+端末ごとの表示の違いをなくすため、以下のフォントをアプリに同梱しています。いずれも [SIL Open Font License 1.1](https://openfontlicense.org) のもとで配布されています。ライセンスの全文は、アプリの「設定 → 利用規約等・注意事項 → ライセンス」と、`public/licenses/` にあります。
+- [Noto Sans JP](https://fonts.google.com/noto/specimen/Noto+Sans+JP) (日本語) — Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
+- [Inter](https://github.com/rsms/inter) (数字・英字) — Copyright (c) 2016 The Inter Project Authors
+- フォントの配信には [Fontsource](https://fontsource.org/) の `@fontsource-variable/noto-sans-jp`・`@fontsource-variable/inter` を利用しています(フォント自体のライセンスは上記のとおりです)。
+
+#### 震度配色
+設定の「表示設定 → 震度配色」で選べる震度の配色のうち、以下は、出典の配色を利用しています。
+- **Kiwi Monitor配色**: 「Kiwi Monitor カラースキーム 第3版」(2022年8月17日現在)の配色一覧を利用しています。出典: [Kiwi Monitor](https://kiwimonitor.amebaownd.com/posts/36819100/)
+- **srev配色**: [kotoho7](https://github.com/kotoho7)氏の地震ビューア([scratch-realtime-earthquake-viewer-page](https://github.com/kotoho7/scratch-realtime-earthquake-viewer-page))の震度の配色を利用しています。
+
+その他の「MeteoQuake配色」「eqs viewer配色」は、本アプリ独自の配色です。「気象庁配色」は、気象庁の「ホームページにおける気象情報の配色に関する設定指針」に定められた値を使っています。
 
 #### 参考にしたプログラム
 
-- 本プログラムのUIデザインは、[EQMonitor](https://github.com/YumNumm/EQMonitor)（[YumNumm](https://github.com/YumNumm)氏）のデザインを参考にさせていただきました。
+- [KyoshinEewViewerIngen](https://github.com/ingen084/KyoshinEewViewerIngen)([ingen084](https://github.com/ingen084)氏)を参考にさせていただきました。MIT License, Copyright (c) 2019 ingen084。ライセンスの全文は、アプリの「設定 → 利用規約等・注意事項 → ライセンス」と、`public/licenses/MIT-KyoshinEewViewerIngen.txt` にあります。
+- 本プログラムのUIデザインは、[EQMonitor](https://github.com/YumNumm/EQMonitor)（[YumNumm](https://github.com/YumNumm)氏）のデザインを参考にさせていただきました。EQMonitorは MIT License (Copyright (c) 2022 YumNumm) で公開されており、ライセンスの全文は、アプリの「設定 → 利用規約等・注意事項 → ライセンス」と、`public/licenses/MIT-EQMonitor.txt` にあります。
 - 津波タブの機能は
 [scratch-realtime-earthquake-viewer-page](https://github.com/kotoho7/scratch-realtime-earthquake-viewer-page)([kotoho7](https://github.com/kotoho7)氏)を参考にさせていただきました。
 - 本プログラムのS-netのリアルタイム震度の取得方法については、
   - [umishiru-snet-shindo](https://github.com/t0729/umishiru-snet-shindo) 
 ([t0729](https://github.com/t0729)氏)
-  - [S-net_Viewer](https://github.com/Ichihai1415/S-net_Viewer) ([Ichihai1415](https://github.com/Ichihai1415)氏) を参考にしました。
+  - [S-net_Viewer](https://github.com/Ichihai1415/S-net_Viewer) ([Ichihai1415](https://github.com/Ichihai1415)氏) を参考にしました。S-net_Viewer は MIT License (Copyright (c) 2022 Ichihai1415) で公開されており、ライセンスの全文は、アプリの「設定 → 利用規約等・注意事項 → ライセンス」と、`public/licenses/MIT-SnetViewer.txt` にあります。
 - 本プログラムの地震検知プログラムは
   - [KyoshinEewViewerIngen](https://github.com/ingen084/KyoshinEewViewerIngen)([ingen084](https://github.com/ingen084)氏)を参考にしました。
 

@@ -1,4 +1,5 @@
 import { THEME_TOKENS } from "./theme";
+import { FONT_SANS } from "./fonts";
 
 
 /* ─────────────────────────────────────────────────────
@@ -48,9 +49,7 @@ export function GlobalStyles({ tokens = THEME_TOKENS.dark }) {
         position: fixed;
         inset: 0;
         background: var(--page-bg);
-        font-family: -apple-system, BlinkMacSystemFont,
-                     "SF Pro Display", "Helvetica Neue",
-                     "Noto Sans JP", sans-serif;
+        font-family: ${FONT_SANS};
         -webkit-font-smoothing: antialiased;
         overflow: hidden;
         overscroll-behavior: none;
