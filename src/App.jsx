@@ -13,7 +13,12 @@ import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, computeGlareGuard, 
 import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, saveGridDetectionEnabled, saveGridCellsVisible, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
 import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
-import { loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
+import { loadEpicenterNamesData, loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
+import {
+  SIM_EEW_FINAL_LINGER_MS, SIM_EEW_ID_PREFIX, SIM_EEW_VANISH_CANCEL_MS,
+  buildSimEewCard, buildSimEewFollowUp, canIssueFromEstimate, collectSimStationIds, findOwnerTest,
+  isRealEewActive, isSimEew, isSimulationOnlyEvent, shouldIssueFollowUp,
+} from "./app/simEew";
 import { buildTestQuakeStageCard, calcTestEewAreasByAttenuation, isTestWarnLevel, formatTestQuakeNow, testQuakeTimeFromInput, testQuakeTimeToInput } from "./app/testSimulation";
 import { dedupeQuakeList, fetchRecentQuakes, mergeQuakeCards } from "./app/quakeCards";
 import { TSUNAMI_FETCH_LIMIT, TSUNAMI_HISTORY_PAGE_SIZE, dedupeTsunamiList, fetchJmaTsunamiHistory, fetchRecentTsunamis, fetchTsunamiHistoryPage, mergeTsunamiSources, tsunamiGradeInfo, tsunamiHeightBandColor } from "./app/tsunamiData";
@@ -21,7 +26,7 @@ import { TEST_TSUNAMI_GRADE_OPTIONS } from "./app/testPanels";
 import { EMPTY_EQDB_LIST, buildEqdbQuakeCard } from "./app/eqdb";
 import { computeMaxTsunamiHeightCm, daysBetweenDates, fetchTideObsForDateRange, fetchTideObsRange, fetchTideStations, toTideDateStr } from "./app/tideData";
 import { loadJmaTravelTimeTable, loadStations, resolveStationPoints } from "./app/stations";
-import { findNearestTsunamiArea, polygonRoughCentroid } from "./app/geo";
+import { findEpicenterNameByPoint, findNearestTsunamiArea, polygonRoughCentroid } from "./app/geo";
 import { GlobalStyles } from "./app/globalStyles";
 import { ConsentGate } from "./app/ConsentGate";
 import { MapCanvas } from "./app/MapCanvas";
@@ -383,6 +388,7 @@ export default function App() {
       // 地震検知テストのシミュレーションも同様に片付ける。
       setShakeTests([]);
       setShakeTestEpicenterPickActive(false);
+      setTestEews(prev => prev.filter(e => !isSimEew(e)));
     }
   }
 
@@ -558,7 +564,8 @@ export default function App() {
     const id = setInterval(() => {
       setTestEews(prev => {
         const now = Date.now();
-        const next = prev.filter(e => !(e.cancelled && now - (e.cancelledLocalAt || 0) >= EEW_CANCEL_LINGER_MS));
+        const next = prev.filter(e => !(e.cancelled && now - (e.cancelledLocalAt || 0) >= EEW_CANCEL_LINGER_MS)
+          && !(e.autoRemoveAt && now >= e.autoRemoveAt));
         return next.length === prev.length ? prev : next;
       });
     }, 1000);
@@ -988,6 +995,9 @@ export default function App() {
       longitude: 139.3,
       depth: 20,
       magnitude: 5.8,
+      // 緊急地震速報との連動(非推奨・自己責任の実験的機能。既定OFF)。同意(eewConsent)は開始のたびに必要。
+      eewLinked: false,
+      eewConsent: false,
     };
   }
   const [shakeTestForm, setShakeTestForm] = useState(defaultShakeTestForm);
@@ -997,6 +1007,14 @@ export default function App() {
   const [shakeTests, setShakeTests] = useState([]);
   // shakeTests実行中に一定間隔で値を再計算させるための、ただのカウンタ。
   const [shakeTestTick, setShakeTestTick] = useState(0);
+  // 連動シミュレーション(震源推定→テストEEW)の補助状態。
+  //   simEewTrackRef: 推定イベントid → 発報の記録(続報判定・消失検知用)
+  //   stoppedSimTestIdsRef: 手動で停止したシミュレーションのid(終了時に取消/最終報を分けるため)
+  const simEewTrackRef = useRef(new Map());
+  const stoppedSimTestIdsRef = useRef(new Set());
+  const [shakeTestEewNotice, setShakeTestEewNotice] = useState(null);
+  const shakeTestsRef = useRef([]);
+  const realEewActiveRef = useRef(false);
 
   // 地震検知テスト実行中の「正解」の震源群(MapCanvasへ渡す用、複数同時
   // 実行に対応)。実行中でなければ空配列。
@@ -1027,6 +1045,20 @@ export default function App() {
     if (action === "start") {
       if (shakeTestForm.latitude == null || shakeTestForm.longitude == null) return;
       if (realtimeStream.stations.length === 0) return;
+      // 緊急地震速報との連動。非推奨・自己責任のため、同意と各前提条件を、UIだけに頼らずここでも確認する。
+      const wantsLink = !!shakeTestForm.eewLinked;
+      if (wantsLink) {
+        if (!shakeTestForm.eewConsent) return;
+        if (!shakeDetectionEnabled || !epicenterEstimationEnabled || gridDetectionEnabled) {
+          setShakeTestEewNotice("連動には、設定の「揺れ検知」と「震源推定」をONにし、検知方式を通常方式にする必要があります。");
+          return;
+        }
+        if (isRealEewActive(eews)) {
+          setShakeTestEewNotice("実際の緊急地震速報が発表中のため、開始できません。");
+          return;
+        }
+        setShakeTestEewNotice(null);
+      }
       const perStation = prepareShakeTest(
         {
           lat: shakeTestForm.latitude,
@@ -1043,16 +1075,20 @@ export default function App() {
         startedAt: Date.now(),
         perStation,
         form: shakeTestForm,
+        eewLinked: wantsLink,
       };
       setShakeTests(prev => [...prev, newTest]);
+      if (wantsLink) setShakeTestForm(prev => ({ ...prev, eewConsent: false })); // 同意は毎回取り直す
       return;
     }
     if (action === "stop") {
       // payload.idが指定されていればそのシミュレーションだけ個別に停止する。
       // 指定が無ければ(バナーの「停止」ボタン等)全て停止する。
       if (payload?.id) {
+        stoppedSimTestIdsRef.current.add(payload.id);
         setShakeTests(prev => prev.filter(t => t.id !== payload.id));
       } else {
+        for (const t of shakeTests) stoppedSimTestIdsRef.current.add(t.id);
         setShakeTests([]);
       }
       return;
@@ -1109,12 +1145,139 @@ export default function App() {
         overlayMerged.set(id, existing == null ? v : Math.max(existing, v));
       }
     }
-    if (overlayMerged.size === 0) return realtimeStream.values;
-    const merged = new Map(realtimeStream.values);
+    // 【R1 隔離】緊急地震速報連動のシミュレーションが1つでも動いている間は、実際の観測データを検知・推定へ
+    // 渡さず、シミュレーション値だけにする。同時刻に実際の地震が起きても、その揺れが同じ検知イベント・
+    // 震源推定に混ざり、テストEEWとして表示されることを防ぐ(この間、実地震の揺れ検知は止まる)。
+    const sealed = shakeTests.some(t => t.eewLinked);
+    if (overlayMerged.size === 0) return sealed ? new Map() : realtimeStream.values;
+    const merged = sealed ? new Map() : new Map(realtimeStream.values);
     for (const [id, v] of overlayMerged) merged.set(id, v);
     return merged;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [realtimeStream.values, shakeTests, shakeTestTick, replayPlayer.loaded, replayPlayer.values]);
+
+  /* ─────────────────────────────────────────────────────
+     地震検知テスト連動の緊急地震速報シミュレーション(非推奨・自己責任の実験的機能)
+     MeteoQuakeの震源推定(epicenterEstimates)を、テストEEW(testEews)として表示する。
+     実際の地震を誤ってEEW表示しないための仕組みはsimEew.jsの冒頭コメント参照
+     (R1隔離=上のeffectiveRealtimeValues、R2二重条件=下の推定→EEWのeffect、R3実EEW優先=その下のeffect)。
+     ───────────────────────────────────────────────────── */
+  const linkedShakeTests = useMemo(() => shakeTests.filter(t => t.eewLinked), [shakeTests]);
+  const hasLinkedShakeTest = linkedShakeTests.length > 0;
+  const realEewActive = isRealEewActive(eews);
+  useEffect(() => {
+    shakeTestsRef.current = shakeTests;
+    realEewActiveRef.current = realEewActive;
+  });
+
+  // 推定 → テストEEW(第1報・続報・消失時の取消)。
+  useEffect(() => {
+    const tracked = simEewTrackRef.current;
+    if (!hasLinkedShakeTest) { tracked.clear(); return; }
+    const now = Date.now();
+    const simIds = collectSimStationIds(linkedShakeTests);
+    const eventsById = new Map((shakeEvents || []).map(ev => [ev.id, ev]));
+    const seen = new Set();
+    for (const [eventId, est] of epicenterEstimates) {
+      if (!canIssueFromEstimate(est)) continue;
+      // R2(a): 元の検知点が全てシミュレーション対象の観測点であること
+      if (!isSimulationOnlyEvent(eventsById.get(eventId), simIds)) continue;
+      // R2(b): 推定の発生時刻が、シミュレーション開始の前後の許容内であること
+      const owner = findOwnerTest(est, linkedShakeTests, now);
+      if (!owner) continue;
+      seen.add(eventId);
+      const prevRec = tracked.get(eventId);
+      if (prevRec) prevRec.lastSeenAt = now;
+      if (prevRec?.pending) continue;
+      if (prevRec && !shouldIssueFollowUp(prevRec, est, now)) continue;
+      const isFirst = !prevRec;
+      const rec = prevRec || { eewId: `${SIM_EEW_ID_PREFIX}${eventId}`, testId: owner.id, isWarn: false, lastSeenAt: now };
+      rec.pending = true;
+      rec.lat = est.lat; rec.lon = est.lon; rec.depthKm = est.depthKm;
+      rec.magnitude = Math.round(est.magnitude * 10) / 10;
+      rec.issuedAt = now;
+      tracked.set(eventId, rec);
+      Promise.all([loadGeoData(), loadEpicenterNamesData().catch(() => null)]).then(([{ areas: areasGeoJSON }, epGeo]) => {
+        // 待っている間に、シミュレーションが終了した・実EEWが発表された場合は発報しない。
+        if (!shakeTestsRef.current.some(t => t.id === owner.id) || realEewActiveRef.current) return;
+        const { areas, maxIntensityKey } = calcTestEewAreasByAttenuation(
+          areasGeoJSON, est.lat, est.lon, rec.magnitude, est.depthKm, false
+        );
+        const place = epGeo ? findEpicenterNameByPoint(epGeo, est.lat, est.lon) : null;
+        const isWarnLevel = isTestWarnLevel(maxIntensityKey);
+        if (shouldRevealIncomingEew({
+          selectedQuakeId: selectedQuakeIdRef.current, selectedQuakeOrigin: selectedQuakeOriginRef.current,
+          existing: isFirst ? undefined : { isWarnLevel: rec.isWarn === true },
+          incoming: { cancelled: false, isWarnLevel: rec.isWarn === true ? true : isWarnLevel },
+        })) selectQuake(null);
+        rec.isWarn = rec.isWarn === true || isWarnLevel;
+        const issuedAt = Date.now();
+        setTestEews(prev => {
+          const i = prev.findIndex(e => e.id === rec.eewId);
+          if (i === -1) {
+            if (!isFirst) return prev; // 利用者が削除済みの続報は出し直さない
+            return [...prev, buildSimEewCard({ eventId, est, place, areas, maxIntensityKey, isWarnLevel, simTestId: owner.id, nowMs: issuedAt })];
+          }
+          if (prev[i].cancelled) return prev;
+          const next = [...prev];
+          next[i] = buildSimEewFollowUp(prev[i], { est, place, areas, maxIntensityKey, isWarnLevel, nowMs: issuedAt });
+          return next;
+        });
+      }).catch(err => {
+        console.error("連動シミュレーションのEEW生成に失敗しました:", err);
+      }).finally(() => { rec.pending = false; });
+    }
+    // 発報済みの推定が消えたまま一定時間たったら取消にする(シミュレーションが続いている間だけ)。
+    for (const [eventId, rec] of tracked) {
+      if (seen.has(eventId) || rec.pending) continue;
+      if (now - rec.lastSeenAt < SIM_EEW_VANISH_CANCEL_MS) continue;
+      tracked.delete(eventId);
+      setTestEews(prev => prev.map(e => (e.id === rec.eewId && !e.cancelled)
+        ? { ...e, cancelled: true, cancelledLocalAt: now, receivedLocalAt: now } : e));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [epicenterEstimates, shakeEvents, linkedShakeTests, hasLinkedShakeTest]);
+
+  // シミュレーションが終わった時のテストEEWの後始末。手動で停止したものは取消、自然終了したものは
+  // 最終報にして、しばらく後に自動で消す。
+  useEffect(() => {
+    const liveIds = new Set(shakeTests.map(t => t.id));
+    const tracked = simEewTrackRef.current;
+    for (const [eventId, rec] of tracked) if (!liveIds.has(rec.testId)) tracked.delete(eventId);
+    setTestEews(prev => {
+      const now = Date.now();
+      let changed = false;
+      const next = prev.map(e => {
+        if (!isSimEew(e) || e.cancelled || e.isFinal || liveIds.has(e.simTestId)) return e;
+        changed = true;
+        if (stoppedSimTestIdsRef.current.has(e.simTestId)) {
+          return { ...e, cancelled: true, cancelledLocalAt: now, receivedLocalAt: now };
+        }
+        return {
+          ...e, isFinal: true, serial: String((parseInt(e.serial, 10) || 1) + 1),
+          receivedLocalAt: now, autoRemoveAt: now + SIM_EEW_FINAL_LINGER_MS,
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, [shakeTests]);
+
+  // R3 実EEW優先: 本物の緊急地震速報が発表されたら、連動シミュレーションを中止してテストEEWを全て消す。
+  useEffect(() => {
+    if (!realEewActive || !hasLinkedShakeTest) return;
+    setShakeTests(prev => prev.filter(t => !t.eewLinked));
+    setTestEews(prev => prev.filter(e => !isSimEew(e)));
+    simEewTrackRef.current.clear();
+    setShakeTestEewNotice("実際の緊急地震速報が発表されたため、連動シミュレーションを中止しました。");
+  }, [realEewActive, hasLinkedShakeTest]);
+
+  // 地震検知テストパネルへ渡す、連動の可否と状態。
+  const shakeTestEewLink = {
+    estimationEnabled: shakeDetectionEnabled && epicenterEstimationEnabled,
+    gridMode: shakeDetectionEnabled && gridDetectionEnabled,
+    realEewActive,
+    notice: shakeTestEewNotice,
+  };
 
   // テスト配信中は、実際の一覧の先頭にテストデータを合成する。地震タブに関する
   // App側の判定(一覧・選択中の地震・地図表示)は、以降すべてこちらを使う。
@@ -2846,7 +3009,7 @@ export default function App() {
             正しい位置に表示できる。表示条件はバー単独の場合
             (showRealtimeMapLayers)とバナー単独の場合(pick中)の両方をORで
             まとめてコンテナごと出し分けている。 */}
-        {(showRealtimeMapLayers || tsunamiAreaPickActive || eewEpicenterPickActive || shakeTestEpicenterPickActive) && (
+        {(showRealtimeMapLayers || tsunamiAreaPickActive || eewEpicenterPickActive || shakeTestEpicenterPickActive || hasLinkedShakeTest) && (
           <div style={isWide ? {
             position: "absolute",
             right: 16,
@@ -2964,6 +3127,34 @@ export default function App() {
                   }}
                 >
                   キャンセル
+                </PressableButton>
+              </Glass>
+            )}
+
+            {/* 緊急地震速報連動シミュレーション中のバナー(非推奨・自己責任。実際の観測データは遮断中)。 */}
+            {hasLinkedShakeTest && (
+              <Glass radius={22} style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 12px",
+                maxWidth: "calc(100vw - 32px)",
+                animation: "appear 0.3s cubic-bezier(.25,1,.5,1)",
+              }}>
+                <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, color: "#fff", background: "#FF453A", borderRadius: 4, padding: "2px 6px" }}>
+                  非推奨・自己責任
+                </span>
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: themeContextValue.tokens.text, lineHeight: 1.4 }}>
+                  EEW連動シミュレーション中(実際の観測データは遮断中)
+                </span>
+                <PressableButton
+                  type="button"
+                  onClick={() => handleShakeTestAction("stop")}
+                  style={{
+                    flexShrink: 0, padding: "6px 12px", borderRadius: 999, border: "none", cursor: "pointer",
+                    background: "rgba(255,69,58,0.16)",
+                    fontSize: 12, fontWeight: 700, color: "#FF453A",
+                  }}
+                >
+                  停止
                 </PressableButton>
               </Glass>
             )}
@@ -3161,6 +3352,7 @@ export default function App() {
                   onShakeTestAction={handleShakeTestAction}
                   shakeTestForm={shakeTestForm}
                   shakeTestEpicenterPickActive={shakeTestEpicenterPickActive}
+                  shakeTestEewLink={shakeTestEewLink}
                   epicenterEstimates={epicenterEstimates}
                   tsunamiAreaPickActive={tsunamiAreaPickActive}
                   onStartTsunamiAreaPick={startTsunamiAreaPick}
@@ -3311,6 +3503,7 @@ export default function App() {
               onShakeTestAction={handleShakeTestAction}
               shakeTestForm={shakeTestForm}
               shakeTestEpicenterPickActive={shakeTestEpicenterPickActive}
+              shakeTestEewLink={shakeTestEewLink}
               epicenterEstimates={epicenterEstimates}
               tsunamiAreaPickActive={tsunamiAreaPickActive}
               onStartTsunamiAreaPick={startTsunamiAreaPick}

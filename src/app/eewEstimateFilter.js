@@ -6,8 +6,8 @@ import { haversineKm } from "./geo";
    EEWが発表されている地震については、気象庁の推定のほうが信頼できるため、
    自前の震源推定(epicenterEstimation.ts)の結果は表示しない。
    次の3つを全て満たす推定を「そのEEWと同じ地震の推定」とみなして消す。
-   - 対象EEW: 取消でない、震源の緯度経度と発生時刻が分かっている、PLUM法でない
-     (PLUM法は観測点の揺れから仮定した震源で、震源推定と並べて見せたいので
+   - 対象EEW: 取消でない、テスト/シミュレーションでない、震源の緯度経度と発生時刻が分かっている、PLUM法でない
+     (テスト・シミュレーションのEEWは、実際の地震の推定を隠してしまうので対象外。PLUM法は観測点の揺れから仮定した震源で、震源推定と並べて見せたいので
      抑制しない)
    - 推定位置が、EEWの震源から EEW_ESTIMATE_SUPPRESS_RADIUS_KM 以内
    - 推定の発生時刻が、EEWの発生時刻の前後 EEW_ESTIMATE_SUPPRESS_TIME_WINDOW_MS 以内
@@ -34,6 +34,7 @@ export function eewOriginTimeMs(eew) {
 export function isSuppressingEew(eew) {
   return !!eew
     && !eew.cancelled
+    && !eew.isTest
     && !eew.isPlum
     && typeof eew.latitude === "number"
     && typeof eew.longitude === "number"

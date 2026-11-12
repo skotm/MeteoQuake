@@ -1270,21 +1270,21 @@ export function MapCanvas({
           map.addSource("eew-pwave", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
           map.addLayer({
             id: "eew-pwave-fill-layer", type: "fill", source: "eew-pwave",
-            paint: { "fill-color": "#32ADE6", "fill-opacity": 0.08 },
+            paint: { "fill-color": ["case", ["boolean", ["get", "isSim"], false], "#BF5AF2", "#32ADE6"], "fill-opacity": 0.08 },
           });
           map.addLayer({
             id: "eew-pwave-line-layer", type: "line", source: "eew-pwave",
-            paint: { "line-color": "#32ADE6", "line-width": 1.5, "line-opacity": 0.8 },
+            paint: { "line-color": ["case", ["boolean", ["get", "isSim"], false], "#BF5AF2", "#32ADE6"], "line-width": 1.5, "line-opacity": 0.8 },
           });
 
           map.addSource("eew-swave", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
           map.addLayer({
             id: "eew-swave-fill-layer", type: "fill", source: "eew-swave",
-            paint: { "fill-color": "#FF453A", "fill-opacity": 0.12 },
+            paint: { "fill-color": ["case", ["boolean", ["get", "isSim"], false], "#BF5AF2", "#FF453A"], "fill-opacity": 0.12 },
           });
           map.addLayer({
             id: "eew-swave-line-layer", type: "line", source: "eew-swave",
-            paint: { "line-color": "#FF453A", "line-width": 2.2, "line-opacity": 0.9 },
+            paint: { "line-color": ["case", ["boolean", ["get", "isSim"], false], "#BF5AF2", "#FF453A"], "line-width": 2.2, "line-opacity": 0.9 },
           });
 
           map.addSource("eew-hypocenter", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
@@ -1960,9 +1960,9 @@ export function MapCanvas({
           const pRadiusKm = eewWaveSurfaceRadiusKm(elapsedSec, eew.depth, EEW_P_WAVE_SPEED_KM_S);
           const sRadiusKm = eewWaveSurfaceRadiusKm(elapsedSec, eew.depth, EEW_S_WAVE_SPEED_KM_S);
           const pRing = eewCirclePolygon(eew.latitude, eew.longitude, pRadiusKm);
-          if (pRing) pFeatures.push({ type: "Feature", geometry: { type: "Polygon", coordinates: [pRing] }, properties: {} });
+          if (pRing) pFeatures.push({ type: "Feature", geometry: { type: "Polygon", coordinates: [pRing] }, properties: { isSim: !!eew.isSimulation } });
           const sRing = eewCirclePolygon(eew.latitude, eew.longitude, sRadiusKm);
-          if (sRing) sFeatures.push({ type: "Feature", geometry: { type: "Polygon", coordinates: [sRing] }, properties: {} });
+          if (sRing) sFeatures.push({ type: "Feature", geometry: { type: "Polygon", coordinates: [sRing] }, properties: { isSim: !!eew.isSimulation } });
         });
 
         const pSource = map.getSource("eew-pwave");

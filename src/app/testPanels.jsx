@@ -38,7 +38,9 @@ const TSUNAMI_HEIGHT_PICK_OPTIONS = Array.from({ length: 99 }, (_, i) => (i + 2)
 const EEW_TEST_DEPTH_OPTIONS = Array.from({ length: 61 }, (_, i) => i * 10);
 const EEW_TEST_MAGNITUDE_OPTIONS = Array.from({ length: 65 }, (_, i) => Math.round((3.5 + i * 0.1) * 10) / 10);
 
-export function EewTestBroadcastPanel({ testEews, onAction, eewTestForm, eewEpicenterPickActive }) {
+export function EewTestBroadcastPanel({ testEews: allTestEews, onAction, eewTestForm, eewEpicenterPickActive }) {
+  // 地震検知テスト連動のシミュレーションEEWは、そちらのテストが管理する(ここでの手動の続報・編集の対象にしない)。
+  const testEews = allTestEews.filter(e => e.source !== "shake-test-sim");
   const { tokens, mode } = useContext(ThemeContext);
   const f = eewTestForm;
   const isEditing = !!f.editingId;
@@ -515,10 +517,20 @@ export function QuakeTestBroadcastPanel({ testQuakes = [], onAction, quakeTestFo
    深さ・Mを指定して仮想的な揺れを発生させる。QuakeTestBroadcastPanelと
    同じUIパターン(震源ピック・SettingsCardでの入力欄)を踏襲している。
    ───────────────────────────────────────────────────── */
-export function ShakeDetectionTestPanel({ shakeTests = [], onAction, shakeTestForm, shakeTestEpicenterPickActive, epicenterEstimates }) {
+export function ShakeDetectionTestPanel({ shakeTests = [], onAction, shakeTestForm, shakeTestEpicenterPickActive, shakeTestEewLink = {}, epicenterEstimates }) {
   const { tokens, mode } = useContext(ThemeContext);
   const f = shakeTestForm;
   const running = shakeTests.length > 0;
+  // 緊急地震速報との連動(非推奨・自己責任)を使える状態か。使えない理由があれば、その文言も。
+  const link = shakeTestEewLink;
+  const linkBlockedReason = !link.estimationEnabled
+    ? "設定の「揺れ検知」と「震源推定」をONにすると使えます。"
+    : link.gridMode
+      ? "グリッド方式の検知がONの間は使えません(通常の検知方式に切り替えてください)。"
+      : link.realEewActive
+        ? "実際の緊急地震速報が発表中のため、開始できません。"
+        : null;
+  const startDisabled = f.latitude == null || f.longitude == null || (!!f.eewLinked && (!f.eewConsent || !!linkBlockedReason));
 
   // 震源推定(epicenterEstimation.ts)の現在の推定結果のうち、各シミュレーション
   // (実際の震源)に最も近いものを、そのシミュレーションとの比較対象として
@@ -626,18 +638,80 @@ export function ShakeDetectionTestPanel({ shakeTests = [], onAction, shakeTestFo
         </div>
       </SettingsCard>
 
+      {/* 緊急地震速報との連動。非推奨・自己責任の実験的機能。 */}
+      <div style={{ margin: "18px 14px 6px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: `rgba(${tokens.ink},0.7)` }}>
+          緊急地震速報として表示(連動)
+        </span>
+        <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: "#FF453A", borderRadius: 4, padding: "2px 6px" }}>
+          非推奨・自己責任
+        </span>
+      </div>
+      <SettingsCard>
+        <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{
+            borderRadius: 10, padding: "10px 12px", fontSize: 11.5, lineHeight: 1.7, color: tokens.text,
+            background: "rgba(255,69,58,0.12)", border: "1px solid rgba(255,69,58,0.35)",
+          }}>
+            <div style={{ fontWeight: 800, color: "#FF453A", marginBottom: 2 }}>この機能は非推奨です。自己責任でご利用ください。</div>
+            MeteoQuakeの震源推定を緊急地震速報の形式で表示するシミュレーションです。気象庁の緊急地震速報ではなく、
+            精度・正確性は保証されません。避難などの判断には使用しないでください。
+            利用により生じた結果は、すべて利用者の自己責任となります。
+          </div>
+          <label style={{
+            display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: tokens.text,
+            cursor: (!!linkBlockedReason && !f.eewLinked) ? "default" : "pointer",
+            opacity: (!!linkBlockedReason && !f.eewLinked) ? 0.5 : 1,
+          }}>
+            <input
+              type="checkbox"
+              checked={!!f.eewLinked}
+              disabled={!!linkBlockedReason && !f.eewLinked}
+              onChange={e => patchForm({ eewLinked: e.target.checked, eewConsent: false })}
+              style={{ accentColor: "#FF453A" }}
+            />
+            推定結果を緊急地震速報として表示する
+          </label>
+          {linkBlockedReason && (
+            <div style={{ fontSize: 11, color: "#FF9F0A", lineHeight: 1.6 }}>{linkBlockedReason}</div>
+          )}
+          {f.eewLinked && (
+            <>
+              <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.7 }}>
+                検知が進むと、震源推定の結果(推定した位置・深さ・M)が、シミュレーションの緊急地震速報として表示され、
+                推定が更新されるたびに続報が出ます。実際の地震が誤って表示されないよう、実行中は実際の観測データを
+                遮断します(この間、実際の地震の揺れ検知は止まります)。気象庁の本物の緊急地震速報は、通常どおり表示されます。
+                本物の緊急地震速報が発表されると、このシミュレーションは自動で中止されます。
+              </div>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, fontWeight: 700, color: tokens.text, cursor: "pointer", lineHeight: 1.5 }}>
+                <input
+                  type="checkbox"
+                  checked={!!f.eewConsent}
+                  onChange={e => patchForm({ eewConsent: e.target.checked })}
+                  style={{ accentColor: "#FF453A", marginTop: 2 }}
+                />
+                非推奨であること、自己責任で利用することを理解しました
+              </label>
+            </>
+          )}
+          {link.notice && (
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: "#FF453A", lineHeight: 1.6 }}>{link.notice}</div>
+          )}
+        </div>
+      </SettingsCard>
+
       <SettingsCard>
         <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
           <PressableButton
             type="button"
             onClick={() => onAction?.("start")}
-            disabled={f.latitude == null || f.longitude == null}
+            disabled={startDisabled}
             style={{
               width: "100%", padding: "10px 14px", borderRadius: 10, border: "none",
-              cursor: (f.latitude == null || f.longitude == null) ? "default" : "pointer",
+              cursor: startDisabled ? "default" : "pointer",
               background: "rgba(48,209,88,0.16)", color: "#30D158",
               fontSize: 13, fontWeight: 700, textAlign: "center",
-              opacity: (f.latitude == null || f.longitude == null) ? 0.5 : 1,
+              opacity: startDisabled ? 0.5 : 1,
             }}
           >
             地震を発生させる
@@ -664,6 +738,7 @@ export function ShakeDetectionTestPanel({ shakeTests = [], onAction, shakeTestFo
                 <div key={t.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: tokens.text, lineHeight: 1.5, minWidth: 0 }}>
                     {t.form.place}・M{t.form.magnitude.toFixed(1)}・深さ{t.form.depth}km
+                    {t.eewLinked && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: "#FF453A" }}>EEW連動</span>}
                   </div>
                   <PressableButton
                     type="button"
