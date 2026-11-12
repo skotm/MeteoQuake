@@ -17,6 +17,7 @@ import { loadEpicenterNamesData, loadGeoData, loadTsunamiAreasData } from "./app
 import {
   SIM_EEW_FINAL_LINGER_MS, SIM_EEW_ID_PREFIX, SIM_EEW_VANISH_CANCEL_MS,
   buildSimEewCard, buildSimEewFollowUp, canIssueFromEstimate, collectSimStationIds, findOwnerTest,
+  SIM_EEW_MIN_UPDATE_INTERVAL_MS, calcPlumAreaIntensities, holdPlum, mergePlumIntoAreas,
   isRealEewActive, isSimEew, isSimulationOnlyEvent, shouldIssueFollowUp,
 } from "./app/simEew";
 import { buildTestQuakeStageCard, calcTestEewAreasByAttenuation, isTestWarnLevel, formatTestQuakeNow, testQuakeTimeFromInput, testQuakeTimeToInput } from "./app/testSimulation";
@@ -1014,6 +1015,7 @@ export default function App() {
   const stoppedSimTestIdsRef = useRef(new Set());
   const [shakeTestEewNotice, setShakeTestEewNotice] = useState(null);
   const shakeTestsRef = useRef([]);
+  const simAreasGeoRef = useRef(null); // 細分区域.json(PLUM法の合成を同期的に計算するため、読み込み済みのものを保持)
   const realEewActiveRef = useRef(false);
 
   // 地震検知テスト実行中の「正解」の震源群(MapCanvasへ渡す用、複数同時
@@ -1178,6 +1180,11 @@ export default function App() {
     const simIds = collectSimStationIds(linkedShakeTests);
     const eventsById = new Map((shakeEvents || []).map(ev => [ev.id, ev]));
     const seen = new Set();
+    // 通常方式とPLUM法のハイブリッド: 観測震度の広がり(PLUM法)を、通常方式の更新報に合成する。
+    const stationsNow = realtimeStream.stations;
+    const valuesNow = effectiveRealtimeValues;
+    const plumGeo = simAreasGeoRef.current;
+    const plumNow = plumGeo ? calcPlumAreaIntensities(plumGeo, stationsNow, valuesNow, simIds) : null;
     for (const [eventId, est] of epicenterEstimates) {
       if (!canIssueFromEstimate(est)) continue;
       // R2(a): 元の検知点が全てシミュレーション対象の観測点であること
@@ -1189,9 +1196,17 @@ export default function App() {
       const prevRec = tracked.get(eventId);
       if (prevRec) prevRec.lastSeenAt = now;
       if (prevRec?.pending) continue;
-      if (prevRec && !shouldIssueFollowUp(prevRec, est, now)) continue;
+      if (prevRec && !shouldIssueFollowUp(prevRec, est, now)) {
+        // 推定が変わらなくても、揺れの広がり(PLUM法)で予想震度が変わったら、通常方式の更新報として出す。
+        if (!plumNow || plumNow.size === 0 || now - prevRec.issuedAt < SIM_EEW_MIN_UPDATE_INTERVAL_MS) continue;
+        const held = holdPlum(new Map(prevRec.plumHold || []), plumNow);
+        const hybridNow = mergePlumIntoAreas(
+          calcTestEewAreasByAttenuation(plumGeo, est.lat, est.lon, Math.round(est.magnitude * 10) / 10, est.depthKm, false), held
+        );
+        if (hybridNow.plumSig === prevRec.plumSig) continue;
+      }
       const isFirst = !prevRec;
-      const rec = prevRec || { eewId: `${SIM_EEW_ID_PREFIX}${eventId}`, testId: owner.id, isWarn: false, lastSeenAt: now };
+      const rec = prevRec || { eewId: `${SIM_EEW_ID_PREFIX}${eventId}`, testId: owner.id, isWarn: false, lastSeenAt: now, plumHold: new Map(), plumSig: "" };
       rec.pending = true;
       rec.lat = est.lat; rec.lon = est.lon; rec.depthKm = est.depthKm;
       rec.magnitude = Math.round(est.magnitude * 10) / 10;
@@ -1200,9 +1215,12 @@ export default function App() {
       Promise.all([loadGeoData(), loadEpicenterNamesData().catch(() => null)]).then(([{ areas: areasGeoJSON }, epGeo]) => {
         // 待っている間に、シミュレーションが終了した・実EEWが発表された場合は発報しない。
         if (!shakeTestsRef.current.some(t => t.id === owner.id) || realEewActiveRef.current) return;
-        const { areas, maxIntensityKey } = calcTestEewAreasByAttenuation(
-          areasGeoJSON, est.lat, est.lon, rec.magnitude, est.depthKm, false
-        );
+        simAreasGeoRef.current = areasGeoJSON;
+        // 通常方式の予想震度に、PLUM法の予想震度(一度出た分は保持)を合成する。
+        const attenuation = calcTestEewAreasByAttenuation(areasGeoJSON, est.lat, est.lon, rec.magnitude, est.depthKm, false);
+        rec.plumHold = holdPlum(rec.plumHold || new Map(), calcPlumAreaIntensities(areasGeoJSON, stationsNow, valuesNow, simIds));
+        const { areas, maxIntensityKey, plumSig } = mergePlumIntoAreas(attenuation, rec.plumHold);
+        rec.plumSig = plumSig;
         const place = epGeo ? findEpicenterNameByPoint(epGeo, est.lat, est.lon) : null;
         const isWarnLevel = isTestWarnLevel(maxIntensityKey);
         if (shouldRevealIncomingEew({
@@ -3131,31 +3149,16 @@ export default function App() {
               </Glass>
             )}
 
-            {/* 緊急地震速報連動シミュレーション中のバナー(非推奨・自己責任。実際の観測データは遮断中)。 */}
+            {/* 緊急地震速報連動シミュレーション中の表示。注意事項は載せず、状態(実データ遮断中)だけを小さく示す。 */}
             {hasLinkedShakeTest && (
-              <Glass radius={22} style={{
-                display: "flex", alignItems: "center", gap: 10,
-                padding: "10px 12px",
+              <Glass radius={18} style={{
+                padding: "6px 12px",
                 maxWidth: "calc(100vw - 32px)",
                 animation: "appear 0.3s cubic-bezier(.25,1,.5,1)",
               }}>
-                <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, color: "#fff", background: "#FF453A", borderRadius: 4, padding: "2px 6px" }}>
-                  非推奨・自己責任
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: themeContextValue.tokens.text }}>
+                  EEW連動中(実際の観測データは遮断中)
                 </span>
-                <span style={{ fontSize: 12.5, fontWeight: 600, color: themeContextValue.tokens.text, lineHeight: 1.4 }}>
-                  EEW連動シミュレーション中(実際の観測データは遮断中)
-                </span>
-                <PressableButton
-                  type="button"
-                  onClick={() => handleShakeTestAction("stop")}
-                  style={{
-                    flexShrink: 0, padding: "6px 12px", borderRadius: 999, border: "none", cursor: "pointer",
-                    background: "rgba(255,69,58,0.16)",
-                    fontSize: 12, fontWeight: 700, color: "#FF453A",
-                  }}
-                >
-                  停止
-                </PressableButton>
               </Glass>
             )}
 

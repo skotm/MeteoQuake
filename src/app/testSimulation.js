@@ -2,7 +2,7 @@ import { fastDist2, polygonRoughCentroid } from "./geo";
 
 
 // 計測震度(連続値)を気象庁の震度階級に変換する(「震度を知る」の計測震度→震度階級の対応表)。
-function instrumentalIntensityToScaleKey(i) {
+export function instrumentalIntensityToScaleKey(i) {
   if (i < 0.5) return "0";
   if (i < 1.5) return "1";
   if (i < 2.5) return "2";
@@ -35,7 +35,7 @@ function instrumentalIntensityToScaleKey(i) {
 const SITE_AMPLIFICATION_FACTOR = 2.0;
 // 震度キー→気象庁の震度階級コード(数値。大きいほど強い)の対応。eewMaxScaleKey等で
 // 使われているものと同じ体系。
-const INTENSITY_SCALE_CODE = { "7": 70, "6+": 60, "6-": 55, "6": 54, "5+": 50, "5-": 45, "5": 44, "4": 40, "3": 30, "2": 20, "1": 10, "0": 0 };
+export const INTENSITY_SCALE_CODE = { "7": 70, "6+": 60, "6-": 55, "6": 54, "5+": 50, "5-": 45, "5": 44, "4": 40, "3": 30, "2": 20, "1": 10, "0": 0 };
 // テスト配信専用: 震度5弱(気象庁の実運用で警報の基準となる階級)以上を警報級とみなす。
 export function isTestWarnLevel(intensityKey) {
   return (INTENSITY_SCALE_CODE[intensityKey] ?? -1) >= 45;
