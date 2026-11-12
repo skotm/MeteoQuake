@@ -62,7 +62,7 @@ export function SettingsBody({
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
   eewTestForm, eewEpicenterPickActive,
   testQuakes, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeTestAutoPlaying,
-  shakeTests, onShakeTestAction, shakeTestForm, shakeTestEpicenterPickActive,
+  shakeTests, onShakeTestAction, shakeTestForm, shakeTestEpicenterPickActive, shakeTestEewLink,
   epicenterEstimates,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
@@ -764,6 +764,7 @@ export function SettingsBody({
           onAction={onShakeTestAction}
           shakeTestForm={shakeTestForm}
           shakeTestEpicenterPickActive={shakeTestEpicenterPickActive}
+          shakeTestEewLink={shakeTestEewLink}
           epicenterEstimates={epicenterEstimates}
         />
       </>

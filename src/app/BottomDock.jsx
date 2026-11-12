@@ -98,7 +98,7 @@ export function BottomDock({
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
   eewTestForm, eewEpicenterPickActive,
   testQuakes, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeTestAutoPlaying,
-  shakeTests, onShakeTestAction, shakeTestForm, shakeTestEpicenterPickActive,
+  shakeTests, onShakeTestAction, shakeTestForm, shakeTestEpicenterPickActive, shakeTestEewLink,
   epicenterEstimates,
   eews = EMPTY_EQDB_LIST, eewIssued = false, eewDetailOpen, eewOpenSignal, onOpenEewDetail, onCloseEewDetail,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
@@ -2829,6 +2829,7 @@ export function BottomDock({
                   onShakeTestAction={onShakeTestAction}
                   shakeTestForm={shakeTestForm}
                   shakeTestEpicenterPickActive={shakeTestEpicenterPickActive}
+                  shakeTestEewLink={shakeTestEewLink}
                   epicenterEstimates={epicenterEstimates}
                   tsunamiAreaPickActive={tsunamiAreaPickActive}
                   onStartTsunamiAreaPick={onStartTsunamiAreaPick}

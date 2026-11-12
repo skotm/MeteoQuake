@@ -199,7 +199,7 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
               fontSize: 9.5, fontWeight: 800, color: "#fff",
               background: "#FF453A", borderRadius: 4, padding: "2px 6px",
             }}>
-              テスト配信
+              {eew.isSimulation ? "シミュレーション(非推奨)" : "テスト配信"}
             </span>
           )}
           <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
@@ -237,6 +237,12 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
           </div>
         </div>
       </PanelDragHandoffCard>
+
+      {eew.isSimulation && (
+        <div style={{ margin: "2px 16px 6px", fontSize: 11, fontWeight: 600, color: "#FF453A", lineHeight: 1.6 }}>
+          MeteoQuakeの震源推定によるシミュレーションです。気象庁の発表ではありません(非推奨・自己責任)。
+        </div>
+      )}
 
       {eew.cancelled ? (
         <div style={{ margin: "2px 16px 10px", fontSize: 13, color: tokens.textSecondary, lineHeight: 1.7 }}>
