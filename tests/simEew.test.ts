@@ -1,12 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  SIM_EEW_SOURCE, SIM_EEW_ORIGIN_SLACK_MS, SIM_EEW_MIN_UPDATE_INTERVAL_MS,
+  SIM_EEW_SOURCE, SIM_EEW_ORIGIN_SLACK_MS,
   isSimEew, isRealEewActive, collectSimStationIds, isSimulationOnlyEvent,
-  findOwnerTest, canIssueFromEstimate, shouldIssueFollowUp,
+  findOwnerTest, canIssueFromEstimate,
   buildSimEewCard, buildSimEewFollowUp,
-  calcPlumAreaIntensities, holdPlum, mergePlumIntoAreas, PLUM_RADIUS_KM,
+  calcPlumAreaIntensities, holdPlum, PLUM_RADIUS_KM,
 } from "../src/app/simEew.js";
+import { buildForecast, evaluateReport } from "../src/app/simEewRules.js";
 import { filterEstimatesNearEew, isSuppressingEew } from "../src/app/eewEstimateFilter.js";
 
 const T0 = 1_800_000_000_000;
@@ -46,32 +47,38 @@ test("R3: 本物のEEWだけが「実EEW発表中」。テスト・シミュレ�
   assert.equal(isRealEewActive([{ cancelled: false, source: SIM_EEW_SOURCE }]), false);
 });
 
-test("R4: シミュレーションEEWカードは常にisTest/isSimulation/sourceで識別でき、PLUM法ではない", () => {
-  const c = buildSimEewCard({ eventId: "e1", est, place: "相模湾", areas: [], maxIntensityKey: "5-", isWarnLevel: true, simTestId: "t1", nowMs: T0 });
+// 報の評価結果を作る小さなヘルパー(評価ロジック自体は simEewRules.test.ts で検証する)。
+const evaluated = (() => {
+  const forecast = buildForecast({ areaValues: new Map([["相模湾地域", 4.6]]) }, new Map());
+  return evaluateReport(null, { raw: { lat: 35.2, lon: 139.3, depthKm: 20, magnitude: 5.8 }, stationCount: 5, inland: false, forecast })!;
+})();
+
+test("R4: シミュレーションEEWカードは常にisTest/isSimulation/sourceで識別でき、PLUM法の報ではない", () => {
+  const c = buildSimEewCard({ eventId: "e1", est, evaluated, place: "相模湾", simTestId: "t1", nowMs: T0 });
   assert.equal(c.isTest, true);
   assert.equal(c.isSimulation, true);
   assert.equal(isSimEew(c), true);
   assert.ok(c.id.startsWith("simeew_"));
   assert.equal(c.isPlum, false);
   assert.equal(c.serial, "1");
+  assert.equal(c.magnitude, 5.8);
+  assert.equal(c.depth, 20);
+  assert.deepEqual(c.simReasons, ["発表", "警報の発表"]);
+  assert.equal(c.simHistory.length, 1);
 });
 
-test("続報: 報番号+1、警報は予報に戻さない", () => {
-  const c = buildSimEewCard({ eventId: "e1", est, place: "A", areas: [], maxIntensityKey: "5-", isWarnLevel: true, simTestId: "t1", nowMs: T0 });
-  const f = buildSimEewFollowUp(c, { est: { ...est, magnitude: 5.2 }, place: "A", areas: [], maxIntensityKey: "4", isWarnLevel: false, nowMs: T0 + 2000 });
+test("続報: 報番号+1、履歴に追記、警報は予報に戻さない", () => {
+  const c = buildSimEewCard({ eventId: "e1", est, evaluated, place: "A", simTestId: "t1", nowMs: T0 });
+  const lower = evaluateReport(evaluated.state, {
+    raw: { lat: 35.2, lon: 139.3, depthKm: 20, magnitude: 5.2 }, stationCount: 5, inland: false,
+    forecast: buildForecast({ areaValues: new Map([["相模湾地域", 3.8]]) }, new Map()),
+  })!;
+  const f = buildSimEewFollowUp(c, { est, evaluated: lower, place: "A", nowMs: T0 + 2000 });
   assert.equal(f.serial, "2");
   assert.equal(f.isWarnLevel, true);
   assert.equal(f.magnitude, 5.2);
-});
-
-test("続報の条件: 最小間隔未満は出さない。位置・M・深さのいずれかが閾値以上変われば出す", () => {
-  const rec = { lat: 35.2, lon: 139.3, depthKm: 20, magnitude: 5.8, issuedAt: T0 };
-  const moved = { ...est, lat: 35.3 }; // 約11km
-  assert.equal(shouldIssueFollowUp(rec, moved, T0 + SIM_EEW_MIN_UPDATE_INTERVAL_MS - 1), false);
-  assert.equal(shouldIssueFollowUp(rec, moved, T0 + SIM_EEW_MIN_UPDATE_INTERVAL_MS), true);
-  assert.equal(shouldIssueFollowUp(rec, { ...est, magnitude: 6.0 }, T0 + 5000), true);
-  assert.equal(shouldIssueFollowUp(rec, { ...est, depthKm: 40 }, T0 + 5000), true);
-  assert.equal(shouldIssueFollowUp(rec, est, T0 + 5000), false);
+  assert.equal(f.simHistory.length, 2);
+  assert.ok(f.simReasons.includes("マグニチュードの変化"));
 });
 
 test("発報条件: 位置・深さ・Mのどれかが欠けた推定は発報しない", () => {
@@ -112,27 +119,16 @@ test("PLUM: 観測震度5弱以上の観測点から半径30km以内の地域だ
   assert.equal(calcPlumAreaIntensities(geo, stations, new Map([[2, 6.0]]), simIds).size, 0); // 観測点2はシミュレーション外
 });
 
-test("ハイブリッド合成: 大きい方を採用。PLUM法で上振れした地域だけisPlum、通常方式が大きい地域はそのまま", () => {
-  const base = {
-    areas: [
-      { pref: "", name: "近い地域", scaleFrom: 40, scaleTo: 40, maxIntensityKey: "4", isPlum: false },
-      { pref: "", name: "やや近い地域", scaleFrom: 60, scaleTo: 60, maxIntensityKey: "6-", isPlum: false },
-    ],
-    maxIntensityKey: "6-",
-  };
+test("ハイブリッド合成: 地域ごとに大きい方を採用(平均ではない)。PLUM法が大きい地域だけplumWonになる", () => {
+  const att = { areaValues: new Map([["近い地域", 3.6], ["やや近い地域", 5.8]]) };
   const plum = calcPlumAreaIntensities(geo, stations, new Map([[1, 5.2]]), simIds);
-  const m = mergePlumIntoAreas(base, plum);
-  const near = m.areas.find((a: any) => a.name === "近い地域");
-  assert.equal(near.maxIntensityKey, "5+");
-  assert.equal(near.isPlum, true);
-  assert.equal(m.areas.find((a: any) => a.name === "やや近い地域").isPlum, false);
-  assert.equal(m.plumSig, "近い地域=5+");
-  assert.equal(m.maxIntensityKey, "6-");
-  // 通常方式に無い地域は追加され、全体の最大震度も更新される
-  const m2 = mergePlumIntoAreas({ areas: [], maxIntensityKey: "3" }, plum);
-  assert.equal(m2.areas.length, 2);
-  assert.equal(m2.maxIntensityKey, "5+");
-  assert.equal(base.areas[0].maxIntensityKey, "4"); // 元のデータは変更しない
+  const f = buildForecast(att, plum);
+  assert.equal(f.areaValues.get("近い地域"), 5.2);
+  assert.equal(f.areaValues.get("やや近い地域"), 5.8);
+  assert.deepEqual([...f.plumWon], ["近い地域"]);
+  assert.equal(att.areaValues.get("近い地域"), 3.6); // 元のデータは変更しない
+  // 通常方式に無い地域もPLUM法で加わる
+  assert.equal(buildForecast({ areaValues: new Map() }, plum).areaValues.size, 2);
 });
 
 test("PLUM: 一度出た予想震度は、揺れが収まっても下げない", () => {

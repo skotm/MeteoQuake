@@ -64,3 +64,50 @@ test("R2: 実データを隔離しない(同時刻の実際の地震が混ざる
   assert.ok(issued.length > 0);
   for (const { est } of issued) assert.ok(est.lat > 36, `EEW化された推定が実際の地震側(lat=${est.lat})ではない`);
 });
+
+// ── 報更新ルールの通し確認: 実際の検知・震源推定エンジン+実際の細分区域データで、報の列が妥当か ──
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { calcTestEewAreasByAttenuation } from "../src/app/testSimulation.js";
+import { buildForecast, evaluateReport, publishedDepthKm, publishedMagnitude } from "../src/app/simEewRules.js";
+
+test("通し: 第1報の後は、更新条件を満たした時だけ報が出る(毎秒は出ない)。報番号は報ごとに+1", () => {
+  // 細分区域.json(環境によってファイル名の文字化けがあるため、名前のパターンで探す)
+  const mapDir = fileURLToPath(new URL("../public/map/", import.meta.url));
+  const areaFile = readdirSync(mapDir).find(n => n === "細分区域.json" || n.startsWith("#U7d30"));
+  assert.ok(areaFile, "細分区域のデータファイルがある");
+  const areasGeo = JSON.parse(readFileSync(join(mapDir, areaFile!), "utf-8"));
+  const pipe = new AnalysisPipeline();
+  pipe.setStations(allStations, false);
+  const simIds = collectSimStationIds([simTest]);
+  let state: any = null;
+  const reports: { k: number; reasons: string[] }[] = [];
+  let ticksWithEstimate = 0;
+  for (let k = 0; k < 60; k++) {
+    const now = T0 + k * 1000;
+    const out: any = pipe.tick({
+      values: valuesAt(k, false), now, sourceMode: "test", replayClock: false,
+      shakeDetectionEnabled: true, gridDetectionEnabled: false, epicenterEstimationEnabled: true,
+    } as AnalysisTickInput);
+    if (!out.estimates) continue;
+    const byId = new Map(out.shakeEvents.map((e: any) => [e.id, e]));
+    for (const [eventId, est] of out.estimates as Map<unknown, any>) {
+      if (!canIssueFromEstimate(est) || !isSimulationOnlyEvent(byId.get(eventId), simIds) || !findOwnerTest(est, [simTest], now)) continue;
+      ticksWithEstimate++;
+      const att = calcTestEewAreasByAttenuation(areasGeo, est.lat, est.lon, publishedMagnitude(est.magnitude), publishedDepthKm(est.depthKm), false);
+      const ev = evaluateReport(state, {
+        raw: { lat: est.lat, lon: est.lon, depthKm: est.depthKm, magnitude: est.magnitude },
+        stationCount: est.pointCount ?? 0, inland: false, forecast: buildForecast(att, new Map()),
+      });
+      if (!ev) continue;
+      state = ev.state;
+      reports.push({ k, reasons: ev.reasons });
+    }
+  }
+  assert.ok(reports.length >= 1, "第1報が出る");
+  assert.deepEqual(reports[0].reasons.slice(0, 1), ["発表"]);
+  assert.ok(reports.slice(1).every(r => !r.reasons.includes("発表")), "第1報以外に「発表」は出ない");
+  assert.ok(reports.length < ticksWithEstimate, `毎回は出ない(報${reports.length}件/推定${ticksWithEstimate}回)`);
+  console.log("報の列:", reports.map(r => `${r.k}s:${r.reasons.join("+")}`).join(" | "));
+});

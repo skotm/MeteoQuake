@@ -360,6 +360,23 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
         </>
       )}
 
+      {/* シミュレーション: 更新理由と報の履歴(内部値と発表値の比較)。 */}
+      {eew.isSimulation && eew.simReasons?.length > 0 && (
+        <div style={{ margin: "2px 16px 0", fontSize: 9.5, color: tokens.textSecondary, lineHeight: 1.4 }}>
+          更新理由: {eew.simReasons.join("・")}
+        </div>
+      )}
+      {eew.isSimulation && eew.simHistory?.length > 1 && (
+        <details style={{ margin: "2px 16px 0", fontSize: 9.5, color: tokens.textSecondary, lineHeight: 1.5 }}>
+          <summary style={{ cursor: "pointer" }}>報の履歴({eew.simHistory.length}件)</summary>
+          {[...eew.simHistory].reverse().map(h => (
+            <div key={h.serial}>
+              #{h.serial} M{h.magnitude.toFixed(1)}(内部{h.rawMagnitude.toFixed(2)})・深さ{h.depthKm}km(内部{h.rawDepthKm.toFixed(1)}km)・{h.reasons.join("・")}
+            </div>
+          ))}
+        </details>
+      )}
+
       {/* シミュレーションの注意書きは、カードの最後(下)に小さく出す。 */}
       {eew.isSimulation && (
         <div style={{ margin: "2px 16px 4px", fontSize: 9.5, color: tokens.textSecondary, lineHeight: 1.4 }}>

@@ -16,10 +16,10 @@ import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWeb
 import { loadEpicenterNamesData, loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
 import {
   SIM_EEW_FINAL_LINGER_MS, SIM_EEW_ID_PREFIX, SIM_EEW_VANISH_CANCEL_MS,
-  buildSimEewCard, buildSimEewFollowUp, canIssueFromEstimate, collectSimStationIds, findOwnerTest,
-  SIM_EEW_MIN_UPDATE_INTERVAL_MS, calcPlumAreaIntensities, holdPlum, mergePlumIntoAreas,
-  isRealEewActive, isSimEew, isSimulationOnlyEvent, shouldIssueFollowUp,
+  buildSimEewCard, buildSimEewFollowUp, calcPlumAreaIntensities, canIssueFromEstimate, collectSimStationIds,
+  findOwnerTest, holdPlum, isRealEewActive, isSimEew, isSimulationOnlyEvent,
 } from "./app/simEew";
+import { EEW_RULES, buildForecast, endMinElapsedMs, evaluateReport, publishedDepthKm, publishedMagnitude } from "./app/simEewRules";
 import { buildTestQuakeStageCard, calcTestEewAreasByAttenuation, isTestWarnLevel, formatTestQuakeNow, testQuakeTimeFromInput, testQuakeTimeToInput } from "./app/testSimulation";
 import { dedupeQuakeList, fetchRecentQuakes, mergeQuakeCards } from "./app/quakeCards";
 import { TSUNAMI_FETCH_LIMIT, TSUNAMI_HISTORY_PAGE_SIZE, dedupeTsunamiList, fetchJmaTsunamiHistory, fetchRecentTsunamis, fetchTsunamiHistoryPage, mergeTsunamiSources, tsunamiGradeInfo, tsunamiHeightBandColor } from "./app/tsunamiData";
@@ -27,7 +27,7 @@ import { TEST_TSUNAMI_GRADE_OPTIONS } from "./app/testPanels";
 import { EMPTY_EQDB_LIST, buildEqdbQuakeCard } from "./app/eqdb";
 import { computeMaxTsunamiHeightCm, daysBetweenDates, fetchTideObsForDateRange, fetchTideObsRange, fetchTideStations, toTideDateStr } from "./app/tideData";
 import { loadJmaTravelTimeTable, loadStations, resolveStationPoints } from "./app/stations";
-import { findEpicenterNameByPoint, findNearestTsunamiArea, polygonRoughCentroid } from "./app/geo";
+import { findEpicenterNameByPoint, findNearestTsunamiArea, findPrefectureNameByPoint, polygonRoughCentroid } from "./app/geo";
 import { GlobalStyles } from "./app/globalStyles";
 import { ConsentGate } from "./app/ConsentGate";
 import { MapCanvas } from "./app/MapCanvas";
@@ -1015,7 +1015,8 @@ export default function App() {
   const stoppedSimTestIdsRef = useRef(new Set());
   const [shakeTestEewNotice, setShakeTestEewNotice] = useState(null);
   const shakeTestsRef = useRef([]);
-  const simAreasGeoRef = useRef(null); // 細分区域.json(PLUM法の合成を同期的に計算するため、読み込み済みのものを保持)
+  // 連動シミュレーションの判定に使う地域データ(細分区域・都道府県=陸域判定・震央地名)。初回だけ読み込んで保持する。
+  const simGeoRef = useRef({ areas: null, prefectures: null, epicenters: null, loading: false });
   const realEewActiveRef = useRef(false);
 
   // 地震検知テスト実行中の「正解」の震源群(MapCanvasへ渡す用、複数同時
@@ -1172,19 +1173,33 @@ export default function App() {
     realEewActiveRef.current = realEewActive;
   });
 
-  // 推定 → テストEEW(第1報・続報・消失時の取消)。
+  // 推定 → テストEEW。発表条件・更新条件はsimEewRules.js(気象庁の技術的参考資料+MeteoQuake独自仕様)に従う。
+  // 解析のたびに、前回の報(rec.state)と最新の推定を比べ、条件を満たした時だけ新しい報を出す。
   useEffect(() => {
     const tracked = simEewTrackRef.current;
     if (!hasLinkedShakeTest) { tracked.clear(); return; }
+    // 地域データは初回だけ読み込む。読み込みが終わるまでは判定せず、次の解析(1秒ごと)で判定する。
+    const geo = simGeoRef.current;
+    if (!geo.areas) {
+      if (!geo.loading) {
+        geo.loading = true;
+        loadGeoData().then(g => { geo.areas = g.areas; geo.prefectures = g.prefectures; })
+          .catch(err => { geo.loading = false; console.error("連動シミュレーションの地域データ読み込みに失敗しました:", err); });
+        loadEpicenterNamesData().then(g => { geo.epicenters = g; }).catch(() => {});
+      }
+      return;
+    }
     const now = Date.now();
     const simIds = collectSimStationIds(linkedShakeTests);
     const eventsById = new Map((shakeEvents || []).map(ev => [ev.id, ev]));
     const seen = new Set();
-    // 通常方式とPLUM法のハイブリッド: 観測震度の広がり(PLUM法)を、通常方式の更新報に合成する。
-    const stationsNow = realtimeStream.stations;
-    const valuesNow = effectiveRealtimeValues;
-    const plumGeo = simAreasGeoRef.current;
-    const plumNow = plumGeo ? calcPlumAreaIntensities(plumGeo, stationsNow, valuesNow, simIds) : null;
+    // 通常方式とPLUM法のハイブリッド: 観測震度の広がり(PLUM法)を、通常方式の予想震度に合成する。
+    const plumNow = calcPlumAreaIntensities(geo.areas, realtimeStream.stations, effectiveRealtimeValues, simIds);
+    let shaking = false; // シミュレーション観測点で、一定以上の揺れが続いているか(終了判定用)
+    for (const id of simIds) {
+      const v = effectiveRealtimeValues.get(id);
+      if (Number.isFinite(v) && v >= EEW_RULES.END_QUIET_INTENSITY) { shaking = true; break; }
+    }
     for (const [eventId, est] of epicenterEstimates) {
       if (!canIssueFromEstimate(est)) continue;
       // R2(a): 元の検知点が全てシミュレーション対象の観測点であること
@@ -1193,63 +1208,64 @@ export default function App() {
       const owner = findOwnerTest(est, linkedShakeTests, now);
       if (!owner) continue;
       seen.add(eventId);
-      const prevRec = tracked.get(eventId);
-      if (prevRec) prevRec.lastSeenAt = now;
-      if (prevRec?.pending) continue;
-      if (prevRec && !shouldIssueFollowUp(prevRec, est, now)) {
-        // 推定が変わらなくても、揺れの広がり(PLUM法)で予想震度が変わったら、通常方式の更新報として出す。
-        if (!plumNow || plumNow.size === 0 || now - prevRec.issuedAt < SIM_EEW_MIN_UPDATE_INTERVAL_MS) continue;
-        const held = holdPlum(new Map(prevRec.plumHold || []), plumNow);
-        const hybridNow = mergePlumIntoAreas(
-          calcTestEewAreasByAttenuation(plumGeo, est.lat, est.lon, Math.round(est.magnitude * 10) / 10, est.depthKm, false), held
-        );
-        if (hybridNow.plumSig === prevRec.plumSig) continue;
+      let rec = tracked.get(eventId);
+      if (!rec) {
+        rec = { eewId: `${SIM_EEW_ID_PREFIX}${eventId}`, testId: owner.id, firstAt: now, lastSeenAt: now, lastShakingAt: now, state: null, plumHold: new Map(), ended: false };
+        tracked.set(eventId, rec);
       }
-      const isFirst = !prevRec;
-      const rec = prevRec || { eewId: `${SIM_EEW_ID_PREFIX}${eventId}`, testId: owner.id, isWarn: false, lastSeenAt: now, plumHold: new Map(), plumSig: "" };
-      rec.pending = true;
-      rec.lat = est.lat; rec.lon = est.lon; rec.depthKm = est.depthKm;
-      rec.magnitude = Math.round(est.magnitude * 10) / 10;
-      rec.issuedAt = now;
-      tracked.set(eventId, rec);
-      Promise.all([loadGeoData(), loadEpicenterNamesData().catch(() => null)]).then(([{ areas: areasGeoJSON }, epGeo]) => {
-        // 待っている間に、シミュレーションが終了した・実EEWが発表された場合は発報しない。
-        if (!shakeTestsRef.current.some(t => t.id === owner.id) || realEewActiveRef.current) return;
-        simAreasGeoRef.current = areasGeoJSON;
-        // 通常方式の予想震度に、PLUM法の予想震度(一度出た分は保持)を合成する。
-        const attenuation = calcTestEewAreasByAttenuation(areasGeoJSON, est.lat, est.lon, rec.magnitude, est.depthKm, false);
-        rec.plumHold = holdPlum(rec.plumHold || new Map(), calcPlumAreaIntensities(areasGeoJSON, stationsNow, valuesNow, simIds));
-        const { areas, maxIntensityKey, plumSig } = mergePlumIntoAreas(attenuation, rec.plumHold);
-        rec.plumSig = plumSig;
-        const place = epGeo ? findEpicenterNameByPoint(epGeo, est.lat, est.lon) : null;
-        const isWarnLevel = isTestWarnLevel(maxIntensityKey);
-        if (shouldRevealIncomingEew({
-          selectedQuakeId: selectedQuakeIdRef.current, selectedQuakeOrigin: selectedQuakeOriginRef.current,
-          existing: isFirst ? undefined : { isWarnLevel: rec.isWarn === true },
-          incoming: { cancelled: false, isWarnLevel: rec.isWarn === true ? true : isWarnLevel },
-        })) selectQuake(null);
-        rec.isWarn = rec.isWarn === true || isWarnLevel;
-        const issuedAt = Date.now();
-        setTestEews(prev => {
-          const i = prev.findIndex(e => e.id === rec.eewId);
-          if (i === -1) {
-            if (!isFirst) return prev; // 利用者が削除済みの続報は出し直さない
-            return [...prev, buildSimEewCard({ eventId, est, place, areas, maxIntensityKey, isWarnLevel, simTestId: owner.id, nowMs: issuedAt })];
-          }
-          if (prev[i].cancelled) return prev;
-          const next = [...prev];
-          next[i] = buildSimEewFollowUp(prev[i], { est, place, areas, maxIntensityKey, isWarnLevel, nowMs: issuedAt });
-          return next;
-        });
-      }).catch(err => {
-        console.error("連動シミュレーションのEEW生成に失敗しました:", err);
-      }).finally(() => { rec.pending = false; });
+      rec.lastSeenAt = now;
+      if (shaking) rec.lastShakingAt = now;
+      if (rec.ended) continue;
+      // 予想震度は発表値(M0.1刻み・深さ10km刻み)で計算する。更新判定は内部値(est)で行う(simEewRules.evaluateReport)。
+      const attenuation = calcTestEewAreasByAttenuation(
+        geo.areas, est.lat, est.lon, publishedMagnitude(est.magnitude), publishedDepthKm(est.depthKm), false
+      );
+      holdPlum(rec.plumHold, plumNow); // 一度出たPLUM法の予想震度は下げない
+      const evaluated = evaluateReport(rec.state, {
+        raw: { lat: est.lat, lon: est.lon, depthKm: est.depthKm, magnitude: est.magnitude },
+        stationCount: est.pointCount ?? 0,
+        inland: !!findPrefectureNameByPoint(geo.prefectures, est.lat, est.lon),
+        forecast: buildForecast(attenuation, rec.plumHold),
+      });
+      if (!evaluated) continue; // 発表条件・更新条件を満たさない: 報は出さない(報番号も増やさない)
+      const isFirst = !rec.state;
+      const wasWarn = rec.state?.warn === true;
+      rec.state = evaluated.state;
+      const place = geo.epicenters ? findEpicenterNameByPoint(geo.epicenters, est.lat, est.lon) : null;
+      if (shouldRevealIncomingEew({
+        selectedQuakeId: selectedQuakeIdRef.current, selectedQuakeOrigin: selectedQuakeOriginRef.current,
+        existing: isFirst ? undefined : { isWarnLevel: wasWarn },
+        incoming: { cancelled: false, isWarnLevel: evaluated.state.warn },
+      })) selectQuake(null);
+      setTestEews(prev => {
+        const i = prev.findIndex(e => e.id === rec.eewId);
+        if (i === -1) {
+          if (!isFirst) return prev; // 利用者が削除済みの続報は出し直さない
+          return [...prev, buildSimEewCard({ eventId, est, evaluated, place, simTestId: owner.id, nowMs: now })];
+        }
+        if (prev[i].cancelled) return prev;
+        const next = [...prev];
+        next[i] = buildSimEewFollowUp(prev[i], { est, evaluated, place, nowMs: now });
+        return next;
+      });
     }
-    // 発報済みの推定が消えたまま一定時間たったら取消にする(シミュレーションが続いている間だけ)。
+    // 終了: 最初の検知から一定時間(600秒)、または、揺れが収まって一定時間たった時。最終報の表示にして、しばらく後に消す。
+    for (const rec of tracked.values()) {
+      if (rec.ended || !rec.state) continue;
+      const elapsed = now - rec.firstAt;
+      const quiet = now - rec.lastShakingAt;
+      if (elapsed >= EEW_RULES.END_MAX_MS || (elapsed >= endMinElapsedMs(rec.state.pub.magnitude) && quiet >= EEW_RULES.END_QUIET_MS)) {
+        rec.ended = true;
+        setTestEews(prev => prev.map(e => (e.id === rec.eewId && !e.cancelled && !e.isFinal)
+          ? { ...e, isFinal: true, receivedLocalAt: now, autoRemoveAt: now + SIM_EEW_FINAL_LINGER_MS } : e));
+      }
+    }
+    // 発報済みの推定が消えたまま一定時間たったら、誤検知として取消にする(シミュレーションが続いている間だけ)。
     for (const [eventId, rec] of tracked) {
-      if (seen.has(eventId) || rec.pending) continue;
+      if (seen.has(eventId)) continue;
       if (now - rec.lastSeenAt < SIM_EEW_VANISH_CANCEL_MS) continue;
       tracked.delete(eventId);
+      if (!rec.state || rec.ended) continue;
       setTestEews(prev => prev.map(e => (e.id === rec.eewId && !e.cancelled)
         ? { ...e, cancelled: true, cancelledLocalAt: now, receivedLocalAt: now } : e));
     }
@@ -1272,7 +1288,8 @@ export default function App() {
           return { ...e, cancelled: true, cancelledLocalAt: now, receivedLocalAt: now };
         }
         return {
-          ...e, isFinal: true, serial: String((parseInt(e.serial, 10) || 1) + 1),
+          // 最終報の表示にする。更新が無いので、報番号は増やさない。
+          ...e, isFinal: true,
           receivedLocalAt: now, autoRemoveAt: now + SIM_EEW_FINAL_LINGER_MS,
         };
       });

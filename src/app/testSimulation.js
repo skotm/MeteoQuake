@@ -51,6 +51,7 @@ export function calcTestEewAreasByAttenuation(areasGeoJSON, lat, lon, magnitude,
   const sourceRadiusKm = faultLengthKm / 2;
 
   const areas = []; // 地図の塗り潰し用(震度4以上のみ)
+  const areaValues = new Map(); // 全地域の予測計測震度(連続値)。報の更新判定(最大予測震度・予報区の変化)用
   let overallMaxValue = -Infinity;
   let overallMaxKey = null;
 
@@ -72,6 +73,7 @@ export function calcTestEewAreasByAttenuation(areasGeoJSON, lat, lon, magnitude,
 
     const instrIntensity = 2.68 + 1.72 * Math.log10(PGVs);
     if (!Number.isFinite(instrIntensity)) continue;
+    areaValues.set(name, instrIntensity);
 
     const key = instrumentalIntensityToScaleKey(instrIntensity);
     if (instrIntensity > overallMaxValue) {
@@ -83,7 +85,7 @@ export function calcTestEewAreasByAttenuation(areasGeoJSON, lat, lon, magnitude,
     const code = INTENSITY_SCALE_CODE[key] ?? 40;
     areas.push({ pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: key, isPlum: !!isPlum });
   }
-  return { areas, maxIntensityKey: overallMaxKey || "?" };
+  return { areas, maxIntensityKey: overallMaxKey || "?", maxIntensityValue: overallMaxValue, areaValues };
 }
 
 /* ─────────────────────────────────────────────────────
