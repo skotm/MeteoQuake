@@ -16,9 +16,9 @@ import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWeb
 import { loadEpicenterNamesData, loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
 import {
   SIM_EEW_FINAL_LINGER_MS, SIM_EEW_ID_PREFIX, SIM_EEW_VANISH_CANCEL_MS,
-  areaNameForStation, buildSimEewCard, buildSimEewFollowUp, buildSimLevelCard, buildSimLevelFollowUp,
+  buildSimEewCard, buildSimEewFollowUp, buildSimLevelCard, buildSimLevelFollowUp,
   calcPlumAreaIntensities, canIssueFromEstimate, collectSimStationIds,
-  findOwnerTest, holdPlum, isRealEewActive, isSimEew, isSimulationOnlyEvent, simLevelEewId,
+  findOwnerTest, groupLevelTriggers, holdPlum, isRealEewActive, isSimEew, isSimulationOnlyEvent, simLevelEewId,
 } from "./app/simEew";
 import {
   CLASS_INDEX_5_MINUS, EEW_RULES, buildForecast, describeChanges, endMinElapsedMs, evaluateReport,
@@ -1023,7 +1023,8 @@ export default function App() {
   // 連動シミュレーションの判定に使う地域データ(細分区域・都道府県=陸域判定・震央地名)。初回だけ読み込んで保持する。
   const simGeoRef = useRef({ areas: null, prefectures: null, epicenters: null, loading: false });
   const realEewActiveRef = useRef(false);
-  // レベル法の報の管理(simTestId → { eewId, serial, triggerId, stationIds, areaNames, issuedAt, confirmed, cancelled, absorbed })
+  // レベル法の報の管理(simTestId → { eewId, serial, triggerId, hold(地域名→観測震度), areaNames, issuedAt, confirmed, cancelled, absorbed })
+  // レベル法の報は、通常方式の報とは別の報にしない。通常方式の報が出る前だけの最初の段階で、通常方式の報が出たら同じカードに統合する。
   const simLevelRef = useRef(new Map());
   const testEewsRef = useRef([]);
   // 連動シミュレーションのログ(セッション中のみ。更新理由などはEEWカードには出さず、ここにまとめる)
@@ -1229,7 +1230,17 @@ export default function App() {
       if (Number.isFinite(v) && v >= EEW_RULES.END_QUIET_INTENSITY) { shaking = true; break; }
     }
 
-    // ── 震源とMによる報(通常方式) ──
+    // レベル法の対象(観測点の揺れが一定以上)を、シミュレーションごと・地域ごとにまとめる。
+    const levelByTest = groupLevelTriggers(
+      geo.areas, levelTriggerStations(realtimeStream.stations, effectiveRealtimeValues, simIds), linkedShakeTests
+    );
+    const levelIntensities = testId => {
+      const m = new Map();
+      for (const [name, a] of levelByTest.get(testId)?.areas || []) m.set(name, { intensity: a.intensity, key: a.key });
+      return m;
+    };
+
+    // ── 震源とMによる報(通常方式)。レベル法の地域も、この報の一部として扱う ──
     for (const [eventId, est] of epicenterEstimates) {
       if (!canIssueFromEstimate(est)) continue;
       // R2(a): 元の検知点が全てシミュレーション対象の観測点であること
@@ -1240,7 +1251,7 @@ export default function App() {
       seen.add(eventId);
       let rec = tracked.get(eventId);
       if (!rec) {
-        rec = { eewId: `${SIM_EEW_ID_PREFIX}${eventId}`, testId: owner.id, firstAt: now, lastSeenAt: now, lastShakingAt: now, state: null, serial: 0, plumHold: new Map(), ended: false };
+        rec = { eewId: `${SIM_EEW_ID_PREFIX}${eventId}`, testId: owner.id, firstAt: now, lastSeenAt: now, lastShakingAt: now, state: null, serial: 0, plumHold: new Map(), levelHold: new Map(), ended: false };
         tracked.set(eventId, rec);
       }
       rec.lastSeenAt = now;
@@ -1251,25 +1262,27 @@ export default function App() {
         geo.areas, est.lat, est.lon, publishedMagnitude(est.magnitude), publishedDepthKm(est.depthKm), false
       );
       holdPlum(rec.plumHold, plumNow); // 一度出たPLUM法の予想震度は下げない
+      // 強い揺れを観測した地域(レベル法)も、通常方式の報に合流させる。レベル法の報が先に出ていれば、その地域も引き継ぐ。
+      holdPlum(rec.levelHold, levelIntensities(owner.id));
+      const pendingLevel = !rec.state ? levels.get(owner.id) : null;
+      if (pendingLevel && !pendingLevel.cancelled && !pendingLevel.absorbed) holdPlum(rec.levelHold, pendingLevel.hold);
       const evaluated = evaluateReport(rec.state, {
         raw: { lat: est.lat, lon: est.lon, depthKm: est.depthKm, magnitude: est.magnitude },
         stationCount: est.pointCount ?? 0,
         inland: !!findPrefectureNameByPoint(geo.prefectures, est.lat, est.lon),
-        forecast: buildForecast(attenuation, rec.plumHold),
+        forecast: buildForecast(attenuation, rec.plumHold, rec.levelHold),
       });
       if (!evaluated) continue; // 発表条件・更新条件を満たさない: 報は出さない(報番号も増やさない)
       const isFirst = !rec.state;
       const prevState = rec.state;
       const wasWarn = prevState?.warn === true;
-      // レベル法の報が同一の地震なら、その報を通常方式の続報として引き継ぐ(報番号は続ける)。
+      // レベル法の報が先に出ていれば、通常方式の最初の報は、その報の続報として同じカードを更新する(報番号は続ける)。
+      // レベル法と通常方式の報は、別の報として分けない。
       let absorbed = null;
-      if (isFirst) {
-        const lv = levels.get(owner.id);
-        if (lv && !lv.cancelled && !lv.absorbed) {
-          const sameStation = (eventsById.get(eventId)?.detections || []).some(d => lv.stationIds.has(d.id));
-          const sameArea = evaluated.display.areas.some(a => lv.areaNames.has(a.name));
-          if (sameStation || sameArea) { absorbed = lv; lv.absorbed = true; rec.eewId = lv.eewId; }
-        }
+      if (isFirst && pendingLevel && !pendingLevel.cancelled && !pendingLevel.absorbed) {
+        absorbed = pendingLevel;
+        pendingLevel.absorbed = true;
+        rec.eewId = pendingLevel.eewId;
       }
       const asNewCard = isFirst && !absorbed;
       rec.state = evaluated.state;
@@ -1279,7 +1292,13 @@ export default function App() {
         at: now, kind: asNewCard ? "発表" : "更新", method: "通常", serial: rec.serial, state: evaluated.state,
         reasons: absorbed ? [...evaluated.reasons, "レベル法の報を引き継ぎ"] : evaluated.reasons,
         changes: describeChanges(prevState, evaluated),
-        note: evaluated.display.intensityHidden ? "1観測点の結果のため、予測震度は載せていません" : "",
+        note: [
+          evaluated.display.intensityHidden ? "1観測点の結果のため、予測震度は載せていません" : "",
+          (() => {
+            const lvAdded = evaluated.display.areas.filter(a => a.isLevel && !prevState?.areaClasses.has(a.name)).map(a => a.name);
+            return lvAdded.length > 0 ? `レベル法(強い揺れを観測した観測点の地域)で追加: ${lvAdded.join("、")}` : "";
+          })(),
+        ].filter(Boolean).join(" / "),
       }));
       if (shouldRevealIncomingEew({
         selectedQuakeId: selectedQuakeIdRef.current, selectedQuakeOrigin: selectedQuakeOriginRef.current,
@@ -1301,57 +1320,51 @@ export default function App() {
     }
 
     // ── レベル法: 観測点の揺れが一定以上なら、震源・Mの推定を待たずに予報(震度5弱程度以上)を出す ──
+    // 通常方式の報がまだ無い間の、最初の段階。通常方式の報がすでにある地震では、別の報を出さず、上の通常方式の更新に合流する。
     // すでに震度5弱以上で報に含まれている地域の揺れでは、新たに発表しない(気象庁)。
-    const triggers = levelTriggerStations(realtimeStream.stations, effectiveRealtimeValues, simIds);
-    if (triggers.length > 0) {
+    if (levelByTest.size > 0) {
       const covered = new Set();
       for (const rec of tracked.values()) {
         if (!rec.state) continue;
         for (const [name, idx] of rec.state.areaClasses) if (idx >= CLASS_INDEX_5_MINUS) covered.add(name);
       }
       for (const lv of levels.values()) if (!lv.cancelled) for (const n of lv.areaNames) covered.add(n);
-      const byTest = new Map(); // simTestId → { first: 最初の観測点, areas: 地域名 → 観測点 }
-      for (const st of triggers) {
-        const areaName = areaNameForStation(geo.areas, st);
-        if (!areaName || covered.has(areaName)) continue;
-        const owner = linkedShakeTests.find(t => t.perStation.has(st.id));
-        if (!owner) continue;
-        let g = byTest.get(owner.id);
-        if (!g) { g = { first: st, areas: new Map() }; byTest.set(owner.id, g); }
-        if (!g.areas.has(areaName)) g.areas.set(areaName, st);
-      }
-      for (const [testId, g] of byTest) {
+      for (const [testId, g] of levelByTest) {
+        const normalActive = [...tracked.values()].some(r => r.testId === testId && r.state && !r.ended);
+        if (normalActive) continue; // 通常方式の報が出ている: 上の更新に合流済み
         const lv = levels.get(testId);
         if (lv && (lv.cancelled || lv.absorbed)) continue;
-        const names = [...g.areas.keys()];
+        const fresh = [...g.areas.keys()].filter(n => !covered.has(n));
+        if (fresh.length === 0) continue;
         if (!lv) {
           const eewId = simLevelEewId(testId);
           levels.set(testId, {
-            eewId, serial: 1, triggerId: g.first.id, stationIds: new Set([...g.areas.values()].map(st => st.id)),
-            areaNames: new Set(names), issuedAt: now, confirmed: false, cancelled: false, absorbed: false,
+            eewId, serial: 1, triggerId: g.first.id,
+            hold: new Map(fresh.map(n => [n, { intensity: g.areas.get(n).intensity, key: g.areas.get(n).key }])),
+            areaNames: new Set(fresh), issuedAt: now, confirmed: false, cancelled: false, absorbed: false,
           });
           if (shouldRevealIncomingEew({
             selectedQuakeId: selectedQuakeIdRef.current, selectedQuakeOrigin: selectedQuakeOriginRef.current,
             existing: undefined, incoming: { cancelled: false, isWarnLevel: false },
           })) selectQuake(null);
           setTestEews(prev => prev.some(e => e.id === eewId) ? prev
-            : [...prev, buildSimLevelCard({ simTestId: testId, station: g.first, areaNames: names, nowMs: now })]);
+            : [...prev, buildSimLevelCard({ simTestId: testId, station: g.first, areaNames: fresh, nowMs: now })]);
           logs.push(makeSimLogEntry({
             at: now, kind: "発表", method: "レベル法", serial: 1, reasons: ["レベル法による発表"], warn: false,
-            note: `観測点の揺れが計測震度${EEW_RULES.LEVEL_INTENSITY}以上(100gal相当)に達したため、震源・Mの推定を待たずに発表。震度5弱程度以上: ${names.join("、")}`,
+            note: `観測点の揺れが計測震度${EEW_RULES.LEVEL_INTENSITY}以上(100gal相当)に達したため、震源・Mの推定を待たずに発表。震度5弱程度以上: ${fresh.join("、")}`,
           }));
         } else {
-          const addNames = names.filter(n => !lv.areaNames.has(n));
-          if (addNames.length === 0) continue;
-          for (const n of addNames) lv.areaNames.add(n);
-          for (const st of g.areas.values()) lv.stationIds.add(st.id);
+          for (const n of fresh) {
+            lv.areaNames.add(n);
+            lv.hold.set(n, { intensity: g.areas.get(n).intensity, key: g.areas.get(n).key });
+          }
           lv.serial += 1;
           const serial = lv.serial;
           setTestEews(prev => prev.map(e => (e.id === lv.eewId && !e.cancelled)
-            ? buildSimLevelFollowUp(e, { areaNames: addNames, nowMs: now }) : e));
+            ? buildSimLevelFollowUp(e, { areaNames: fresh, nowMs: now }) : e));
           logs.push(makeSimLogEntry({
             at: now, kind: "更新", method: "レベル法", serial, reasons: ["新しい地域で強い揺れを観測"], warn: false,
-            note: `震度5弱程度以上に追加: ${addNames.join("、")}`,
+            note: `震度5弱程度以上に追加: ${fresh.join("、")}`,
           }));
         }
       }

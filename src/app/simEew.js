@@ -164,6 +164,26 @@ export function areaNameForStation(areasGeoJSON, st) {
   return best;
 }
 
+// レベル法の対象の観測点(simEewRules.levelTriggerStations)を、属するシミュレーションごと・地域ごとにまとめる。
+// 戻り値: Map<simTestId, { first: 観測震度が最大の観測点, areas: Map<地域名, { intensity, key, station }> }>
+// 地域に属さない観測点(海上など)は対象外。
+export function groupLevelTriggers(areasGeoJSON, triggers, tests) {
+  const out = new Map();
+  for (const st of triggers || []) {
+    const areaName = areaNameForStation(areasGeoJSON, st);
+    if (!areaName) continue;
+    const owner = (tests || []).find(t => t.perStation?.has(st.id));
+    if (!owner) continue;
+    let g = out.get(owner.id);
+    if (!g) { g = { first: st, areas: new Map() }; out.set(owner.id, g); }
+    const cur = g.areas.get(areaName);
+    if (!cur || st.value > cur.intensity) {
+      g.areas.set(areaName, { intensity: st.value, key: instrumentalIntensityToScaleKey(st.value), station: st });
+    }
+  }
+  return out;
+}
+
 function levelArea(name) {
   const code = INTENSITY_SCALE_CODE[LEVEL_KEY] ?? 45;
   return { pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: LEVEL_KEY, isPlum: false };

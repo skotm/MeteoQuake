@@ -75,11 +75,15 @@ export function classLabel(idx) {
 const EPS = 1e-9;
 const atLeast = (value, threshold) => value >= threshold - EPS;
 
-// 通常方式(距離減衰、calcTestEewAreasByAttenuationのareaValues)とPLUM法の予想震度を合成する。
-// 地域ごとに、大きいほうを採用する(平均ではない)。plumWon: PLUM法のほうが大きかった地域。
-export function buildForecast(attenuation, plum) {
+// 通常方式(距離減衰、calcTestEewAreasByAttenuationのareaValues)、PLUM法、レベル法の予想震度を合成する。
+// 地域ごとに、最も大きいものを採用する(平均ではない)。
+//   plumWon : PLUM法のほうが大きかった地域
+//   levelWon: レベル法(強い揺れを観測した観測点が属する地域)のほうが大きかった地域
+// レベル法の地域も、通常方式の報の一部として扱う(別の報にはしない)。
+export function buildForecast(attenuation, plum, level) {
   const areaValues = new Map(attenuation?.areaValues || []);
   const plumWon = new Set();
+  const levelWon = new Set();
   for (const [name, p] of plum || []) {
     const cur = areaValues.get(name);
     if (cur === undefined || p.intensity > cur) {
@@ -87,7 +91,15 @@ export function buildForecast(attenuation, plum) {
       plumWon.add(name);
     }
   }
-  return { areaValues, plumWon };
+  for (const [name, p] of level || []) {
+    const cur = areaValues.get(name);
+    if (cur === undefined || p.intensity > cur) {
+      areaValues.set(name, p.intensity);
+      plumWon.delete(name);
+      levelWon.add(name);
+    }
+  }
+  return { areaValues, plumWon, levelWon };
 }
 
 /* 前回の報(prev)と最新の解析結果(latest)を比べて、新しい報を出すか判定する。
@@ -168,7 +180,10 @@ export function evaluateReport(prev, latest) {
     if (!atLeast(v, R.AREA_MIN_INTENSITY)) continue;
     const key = instrumentalIntensityToScaleKey(v);
     const code = INTENSITY_SCALE_CODE[key] ?? 40;
-    areas.push({ pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: key, isPlum: forecast.plumWon.has(name) });
+    areas.push({
+      pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: key,
+      isPlum: forecast.plumWon.has(name), isLevel: forecast.levelWon?.has(name) === true,
+    });
   }
 
   // 1観測点だけの結果による報は、地震以外の揺れや機器障害の可能性があるため、予測震度を載せない(気象庁)。

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  areaNameForStation, buildSimEewCard, buildSimEewFollowUp, buildSimLevelCard, buildSimLevelFollowUp, isSimEew, simLevelEewId,
+  areaNameForStation, groupLevelTriggers, buildSimEewCard, buildSimEewFollowUp, buildSimLevelCard, buildSimLevelFollowUp, isSimEew, simLevelEewId,
 } from "../src/app/simEew.js";
 import { EEW_RULES, buildForecast, describeChanges, evaluateReport, levelTriggerStations } from "../src/app/simEewRules.js";
 import { formatSimLog, makeSimLogEntry } from "../src/app/simEewLog.js";
@@ -118,4 +118,38 @@ test("ログ: 報ではないログ(開始・中止など)も書式化でき、�
   assert.ok(t.includes("開始"));
   assert.ok(t.includes("発表(レベル法)"));
   assert.ok(t.includes("対象: A地域"));
+});
+
+test("レベル法のトリガは、シミュレーションごと・地域ごとにまとめる。地域ごとの最大の観測震度を採用し、地域に属さない観測点・所有者の無い観測点は除く", () => {
+  const tests = [{ id: "t1", perStation: new Map([[1, {}], [2, {}], [3, {}]]) }, { id: "t2", perStation: new Map([[4, {}]]) }];
+  const triggers = [
+    { id: 1, lat: 35.0, lon: 139.0, value: 5.2 },
+    { id: 2, lat: 35.01, lon: 139.0, value: 6.0 }, // 1と同じ区域(A地域): 大きい方を採用
+    { id: 3, lat: 38.0, lon: 130.0, value: 5.0 },  // どの区域にも属さない
+    { id: 4, lat: 36.0, lon: 139.0, value: 4.8 },  // t2のB地域
+    { id: 9, lat: 35.0, lon: 139.0, value: 7.0 },  // どのシミュレーションにも属さない
+  ];
+  const g = groupLevelTriggers(areas, triggers, tests);
+  assert.deepEqual([...g.keys()].sort(), ["t1", "t2"]);
+  assert.equal(g.get("t1")!.areas.get("A地域")!.intensity, 6.0);
+  assert.equal(g.get("t1")!.areas.get("A地域")!.key, "6+");
+  assert.equal(g.get("t1")!.areas.size, 1);
+  assert.equal(g.get("t2")!.areas.get("B地域")!.key, "5-");
+});
+
+test("レベル法は通常方式の報の一部: 強い揺れを観測した地域が、通常方式の予想震度に合流する(別の報にならない)", () => {
+  const level = new Map([["B地域", { intensity: 5.1, key: "5+" }]]);
+  const f = buildForecast({ areaValues: new Map([["A地域", 4.0], ["B地域", 3.0]]) }, new Map(), level);
+  assert.equal(f.areaValues.get("B地域"), 5.1);
+  assert.deepEqual([...f.levelWon], ["B地域"]);
+  // 通常方式のほうが大きい地域は、通常方式のまま
+  const f2 = buildForecast({ areaValues: new Map([["B地域", 6.0]]) }, new Map(), level);
+  assert.equal(f2.areaValues.get("B地域"), 6.0);
+  assert.equal(f2.levelWon.size, 0);
+  // 最初の報の後に、レベル法で新しい地域が加わると、通常の更新条件(新しい予報区の追加)で更新される
+  const base = { raw: { lat: 35, lon: 139, depthKm: 20, magnitude: 5.0 }, stationCount: 5, inland: true };
+  const first = evaluateReport(null, { ...base, forecast: buildForecast({ areaValues: new Map([["A地域", 3.6]]) }, new Map()) })!;
+  const upd = evaluateReport(first.state, { ...base, forecast: buildForecast({ areaValues: new Map([["A地域", 3.6]]) }, new Map(), level) })!;
+  assert.ok(upd.reasons.includes("新しい予報区の追加"));
+  assert.equal(upd.display.areas.find((a: any) => a.name === "B地域").isLevel, true);
 });
