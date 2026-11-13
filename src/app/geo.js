@@ -213,6 +213,17 @@ export function findPrefectureNameByPoint(prefecturesGeoJSON, lat, lon) {
   return null;
 }
 
+// 点(lat, lon)を含む細分区域の名前。含む区域が無ければnull。
+export function findAreaNameByPoint(areasGeoJSON, lat, lon) {
+  if (!areasGeoJSON || !Array.isArray(areasGeoJSON.features) || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  for (const feature of areasGeoJSON.features) {
+    const bb = featureBBox(feature);
+    if (lon < bb[0] || lon > bb[2] || lat < bb[1] || lat > bb[3]) continue;
+    if (isPointInPolygonGeometry(lat, lon, feature.geometry)) return feature.properties?.name ?? null;
+  }
+  return null;
+}
+
 // 震央地名(ep.json)の区域名から、都道府県名を推定する(観測点が都道府県ポリゴンの外に
 // ある時の予備)。「岩手県沖」「千葉県北東部」のように都道府県名で始まるものと、
 // 北海道の「釧路地方北部」のような地方名で始まるものに対応する。海域名(三陸沖など)はnull。

@@ -29,6 +29,13 @@ export const EEW_RULES = Object.freeze({
   UPDATE_MAXINT_RISE: 0.5,
   UPDATE_MAXINT_DROP: 1.0,
 
+  // ── レベル法(震源要素によらない予測手法) ──
+  // 気象庁: 観測点の上下動加速度が100gal以上になると、震源決定を介さず「観測点近傍で震度5弱以上」として直ちに予報を発表する。
+  // 計測震度4.5以上がほぼ100gal以上に当たるため、加速度の無いシミュレーションでは、観測震度4.5以上で代用する。
+  LEVEL_INTENSITY: 4.5,
+  // 気象庁: 所定の時間内に2地点目の観測点が検知できなければ、キャンセル報を出す。時間の数値は資料に無いため仮置き。
+  LEVEL_SECOND_STATION_TIMEOUT_MS: 10000,
+
   // ── 終了条件 ──
   // 気象庁: 最初の検知から600秒。または、マグニチュードに応じた時間がたち、一定の閾値以上の揺れが
   // 一定時間観測されなくなった時。後者の数値は資料に無いため仮置き。
@@ -53,6 +60,16 @@ export function publishedDepthKm(rawDepthKm) {
 const CLASS_ORDER = ["0", "1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
 function classIndex(key) {
   return CLASS_ORDER.indexOf(key);
+}
+// 震度5弱以上の階級番号(CLASS_ORDERの位置)
+export const CLASS_INDEX_5_MINUS = 5;
+
+// 階級の表示名("5-" → "5弱")。ログ用。
+export function scaleKeyLabel(key) {
+  return ({ "5-": "5弱", "5+": "5強", "6-": "6弱", "6+": "6強" })[key] ?? String(key);
+}
+export function classLabel(idx) {
+  return scaleKeyLabel(CLASS_ORDER[idx] ?? "?");
 }
 
 const EPS = 1e-9;
@@ -154,9 +171,61 @@ export function evaluateReport(prev, latest) {
     areas.push({ pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: key, isPlum: forecast.plumWon.has(name) });
   }
 
+  // 1観測点だけの結果による報は、地震以外の揺れや機器障害の可能性があるため、予測震度を載せない(気象庁)。
+  const intensityHidden = stationCount <= 1;
   return {
     state: { raw: { ...raw }, pub, maxValue, maxKey, areaClasses, warn: warnNow, warnAreas },
     reasons,
-    display: { areas, maxKey, isWarnLevel: warnNow },
+    newWarnAreas,
+    display: {
+      areas: intensityHidden ? [] : areas,
+      maxKey: intensityHidden ? "?" : maxKey,
+      isWarnLevel: warnNow,
+      intensityHidden,
+    },
   };
+}
+
+// 前回の報から変わった内容を、ログ用の文にする(更新前後の値)。evaluated: evaluateReportの戻り値。
+export function describeChanges(prev, evaluated) {
+  if (!prev || !evaluated) return [];
+  const { state, newWarnAreas } = evaluated;
+  const out = [];
+  const f = (n, d) => Number(n).toFixed(d);
+  if (state.raw.magnitude !== prev.raw.magnitude) {
+    out.push(`M ${f(prev.raw.magnitude, 2)}→${f(state.raw.magnitude, 2)}(発表 ${f(prev.pub.magnitude, 1)}→${f(state.pub.magnitude, 1)})`);
+  }
+  if (state.raw.depthKm !== prev.raw.depthKm) {
+    out.push(`深さ ${f(prev.raw.depthKm, 1)}→${f(state.raw.depthKm, 1)}km(発表 ${prev.pub.depthKm}→${state.pub.depthKm}km)`);
+  }
+  if (state.raw.lat !== prev.raw.lat || state.raw.lon !== prev.raw.lon) {
+    out.push(`震源 (${f(prev.raw.lat, 2)}, ${f(prev.raw.lon, 2)})→(${f(state.raw.lat, 2)}, ${f(state.raw.lon, 2)})`);
+  }
+  if (Math.abs(state.maxValue - prev.maxValue) > 1e-9) {
+    out.push(`最大予測震度 ${scaleKeyLabel(prev.maxKey)}→${scaleKeyLabel(state.maxKey)}(計測震度 ${f(prev.maxValue, 2)}→${f(state.maxValue, 2)})`);
+  }
+  const added = [];
+  const changed = [];
+  for (const [name, idx] of state.areaClasses) {
+    if (!prev.areaClasses.has(name)) added.push(`${name}(${classLabel(idx)})`);
+    else if (prev.areaClasses.get(name) !== idx) changed.push(`${name}(${classLabel(prev.areaClasses.get(name))}→${classLabel(idx)})`);
+  }
+  for (const [name, idx] of prev.areaClasses) if (!state.areaClasses.has(name)) changed.push(`${name}(${classLabel(idx)}→4未満)`);
+  if (added.length) out.push(`新しい予報区: ${added.join("、")}`);
+  if (changed.length) out.push(`予報区の変化: ${changed.join("、")}`);
+  if (newWarnAreas?.length) out.push(`警報対象に追加: ${newWarnAreas.join("、")}`);
+  return out;
+}
+
+// レベル法の対象になる観測点(観測震度がLEVEL_INTENSITY以上のシミュレーション観測点)を、観測震度の大きい順に返す。
+export function levelTriggerStations(stations, values, simStationIds) {
+  const out = [];
+  if (!stations || !values || !simStationIds) return out;
+  for (const st of stations) {
+    if (!simStationIds.has(st.id)) continue;
+    const v = values.get(st.id);
+    if (Number.isFinite(v) && atLeast(v, EEW_RULES.LEVEL_INTENSITY)) out.push({ id: st.id, lat: st.lat, lon: st.lon, value: v });
+  }
+  out.sort((a, b) => b.value - a.value);
+  return out;
 }

@@ -217,7 +217,7 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
               fontSize: 16, fontWeight: 800, lineHeight: 1.25,
               color: tokens.text,
             }}>
-              緊急地震速報{eew.cancelled ? "(取消)" : (isWarnLevel ? "(警報)" : "(予報)")}{!eew.cancelled && eew.isPlum ? "・PLUM法" : ""}
+              緊急地震速報{eew.cancelled ? "(取消)" : (isWarnLevel ? "(警報)" : "(予報)")}{!eew.cancelled && eew.isPlum ? (eew.isLevel ? "・レベル法" : "・PLUM法") : ""}
             </span>
           </Glass>
           {!eew.cancelled && (
@@ -299,7 +299,7 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
                 {eew.isPlum ? (
                   <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1, marginBottom: 14 }}>
                     <span style={{ fontSize: 16, fontWeight: 700, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
-                      PLUM法による仮定震源要素
+                      {eew.isLevel ? "震源・Mは未推定(レベル法)" : "PLUM法による仮定震源要素"}
                     </span>
                   </div>
                 ) : (
@@ -354,27 +354,12 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
 
           {eew.isPlum && (
             <div style={{ margin: "0 16px 8px", fontSize: 11, color: tokens.textSecondary, lineHeight: 1.6 }}>
-              ※観測点の揺れの実測から予測しています(到達時刻は未提供)。
+              {eew.isLevel
+                ? "※観測点近傍で震度5弱程度以上の強い揺れを観測しました。震源・Mの推定を待たずに発表しています(到達時刻は未提供)。"
+                : "※観測点の揺れの実測から予測しています(到達時刻は未提供)。"}
             </div>
           )}
         </>
-      )}
-
-      {/* シミュレーション: 更新理由と報の履歴(内部値と発表値の比較)。 */}
-      {eew.isSimulation && eew.simReasons?.length > 0 && (
-        <div style={{ margin: "2px 16px 0", fontSize: 9.5, color: tokens.textSecondary, lineHeight: 1.4 }}>
-          更新理由: {eew.simReasons.join("・")}
-        </div>
-      )}
-      {eew.isSimulation && eew.simHistory?.length > 1 && (
-        <details style={{ margin: "2px 16px 0", fontSize: 9.5, color: tokens.textSecondary, lineHeight: 1.5 }}>
-          <summary style={{ cursor: "pointer" }}>報の履歴({eew.simHistory.length}件)</summary>
-          {[...eew.simHistory].reverse().map(h => (
-            <div key={h.serial}>
-              #{h.serial} M{h.magnitude.toFixed(1)}(内部{h.rawMagnitude.toFixed(2)})・深さ{h.depthKm}km(内部{h.rawDepthKm.toFixed(1)}km)・{h.reasons.join("・")}
-            </div>
-          ))}
-        </details>
       )}
 
       {/* シミュレーションの注意書きは、カードの最後(下)に小さく出す。 */}
