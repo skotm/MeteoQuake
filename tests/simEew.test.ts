@@ -63,11 +63,13 @@ test("R4: シミュレーションEEWカードは常にisTest/isSimulation/sourc
   assert.equal(c.serial, "1");
   assert.equal(c.magnitude, 5.8);
   assert.equal(c.depth, 20);
-  assert.deepEqual(c.simReasons, ["発表", "警報の発表"]);
-  assert.equal(c.simHistory.length, 1);
+  assert.equal(c.isLevel, false);
+  // 更新理由や履歴は、カードには持たせない(ログにまとめる)
+  assert.equal("simReasons" in c, false);
+  assert.equal("simHistory" in c, false);
 });
 
-test("続報: 報番号+1、履歴に追記、警報は予報に戻さない", () => {
+test("続報: 報番号+1、警報は予報に戻さない", () => {
   const c = buildSimEewCard({ eventId: "e1", est, evaluated, place: "A", simTestId: "t1", nowMs: T0 });
   const lower = evaluateReport(evaluated.state, {
     raw: { lat: 35.2, lon: 139.3, depthKm: 20, magnitude: 5.2 }, stationCount: 5, inland: false,
@@ -77,8 +79,8 @@ test("続報: 報番号+1、履歴に追記、警報は予報に戻さない", (
   assert.equal(f.serial, "2");
   assert.equal(f.isWarnLevel, true);
   assert.equal(f.magnitude, 5.2);
-  assert.equal(f.simHistory.length, 2);
-  assert.ok(f.simReasons.includes("マグニチュードの変化"));
+  assert.equal("simReasons" in f, false);
+  assert.equal("simHistory" in f, false);
 });
 
 test("発報条件: 位置・深さ・Mのどれかが欠けた推定は発報しない", () => {

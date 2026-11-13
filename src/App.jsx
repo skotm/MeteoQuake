@@ -16,10 +16,15 @@ import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWeb
 import { loadEpicenterNamesData, loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
 import {
   SIM_EEW_FINAL_LINGER_MS, SIM_EEW_ID_PREFIX, SIM_EEW_VANISH_CANCEL_MS,
-  buildSimEewCard, buildSimEewFollowUp, calcPlumAreaIntensities, canIssueFromEstimate, collectSimStationIds,
-  findOwnerTest, holdPlum, isRealEewActive, isSimEew, isSimulationOnlyEvent,
+  areaNameForStation, buildSimEewCard, buildSimEewFollowUp, buildSimLevelCard, buildSimLevelFollowUp,
+  calcPlumAreaIntensities, canIssueFromEstimate, collectSimStationIds,
+  findOwnerTest, holdPlum, isRealEewActive, isSimEew, isSimulationOnlyEvent, simLevelEewId,
 } from "./app/simEew";
-import { EEW_RULES, buildForecast, endMinElapsedMs, evaluateReport, publishedDepthKm, publishedMagnitude } from "./app/simEewRules";
+import {
+  CLASS_INDEX_5_MINUS, EEW_RULES, buildForecast, describeChanges, endMinElapsedMs, evaluateReport,
+  levelTriggerStations, publishedDepthKm, publishedMagnitude,
+} from "./app/simEewRules";
+import { SIM_LOG_MAX, makeSimLogEntry } from "./app/simEewLog";
 import { buildTestQuakeStageCard, calcTestEewAreasByAttenuation, isTestWarnLevel, formatTestQuakeNow, testQuakeTimeFromInput, testQuakeTimeToInput } from "./app/testSimulation";
 import { dedupeQuakeList, fetchRecentQuakes, mergeQuakeCards } from "./app/quakeCards";
 import { TSUNAMI_FETCH_LIMIT, TSUNAMI_HISTORY_PAGE_SIZE, dedupeTsunamiList, fetchJmaTsunamiHistory, fetchRecentTsunamis, fetchTsunamiHistoryPage, mergeTsunamiSources, tsunamiGradeInfo, tsunamiHeightBandColor } from "./app/tsunamiData";
@@ -1018,6 +1023,14 @@ export default function App() {
   // 連動シミュレーションの判定に使う地域データ(細分区域・都道府県=陸域判定・震央地名)。初回だけ読み込んで保持する。
   const simGeoRef = useRef({ areas: null, prefectures: null, epicenters: null, loading: false });
   const realEewActiveRef = useRef(false);
+  // レベル法の報の管理(simTestId → { eewId, serial, triggerId, stationIds, areaNames, issuedAt, confirmed, cancelled, absorbed })
+  const simLevelRef = useRef(new Map());
+  const testEewsRef = useRef([]);
+  // 連動シミュレーションのログ(セッション中のみ。更新理由などはEEWカードには出さず、ここにまとめる)
+  const [simEewLog, setSimEewLog] = useState([]);
+  const pushSimLog = useCallback(entries => {
+    if (entries.length > 0) setSimEewLog(prev => [...prev, ...entries].slice(-SIM_LOG_MAX));
+  }, []);
 
   // 地震検知テスト実行中の「正解」の震源群(MapCanvasへ渡す用、複数同時
   // 実行に対応)。実行中でなければ空配列。
@@ -1029,6 +1042,7 @@ export default function App() {
   })), [shakeTests]);
 
   function handleShakeTestAction(action, payload) {
+    if (action === "clearEewLog") { setSimEewLog([]); return; }
     if (action === "patchForm") {
       setShakeTestForm(prev => ({ ...prev, ...payload }));
       return;
@@ -1081,12 +1095,21 @@ export default function App() {
         eewLinked: wantsLink,
       };
       setShakeTests(prev => [...prev, newTest]);
-      if (wantsLink) setShakeTestForm(prev => ({ ...prev, eewConsent: false })); // 同意は毎回取り直す
+      if (wantsLink) {
+        setShakeTestForm(prev => ({ ...prev, eewConsent: false })); // 同意は毎回取り直す
+        pushSimLog([makeSimLogEntry({
+          at: Date.now(), kind: "開始",
+          note: `連動シミュレーション開始: ${shakeTestForm.place} M${Number(shakeTestForm.magnitude).toFixed(1)} 深さ${shakeTestForm.depth}km(実際の観測データを遮断)`,
+        })]);
+      }
       return;
     }
     if (action === "stop") {
       // payload.idが指定されていればそのシミュレーションだけ個別に停止する。
       // 指定が無ければ(バナーの「停止」ボタン等)全て停止する。
+      if (shakeTests.some(t => t.eewLinked && (!payload?.id || t.id === payload.id))) {
+        pushSimLog([makeSimLogEntry({ at: Date.now(), kind: "停止", note: "手動で停止しました" })]);
+      }
       if (payload?.id) {
         stoppedSimTestIdsRef.current.add(payload.id);
         setShakeTests(prev => prev.filter(t => t.id !== payload.id));
@@ -1171,13 +1194,17 @@ export default function App() {
   useEffect(() => {
     shakeTestsRef.current = shakeTests;
     realEewActiveRef.current = realEewActive;
+    testEewsRef.current = testEews;
   });
 
   // 推定 → テストEEW。発表条件・更新条件はsimEewRules.js(気象庁の技術的参考資料+MeteoQuake独自仕様)に従う。
   // 解析のたびに、前回の報(rec.state)と最新の推定を比べ、条件を満たした時だけ新しい報を出す。
+  // 加えて、レベル法(観測点の揺れが一定以上なら、震源・Mの推定を待たずに予報を出す)も扱う。
+  // 更新の理由などは、EEWカードには出さず、ログ(pushSimLog)にまとめる。
   useEffect(() => {
     const tracked = simEewTrackRef.current;
-    if (!hasLinkedShakeTest) { tracked.clear(); return; }
+    const levels = simLevelRef.current;
+    if (!hasLinkedShakeTest) { tracked.clear(); levels.clear(); return; }
     // 地域データは初回だけ読み込む。読み込みが終わるまでは判定せず、次の解析(1秒ごと)で判定する。
     const geo = simGeoRef.current;
     if (!geo.areas) {
@@ -1193,6 +1220,7 @@ export default function App() {
     const simIds = collectSimStationIds(linkedShakeTests);
     const eventsById = new Map((shakeEvents || []).map(ev => [ev.id, ev]));
     const seen = new Set();
+    const logs = []; // この解析で出すログ(最後にまとめて追加する)
     // 通常方式とPLUM法のハイブリッド: 観測震度の広がり(PLUM法)を、通常方式の予想震度に合成する。
     const plumNow = calcPlumAreaIntensities(geo.areas, realtimeStream.stations, effectiveRealtimeValues, simIds);
     let shaking = false; // シミュレーション観測点で、一定以上の揺れが続いているか(終了判定用)
@@ -1200,6 +1228,8 @@ export default function App() {
       const v = effectiveRealtimeValues.get(id);
       if (Number.isFinite(v) && v >= EEW_RULES.END_QUIET_INTENSITY) { shaking = true; break; }
     }
+
+    // ── 震源とMによる報(通常方式) ──
     for (const [eventId, est] of epicenterEstimates) {
       if (!canIssueFromEstimate(est)) continue;
       // R2(a): 元の検知点が全てシミュレーション対象の観測点であること
@@ -1210,7 +1240,7 @@ export default function App() {
       seen.add(eventId);
       let rec = tracked.get(eventId);
       if (!rec) {
-        rec = { eewId: `${SIM_EEW_ID_PREFIX}${eventId}`, testId: owner.id, firstAt: now, lastSeenAt: now, lastShakingAt: now, state: null, plumHold: new Map(), ended: false };
+        rec = { eewId: `${SIM_EEW_ID_PREFIX}${eventId}`, testId: owner.id, firstAt: now, lastSeenAt: now, lastShakingAt: now, state: null, serial: 0, plumHold: new Map(), ended: false };
         tracked.set(eventId, rec);
       }
       rec.lastSeenAt = now;
@@ -1229,18 +1259,38 @@ export default function App() {
       });
       if (!evaluated) continue; // 発表条件・更新条件を満たさない: 報は出さない(報番号も増やさない)
       const isFirst = !rec.state;
-      const wasWarn = rec.state?.warn === true;
+      const prevState = rec.state;
+      const wasWarn = prevState?.warn === true;
+      // レベル法の報が同一の地震なら、その報を通常方式の続報として引き継ぐ(報番号は続ける)。
+      let absorbed = null;
+      if (isFirst) {
+        const lv = levels.get(owner.id);
+        if (lv && !lv.cancelled && !lv.absorbed) {
+          const sameStation = (eventsById.get(eventId)?.detections || []).some(d => lv.stationIds.has(d.id));
+          const sameArea = evaluated.display.areas.some(a => lv.areaNames.has(a.name));
+          if (sameStation || sameArea) { absorbed = lv; lv.absorbed = true; rec.eewId = lv.eewId; }
+        }
+      }
+      const asNewCard = isFirst && !absorbed;
       rec.state = evaluated.state;
+      rec.serial = absorbed ? absorbed.serial + 1 : rec.serial + 1;
       const place = geo.epicenters ? findEpicenterNameByPoint(geo.epicenters, est.lat, est.lon) : null;
+      logs.push(makeSimLogEntry({
+        at: now, kind: asNewCard ? "発表" : "更新", method: "通常", serial: rec.serial, state: evaluated.state,
+        reasons: absorbed ? [...evaluated.reasons, "レベル法の報を引き継ぎ"] : evaluated.reasons,
+        changes: describeChanges(prevState, evaluated),
+        note: evaluated.display.intensityHidden ? "1観測点の結果のため、予測震度は載せていません" : "",
+      }));
       if (shouldRevealIncomingEew({
         selectedQuakeId: selectedQuakeIdRef.current, selectedQuakeOrigin: selectedQuakeOriginRef.current,
-        existing: isFirst ? undefined : { isWarnLevel: wasWarn },
+        existing: asNewCard ? undefined : { isWarnLevel: absorbed ? false : wasWarn },
         incoming: { cancelled: false, isWarnLevel: evaluated.state.warn },
       })) selectQuake(null);
+      const eewId = rec.eewId;
       setTestEews(prev => {
-        const i = prev.findIndex(e => e.id === rec.eewId);
+        const i = prev.findIndex(e => e.id === eewId);
         if (i === -1) {
-          if (!isFirst) return prev; // 利用者が削除済みの続報は出し直さない
+          if (!asNewCard) return prev; // 利用者が削除済みの続報は出し直さない
           return [...prev, buildSimEewCard({ eventId, est, evaluated, place, simTestId: owner.id, nowMs: now })];
         }
         if (prev[i].cancelled) return prev;
@@ -1249,6 +1299,80 @@ export default function App() {
         return next;
       });
     }
+
+    // ── レベル法: 観測点の揺れが一定以上なら、震源・Mの推定を待たずに予報(震度5弱程度以上)を出す ──
+    // すでに震度5弱以上で報に含まれている地域の揺れでは、新たに発表しない(気象庁)。
+    const triggers = levelTriggerStations(realtimeStream.stations, effectiveRealtimeValues, simIds);
+    if (triggers.length > 0) {
+      const covered = new Set();
+      for (const rec of tracked.values()) {
+        if (!rec.state) continue;
+        for (const [name, idx] of rec.state.areaClasses) if (idx >= CLASS_INDEX_5_MINUS) covered.add(name);
+      }
+      for (const lv of levels.values()) if (!lv.cancelled) for (const n of lv.areaNames) covered.add(n);
+      const byTest = new Map(); // simTestId → { first: 最初の観測点, areas: 地域名 → 観測点 }
+      for (const st of triggers) {
+        const areaName = areaNameForStation(geo.areas, st);
+        if (!areaName || covered.has(areaName)) continue;
+        const owner = linkedShakeTests.find(t => t.perStation.has(st.id));
+        if (!owner) continue;
+        let g = byTest.get(owner.id);
+        if (!g) { g = { first: st, areas: new Map() }; byTest.set(owner.id, g); }
+        if (!g.areas.has(areaName)) g.areas.set(areaName, st);
+      }
+      for (const [testId, g] of byTest) {
+        const lv = levels.get(testId);
+        if (lv && (lv.cancelled || lv.absorbed)) continue;
+        const names = [...g.areas.keys()];
+        if (!lv) {
+          const eewId = simLevelEewId(testId);
+          levels.set(testId, {
+            eewId, serial: 1, triggerId: g.first.id, stationIds: new Set([...g.areas.values()].map(st => st.id)),
+            areaNames: new Set(names), issuedAt: now, confirmed: false, cancelled: false, absorbed: false,
+          });
+          if (shouldRevealIncomingEew({
+            selectedQuakeId: selectedQuakeIdRef.current, selectedQuakeOrigin: selectedQuakeOriginRef.current,
+            existing: undefined, incoming: { cancelled: false, isWarnLevel: false },
+          })) selectQuake(null);
+          setTestEews(prev => prev.some(e => e.id === eewId) ? prev
+            : [...prev, buildSimLevelCard({ simTestId: testId, station: g.first, areaNames: names, nowMs: now })]);
+          logs.push(makeSimLogEntry({
+            at: now, kind: "発表", method: "レベル法", serial: 1, reasons: ["レベル法による発表"], warn: false,
+            note: `観測点の揺れが計測震度${EEW_RULES.LEVEL_INTENSITY}以上(100gal相当)に達したため、震源・Mの推定を待たずに発表。震度5弱程度以上: ${names.join("、")}`,
+          }));
+        } else {
+          const addNames = names.filter(n => !lv.areaNames.has(n));
+          if (addNames.length === 0) continue;
+          for (const n of addNames) lv.areaNames.add(n);
+          for (const st of g.areas.values()) lv.stationIds.add(st.id);
+          lv.serial += 1;
+          const serial = lv.serial;
+          setTestEews(prev => prev.map(e => (e.id === lv.eewId && !e.cancelled)
+            ? buildSimLevelFollowUp(e, { areaNames: addNames, nowMs: now }) : e));
+          logs.push(makeSimLogEntry({
+            at: now, kind: "更新", method: "レベル法", serial, reasons: ["新しい地域で強い揺れを観測"], warn: false,
+            note: `震度5弱程度以上に追加: ${addNames.join("、")}`,
+          }));
+        }
+      }
+    }
+    // レベル法の報は、所定の時間内に2地点目の観測点を検知できなければ取り消す(気象庁のキャンセル報)。
+    for (const lv of levels.values()) {
+      if (lv.cancelled || lv.absorbed || lv.confirmed) continue;
+      const confirmed = (shakeEvents || []).some(ev => Array.isArray(ev.detections) && ev.detections.length >= 2
+        && ev.detections.some(d => d.id === lv.triggerId) && isSimulationOnlyEvent(ev, simIds));
+      if (confirmed) { lv.confirmed = true; continue; }
+      if (now - lv.issuedAt >= EEW_RULES.LEVEL_SECOND_STATION_TIMEOUT_MS) {
+        lv.cancelled = true;
+        setTestEews(prev => prev.map(e => (e.id === lv.eewId && !e.cancelled)
+          ? { ...e, cancelled: true, cancelledLocalAt: now, receivedLocalAt: now } : e));
+        logs.push(makeSimLogEntry({
+          at: now, kind: "取消", method: "レベル法", serial: lv.serial, warn: false,
+          note: "所定の時間内に2地点目の観測点を検知できなかったため取消",
+        }));
+      }
+    }
+
     // 終了: 最初の検知から一定時間(600秒)、または、揺れが収まって一定時間たった時。最終報の表示にして、しばらく後に消す。
     for (const rec of tracked.values()) {
       if (rec.ended || !rec.state) continue;
@@ -1256,8 +1380,13 @@ export default function App() {
       const quiet = now - rec.lastShakingAt;
       if (elapsed >= EEW_RULES.END_MAX_MS || (elapsed >= endMinElapsedMs(rec.state.pub.magnitude) && quiet >= EEW_RULES.END_QUIET_MS)) {
         rec.ended = true;
-        setTestEews(prev => prev.map(e => (e.id === rec.eewId && !e.cancelled && !e.isFinal)
+        const eewId = rec.eewId;
+        setTestEews(prev => prev.map(e => (e.id === eewId && !e.cancelled && !e.isFinal)
           ? { ...e, isFinal: true, receivedLocalAt: now, autoRemoveAt: now + SIM_EEW_FINAL_LINGER_MS } : e));
+        logs.push(makeSimLogEntry({
+          at: now, kind: "最終報", method: "通常", serial: rec.serial, state: rec.state,
+          note: elapsed >= EEW_RULES.END_MAX_MS ? "最初の検知から600秒が経過したため終了" : "揺れが収まったため終了",
+        }));
       }
     }
     // 発報済みの推定が消えたまま一定時間たったら、誤検知として取消にする(シミュレーションが続いている間だけ)。
@@ -1266,9 +1395,15 @@ export default function App() {
       if (now - rec.lastSeenAt < SIM_EEW_VANISH_CANCEL_MS) continue;
       tracked.delete(eventId);
       if (!rec.state || rec.ended) continue;
-      setTestEews(prev => prev.map(e => (e.id === rec.eewId && !e.cancelled)
+      const eewId = rec.eewId;
+      setTestEews(prev => prev.map(e => (e.id === eewId && !e.cancelled)
         ? { ...e, cancelled: true, cancelledLocalAt: now, receivedLocalAt: now } : e));
+      logs.push(makeSimLogEntry({
+        at: now, kind: "取消", method: "通常", serial: rec.serial, state: rec.state,
+        note: "推定イベントが消失したため(誤検知の想定)取消",
+      }));
     }
+    pushSimLog(logs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [epicenterEstimates, shakeEvents, linkedShakeTests, hasLinkedShakeTest]);
 
@@ -1278,23 +1413,25 @@ export default function App() {
     const liveIds = new Set(shakeTests.map(t => t.id));
     const tracked = simEewTrackRef.current;
     for (const [eventId, rec] of tracked) if (!liveIds.has(rec.testId)) tracked.delete(eventId);
-    setTestEews(prev => {
-      const now = Date.now();
-      let changed = false;
-      const next = prev.map(e => {
-        if (!isSimEew(e) || e.cancelled || e.isFinal || liveIds.has(e.simTestId)) return e;
-        changed = true;
-        if (stoppedSimTestIdsRef.current.has(e.simTestId)) {
-          return { ...e, cancelled: true, cancelledLocalAt: now, receivedLocalAt: now };
-        }
-        return {
-          // 最終報の表示にする。更新が無いので、報番号は増やさない。
-          ...e, isFinal: true,
-          receivedLocalAt: now, autoRemoveAt: now + SIM_EEW_FINAL_LINGER_MS,
-        };
+    for (const id of simLevelRef.current.keys()) if (!liveIds.has(id)) simLevelRef.current.delete(id);
+    const endedEews = testEewsRef.current.filter(e => isSimEew(e) && !e.cancelled && !e.isFinal && !liveIds.has(e.simTestId));
+    if (endedEews.length === 0) return;
+    const now = Date.now();
+    pushSimLog(endedEews.map(e => {
+      const stopped = stoppedSimTestIdsRef.current.has(e.simTestId);
+      return makeSimLogEntry({
+        at: now, kind: stopped ? "取消" : "最終報", method: e.isLevel ? "レベル法" : "通常", serial: e.serial, warn: e.isWarnLevel === true,
+        note: stopped ? "手動で停止したため取消" : "シミュレーションの終了に伴う最終報",
       });
-      return changed ? next : prev;
-    });
+    }));
+    setTestEews(prev => prev.map(e => {
+      if (!isSimEew(e) || e.cancelled || e.isFinal || liveIds.has(e.simTestId)) return e;
+      if (stoppedSimTestIdsRef.current.has(e.simTestId)) {
+        return { ...e, cancelled: true, cancelledLocalAt: now, receivedLocalAt: now };
+      }
+      // 最終報の表示にする。更新が無いので、報番号は増やさない。
+      return { ...e, isFinal: true, receivedLocalAt: now, autoRemoveAt: now + SIM_EEW_FINAL_LINGER_MS };
+    }));
   }, [shakeTests]);
 
   // R3 実EEW優先: 本物の緊急地震速報が発表されたら、連動シミュレーションを中止してテストEEWを全て消す。
@@ -1303,6 +1440,8 @@ export default function App() {
     setShakeTests(prev => prev.filter(t => !t.eewLinked));
     setTestEews(prev => prev.filter(e => !isSimEew(e)));
     simEewTrackRef.current.clear();
+    simLevelRef.current.clear();
+    pushSimLog([makeSimLogEntry({ at: Date.now(), kind: "中止", note: "実際の緊急地震速報が発表されたため、連動シミュレーションを中止" })]);
     setShakeTestEewNotice("実際の緊急地震速報が発表されたため、連動シミュレーションを中止しました。");
   }, [realEewActive, hasLinkedShakeTest]);
 
@@ -1312,6 +1451,7 @@ export default function App() {
     gridMode: shakeDetectionEnabled && gridDetectionEnabled,
     realEewActive,
     notice: shakeTestEewNotice,
+    log: simEewLog,
   };
 
   // テスト配信中は、実際の一覧の先頭にテストデータを合成する。地震タブに関する

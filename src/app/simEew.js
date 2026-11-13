@@ -1,5 +1,5 @@
-import { haversineKm, polygonRoughCentroid } from "./geo";
-import { instrumentalIntensityToScaleKey } from "./testSimulation";
+import { findAreaNameByPoint, haversineKm, polygonRoughCentroid } from "./geo";
+import { INTENSITY_SCALE_CODE, instrumentalIntensityToScaleKey } from "./testSimulation";
 
 /* ─────────────────────────────────────────────────────
    地震検知テスト連動の緊急地震速報シミュレーション(非推奨・自己責任の実験的機能)。
@@ -89,21 +89,10 @@ export function fallbackSimPlace(lat, lon) {
   return `推定震源(北緯${lat.toFixed(2)}度 東経${lon.toFixed(2)}度)`;
 }
 
-// 報の履歴の1件(更新前後の値の比較・更新理由を後から確認できるようにする)。
-function historyEntry(serial, est, state, display, reasons, nowMs) {
-  return {
-    serial, at: nowMs, lat: est.lat, lon: est.lon,
-    rawMagnitude: state.raw.magnitude, rawDepthKm: state.raw.depthKm,
-    magnitude: state.pub.magnitude, depthKm: state.pub.depthKm,
-    maxIntensityKey: display.maxKey, isWarnLevel: display.isWarnLevel, reasons: [...reasons],
-  };
-}
-const SIM_EEW_HISTORY_MAX = 100;
-
 // 第1報のカードを組み立てる。evaluated: simEewRules.evaluateReportの戻り値({ state, reasons, display })。
 // 震源の位置は内部値、Mと深さは発表値(M0.1刻み・深さ10km刻み)を載せる。
 export function buildSimEewCard({ eventId, est, evaluated, place, simTestId, nowMs }) {
-  const { state, reasons, display } = evaluated;
+  const { state, display } = evaluated;
   const id = `${SIM_EEW_ID_PREFIX}${eventId}`;
   return {
     id, eventId: id,
@@ -126,16 +115,17 @@ export function buildSimEewCard({ eventId, est, evaluated, place, simTestId, now
     isFinal: false,
     isWarnLevel: display.isWarnLevel,
     isPlum: false, // PLUM法は通常方式との合成(地域ごとのisPlum)で使い、報全体はPLUM法の報にはしない
-    simReasons: [...reasons],
-    simHistory: [historyEntry("1", est, state, display, reasons, nowMs)],
+    isLevel: false,
+    intensityHidden: display.intensityHidden === true,
     receivedLocalAt: nowMs,
     cancelledLocalAt: null,
   };
 }
 
 // 続報(報番号+1)。警報は一度出たら予報に戻さない(state.warnが引き継ぐ)。
+// レベル法の報(震源・M未推定)から、通常方式の報に切り替わる場合にも使う。
 export function buildSimEewFollowUp(card, { est, evaluated, place, nowMs }) {
-  const { state, reasons, display } = evaluated;
+  const { state, display } = evaluated;
   const serial = String((parseInt(card.serial, 10) || 1) + 1);
   return {
     ...card,
@@ -147,8 +137,81 @@ export function buildSimEewFollowUp(card, { est, evaluated, place, nowMs }) {
     areas: display.areas,
     maxIntensityKey: display.maxKey,
     isWarnLevel: display.isWarnLevel,
-    simReasons: [...reasons],
-    simHistory: [...(card.simHistory || []), historyEntry(serial, est, state, display, reasons, nowMs)].slice(-SIM_EEW_HISTORY_MAX),
+    isPlum: false,
+    isLevel: false,
+    intensityHidden: display.intensityHidden === true,
+    receivedLocalAt: nowMs,
+  };
+}
+
+/* ─────────────────────────────────────────────────────
+   レベル法(震源要素によらない予測手法)の擬似再現。
+   観測点の揺れが一定以上(simEewRules.EEW_RULES.LEVEL_INTENSITY)になったら、震源・Mの推定を介さず、
+   「観測点近傍で震度5弱程度以上」の予報を直ちに出す。震源・M・到達予測時刻は載せない(気象庁の発表パターン1)。
+   ───────────────────────────────────────────────────── */
+const LEVEL_KEY = "5-";
+
+// 観測点が属する細分区域の名前。含む区域が無ければ、重心が最も近い区域(PLUM_RADIUS_KM以内)。
+export function areaNameForStation(areasGeoJSON, st) {
+  const inside = findAreaNameByPoint(areasGeoJSON, st.lat, st.lon);
+  if (inside) return inside;
+  let best = null;
+  let bestKm = PLUM_RADIUS_KM;
+  for (const a of areaCentroids(areasGeoJSON)) {
+    const km = haversineKm(st.lat, st.lon, a.lat, a.lon);
+    if (km <= bestKm) { bestKm = km; best = a.name; }
+  }
+  return best;
+}
+
+function levelArea(name) {
+  const code = INTENSITY_SCALE_CODE[LEVEL_KEY] ?? 45;
+  return { pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: LEVEL_KEY, isPlum: false };
+}
+
+export function simLevelEewId(simTestId) {
+  return `${SIM_EEW_ID_PREFIX}level_${simTestId}`;
+}
+
+// レベル法の第1報のカード。震源・M・深さは持たない(位置は、揺れを検知した観測点の位置)。
+export function buildSimLevelCard({ simTestId, station, areaNames, nowMs }) {
+  const id = simLevelEewId(simTestId);
+  return {
+    id, eventId: id,
+    serial: "1",
+    cancelled: false,
+    isTraining: false,
+    originTime: formatSimOriginTime(nowMs),
+    arrivalTime: null,
+    isAssumedHypocenter: false,
+    place: areaNames[0] || "観測点近傍",
+    reducedPlace: "シミュレーション",
+    latitude: station.lat, longitude: station.lon, depth: null,
+    magnitude: null,
+    areas: areaNames.map(levelArea),
+    maxIntensityKey: LEVEL_KEY,
+    isTest: true,
+    isSimulation: true,
+    source: SIM_EEW_SOURCE,
+    simTestId,
+    isFinal: false,
+    isWarnLevel: false, // レベル法は1観測点の結果なので、警報にはしない
+    isPlum: true,       // 震源が無い報の表示(円アイコン・到達円なし)は、PLUM法の報の表示を流用する
+    isLevel: true,
+    intensityHidden: false,
+    receivedLocalAt: nowMs,
+    cancelledLocalAt: null,
+  };
+}
+
+// レベル法の続報: これまでの報に含まれない地域で、新たに強い揺れを観測した時に、その地域を加える。
+export function buildSimLevelFollowUp(card, { areaNames, nowMs }) {
+  const have = new Set(card.areas.map(a => a.name));
+  const add = areaNames.filter(n => !have.has(n)).map(levelArea);
+  return {
+    ...card,
+    serial: String((parseInt(card.serial, 10) || 1) + 1),
+    areas: [...card.areas, ...add],
     receivedLocalAt: nowMs,
   };
 }

@@ -1,4 +1,5 @@
 import { useContext, useState, Fragment } from "react";
+import { formatSimLog } from "./simEewLog";
 import { ThemeContext } from "./theme";
 import { PressableButton } from "./glass";
 import { SettingsCard, SettingsCardDivider } from "./settingsPrimitives";
@@ -533,6 +534,8 @@ export function ShakeDetectionTestPanel({ shakeTests = [], onAction, shakeTestFo
   // 連動の項目は、通常の検知テストと混同しないよう、既定で閉じておく(連動がONの間は開いたままにして状態を隠さない)。
   const [eewOpen, setEewOpen] = useState(false);
   const eewSectionOpen = eewOpen || !!f.eewLinked;
+  const eewLog = link.log || [];
+  const eewLogCount = eewLog.length;
   const startDisabled = f.latitude == null || f.longitude == null || (!!f.eewLinked && (!f.eewConsent || !!linkBlockedReason));
 
   // 震源推定(epicenterEstimation.ts)の現在の推定結果のうち、各シミュレーション
@@ -641,6 +644,31 @@ export function ShakeDetectionTestPanel({ shakeTests = [], onAction, shakeTestFo
         </div>
       </SettingsCard>
 
+      <SettingsCard>
+        <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          <PressableButton
+            type="button"
+            onClick={() => onAction?.("start")}
+            disabled={startDisabled}
+            style={{
+              width: "100%", padding: "10px 14px", borderRadius: 10, border: "none",
+              cursor: startDisabled ? "default" : "pointer",
+              background: "rgba(48,209,88,0.16)", color: "#30D158",
+              fontSize: 13, fontWeight: 700, textAlign: "center",
+              opacity: startDisabled ? 0.5 : 1,
+            }}
+          >
+            地震を発生させる
+          </PressableButton>
+          <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.6 }}>
+            発生させると、震源に近い観測点から順にP波→S波が到達し、震度が立ち上がって
+            から徐々に収まっていきます。全観測点の揺れが収まると自動的に終了します。
+            実行中でも新たに発生させると、複数の地震を同時にシミュレーションできます
+            (観測点の震度が重複する場合は、より高い方が採用されます)。
+          </div>
+        </div>
+      </SettingsCard>
+
       {/* 緊急地震速報との連動。非推奨・自己責任の実験的機能。既定で閉じておく。 */}
       <button
         type="button"
@@ -660,6 +688,9 @@ export function ShakeDetectionTestPanel({ shakeTests = [], onAction, shakeTestFo
         </span>
         {f.eewLinked && (
           <span style={{ fontSize: 9, fontWeight: 800, color: "#FF453A", border: "1px solid #FF453A", borderRadius: 4, padding: "0 4px" }}>ON</span>
+        )}
+        {!eewSectionOpen && eewLogCount > 0 && (
+          <span style={{ fontSize: 9, fontWeight: 700, color: `rgba(${tokens.ink},0.6)`, border: `1px solid rgba(${tokens.ink},0.3)`, borderRadius: 4, padding: "0 4px" }}>ログ {eewLogCount}</span>
         )}
         <svg width="12" height="12" viewBox="0 0 12 12" style={{
           marginLeft: "auto", flexShrink: 0, opacity: f.eewLinked ? 0.25 : 0.6,
@@ -716,34 +747,40 @@ export function ShakeDetectionTestPanel({ shakeTests = [], onAction, shakeTestFo
             {link.notice && (
               <div style={{ fontSize: 11, fontWeight: 700, color: "#FF453A", lineHeight: 1.5 }}>{link.notice}</div>
             )}
+            {/* 報の更新理由・更新前後の値などは、EEWカードには出さず、ここにまとめる。 */}
+            <details>
+              <summary style={{ fontSize: 11.5, fontWeight: 700, color: tokens.text, cursor: "pointer" }}>
+                ログ({eewLogCount}件)
+              </summary>
+              <div style={{ display: "flex", gap: 8, margin: "6px 0" }}>
+                <button
+                  type="button"
+                  disabled={eewLogCount === 0}
+                  onClick={() => { try { navigator.clipboard?.writeText(formatSimLog(eewLog)); } catch { /* クリップボードが使えない環境では何もしない */ } }}
+                  style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 8, border: "none", cursor: eewLogCount === 0 ? "default" : "pointer", opacity: eewLogCount === 0 ? 0.4 : 1, background: `rgba(${tokens.ink},0.08)`, color: tokens.text }}
+                >
+                  コピー
+                </button>
+                <button
+                  type="button"
+                  disabled={eewLogCount === 0}
+                  onClick={() => onAction?.("clearEewLog")}
+                  style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 8, border: "none", cursor: eewLogCount === 0 ? "default" : "pointer", opacity: eewLogCount === 0 ? 0.4 : 1, background: "rgba(255,69,58,0.12)", color: "#FF453A" }}
+                >
+                  クリア
+                </button>
+              </div>
+              <div style={{
+                maxHeight: 220, overflowY: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all",
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 10, lineHeight: 1.5,
+                color: `rgba(${tokens.ink},0.75)`, background: `rgba(${tokens.ink},0.05)`, borderRadius: 8, padding: "6px 8px",
+              }}>
+                {eewLogCount === 0 ? "まだログはありません。" : formatSimLog(eewLog)}
+              </div>
+            </details>
           </div>
         </SettingsCard>
       )}
-
-      <SettingsCard>
-        <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-          <PressableButton
-            type="button"
-            onClick={() => onAction?.("start")}
-            disabled={startDisabled}
-            style={{
-              width: "100%", padding: "10px 14px", borderRadius: 10, border: "none",
-              cursor: startDisabled ? "default" : "pointer",
-              background: "rgba(48,209,88,0.16)", color: "#30D158",
-              fontSize: 13, fontWeight: 700, textAlign: "center",
-              opacity: startDisabled ? 0.5 : 1,
-            }}
-          >
-            地震を発生させる
-          </PressableButton>
-          <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.6 }}>
-            発生させると、震源に近い観測点から順にP波→S波が到達し、震度が立ち上がって
-            から徐々に収まっていきます。全観測点の揺れが収まると自動的に終了します。
-            実行中でも新たに発生させると、複数の地震を同時にシミュレーションできます
-            (観測点の震度が重複する場合は、より高い方が採用されます)。
-          </div>
-        </div>
-      </SettingsCard>
 
       {running && (
         <>

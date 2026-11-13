@@ -111,3 +111,56 @@ test("通し: 第1報の後は、更新条件を満たした時だけ報が出�
   assert.ok(reports.length < ticksWithEstimate, `毎回は出ない(報${reports.length}件/推定${ticksWithEstimate}回)`);
   console.log("報の列:", reports.map(r => `${r.k}s:${r.reasons.join("+")}`).join(" | "));
 });
+
+// ── レベル法の通し確認: 実際の細分区域データで、観測点が属する地域を引け、通常方式の第1報より前に出るか ──
+import { areaNameForStation } from "../src/app/simEew.js";
+import { levelTriggerStations } from "../src/app/simEewRules.js";
+
+test("通し(レベル法): 観測震度4.5以上の観測点が現れ、その観測点の地域を引ける。通常方式の第1報との前後を確認", () => {
+  const mapDir = fileURLToPath(new URL("../public/map/", import.meta.url));
+  const areaFile = readdirSync(mapDir).find(n => n === "細分区域.json" || n.startsWith("#U7d30"));
+  const areasGeo = JSON.parse(readFileSync(join(mapDir, areaFile!), "utf-8"));
+  // 観測点が陸上にある場合(関東平野)で確認する。海上の観測点は属する地域が無く、レベル法の対象にならない。
+  const land = stationGrid(36.0, 139.7, 9, 0.12);
+  const perLand = prepareShakeTest({ lat: 36.0, lon: 139.7, magnitude: 6.3, depth: 20 }, land);
+  const landTest = { id: "t2", startedAt: T0, perStation: perLand, eewLinked: true };
+  const landValues = (sec: number) => {
+    const m = new Map<number, number>();
+    for (const s of land) m.set(s.id, -3);
+    for (const [id, v] of computeShakeTestValues(perLand, sec * 1000)) m.set(id, v);
+    return m;
+  };
+  const pipe = new AnalysisPipeline();
+  pipe.setStations(land, false);
+  const simIds = collectSimStationIds([landTest]);
+  let levelAt = -1;
+  let firstNormalAt = -1;
+  let areaName: string | null = null;
+  let state: any = null;
+  for (let k = 0; k < 40; k++) {
+    const now = T0 + k * 1000;
+    const values = landValues(k);
+    if (levelAt < 0) {
+      const trig = levelTriggerStations(land, values, simIds);
+      if (trig.length) { levelAt = k; areaName = areaNameForStation(areasGeo, trig[0]); }
+    }
+    const out: any = pipe.tick({
+      values, now, sourceMode: "test", replayClock: false,
+      shakeDetectionEnabled: true, gridDetectionEnabled: false, epicenterEstimationEnabled: true,
+    } as AnalysisTickInput);
+    if (!out.estimates || firstNormalAt >= 0) continue;
+    const byId = new Map(out.shakeEvents.map((e: any) => [e.id, e]));
+    for (const [eventId, est] of out.estimates as Map<unknown, any>) {
+      if (!canIssueFromEstimate(est) || !isSimulationOnlyEvent(byId.get(eventId), simIds) || !findOwnerTest(est, [landTest], now)) continue;
+      const att = calcTestEewAreasByAttenuation(areasGeo, est.lat, est.lon, publishedMagnitude(est.magnitude), publishedDepthKm(est.depthKm), false);
+      const ev = evaluateReport(state, {
+        raw: { lat: est.lat, lon: est.lon, depthKm: est.depthKm, magnitude: est.magnitude },
+        stationCount: est.pointCount ?? 0, inland: false, forecast: buildForecast(att, new Map()),
+      });
+      if (ev) { state = ev.state; firstNormalAt = k; }
+    }
+  }
+  assert.ok(levelAt >= 0, "観測震度4.5以上の観測点が現れる");
+  assert.ok(areaName, "その観測点の地域を引ける");
+  console.log(`レベル法: ${levelAt}秒(${areaName}) / 通常方式の第1報: ${firstNormalAt}秒`);
+});
