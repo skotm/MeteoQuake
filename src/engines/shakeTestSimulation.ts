@@ -1,7 +1,21 @@
+import { prepareRealisticWaves, waveValueAt, type RealisticOptions } from "./shakeTestWaveform";
+
 /**
  * shakeTestSimulation.ts
  * ------------------------------------------------------------
- * 「地震検知テスト」(実験的機能)用の、簡易的な地震動シミュレーター。
+ * 「地震検知テスト」(実験的機能)用の、地震動シミュレーター。
+ *
+ * 【2つのモデル】
+ *  - "realistic"(既定): shakeTestWaveform.ts。WE-Simulatorを参考にした最終震度・地盤増幅・走時・有限断層と、
+ *    現実的な時間波形(P波・S波の立ち上がり、継続時間、減衰、観測点ごとの揺らぎ)。
+ *  - "simple": 以前の簡易版(台形の波形・全国一律の地盤・点震源)。エンジンの回帰テスト用に残している。
+ *
+ * このファイルのcalcPeakIntensity・createPeakIntensityModel・P_WAVE_SPEED_KM_S/S_WAVE_SPEED_KM_Sは、
+ * 震源推定(epicenterEstimation.ts)・揺れ検知(shakeDetection.ts)が使うモデルなので、変更しない。
+ * テスト波形(realistic)はそれとは別のモデルで、推定側にとっての「現実」に当たる。
+ *
+ * 以下は、以前の簡易版(simple)の説明:
+ * ユーザー提供の地震シミュレーターアプリ(index.html)のPGV距離減衰式・
  * ユーザー提供の地震シミュレーターアプリ(index.html)のPGV距離減衰式・
  * P波/S波到達時刻モデルを参考にした簡略版。
  *
@@ -134,7 +148,14 @@ function travelTimeMs(distKm, depthKm, speedKmS) {
  * 各観測点の到達時刻・ピーク震度を事前計算する。シミュレーション開始時に
  * 1回だけ呼べばよい(重い処理ではないが、毎tick呼ぶ必要はない)。
  */
-export function prepareShakeTest(quake, stations) {
+export interface PrepareOptions extends RealisticOptions {
+  model?: "realistic" | "simple";
+}
+
+export function prepareShakeTest(quake, stations, options: PrepareOptions = {}) {
+  if (options.model !== "simple") {
+    return prepareRealisticWaves(quake, stations, options) as Map<any, any>;
+  }
   const { lat, lon, magnitude, depth } = quake;
   const perStation = new Map();
   for (const s of stations) {
@@ -163,6 +184,11 @@ export function prepareShakeTest(quake, stations) {
 export function computeShakeTestValues(perStation, elapsedMs) {
   const values = new Map();
   for (const [id, st] of perStation) {
+    if (st.model === "realistic") {
+      const v = waveValueAt(st, elapsedMs);
+      if (v !== undefined) values.set(id, v);
+      continue;
+    }
     if (elapsedMs < st.pArrivalMs) continue;
     // P波の段階で到達するレベル。peakが0以上なら従来どおりpeakの25%。peakが負(平常値より
     // わずかに高い程度の弱い揺れ)の場合は、peak*0.25ではpeakを上回ってしまうので、
@@ -204,6 +230,7 @@ export function computeShakeTestValues(perStation, elapsedMs) {
 export function isShakeTestFinished(perStation, elapsedMs) {
   let latestFinishMs = 0;
   for (const st of perStation.values()) {
+    if (st.model === "realistic") { latestFinishMs = Math.max(latestFinishMs, st.endMs); continue; }
     const finishMs = st.sArrivalMs + RISE_DURATION_MS + HOLD_DURATION_MS + DECAY_DURATION_MS * decayDurationScale(st.peak);
     latestFinishMs = Math.max(latestFinishMs, finishMs);
   }

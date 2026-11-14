@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useRealtimeStream } from "./useRealtimeStream";
 import { useReplayPlayer } from "./useReplayPlayer";
 import { prepareShakeTest, isShakeTestFinished, computeShakeTestValues } from "./engines/shakeTestSimulation";
+import { buildSiteLookup } from "./engines/shakeTestWaveform";
 import { setJmaTravelTimeTable, tableFromJSON } from "./engines/jmaTravelTime";
 import { CONSENT_DOCS, isConsentUpToDate, loadStoredConsent, saveConsent } from "./app/consent";
 import { loadMarkdownFile } from "./app/settingsPanels";
@@ -1004,6 +1005,10 @@ export default function App() {
       // 緊急地震速報との連動(非推奨・自己責任の実験的機能。既定OFF)。同意(eewConsent)は開始のたびに必要。
       eewLinked: false,
       eewConsent: false,
+      // 断層の設定(M6.6以上で使う。震源=破壊の開始点)
+      faultStrike: 0,
+      faultDirection: "both",
+      faultSpeed: 2.8,
     };
   }
   const [shakeTestForm, setShakeTestForm] = useState(defaultShakeTestForm);
@@ -1084,7 +1089,21 @@ export default function App() {
           magnitude: shakeTestForm.magnitude,
           depth: shakeTestForm.depth,
         },
-        realtimeStream.stations
+        realtimeStream.stations,
+        {
+          // 観測点ごとの地盤増幅: 最寄りの気象庁観測点のARV・AVS30(観測点マスタ)から求める。
+          siteLookup: stations?.length > 0 ? buildSiteLookup(stations) : null,
+          // 震央が海域か(読み込み済みの都道府県データが無ければ陸域として扱う)。海域は揺れの継続が長め。
+          offshore: simGeoRef.current.prefectures
+            ? !findPrefectureNameByPoint(simGeoRef.current.prefectures, shakeTestForm.latitude, shakeTestForm.longitude)
+            : false,
+          // M6.6以上は、震源を破壊の開始点とする有限断層(小震源に分割)として扱う。
+          fault: shakeTestForm.magnitude >= 6.6 ? {
+            strikeDeg: Number(shakeTestForm.faultStrike) || 0,
+            direction: shakeTestForm.faultDirection || "both",
+            ruptureSpeedKmS: Number(shakeTestForm.faultSpeed) || 2.8,
+          } : null,
+        }
       );
       // 複数同時実行に対応するため、既存の実行中シミュレーションを止めずに
       // 追加する(置き換えではなく配列への追加)。
@@ -1808,6 +1827,17 @@ export default function App() {
     () => layers.map(l => l.id === "estIntensity" ? { ...l, on: estIntensityEnabled } : l),
     [layers, estIntensityEnabled]
   );
+
+  // 地域データ(細分区域・都道府県)は、テスト波形の海域判定と連動シミュレーションで使うため、起動時に一度だけ読み込む。
+  useEffect(() => {
+    const geo = simGeoRef.current;
+    if (geo.areas || geo.loading) return;
+    geo.loading = true;
+    loadGeoData()
+      .then(g => { geo.areas = g.areas; geo.prefectures = g.prefectures; })
+      .catch(err => { geo.loading = false; console.warn("地域データの先読みに失敗しました(使う時に再度読み込みます):", err); });
+    loadEpicenterNamesData().then(g => { geo.epicenters = g; }).catch(() => {});
+  }, []);
 
   // 観測点マスタは全地震で共通なので、起動時に一度だけ取得する
   useEffect(() => {
