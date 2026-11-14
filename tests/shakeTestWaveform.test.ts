@@ -85,7 +85,7 @@ test("波形: P波の前はデータなし。P波の段階は弱く、S波の後
   const atPeak = waveValueAt(st, st.sArrivalMs + st.riseMs)!;
   assert.ok(Math.abs(atPeak - st.peak) < 0.1, `立ち上がりの終わりでピークに達する(${atPeak} vs ${st.peak})`);
   const late = waveValueAt(st, st.endMs)!;
-  assert.ok(late < WAVE_BASELINE_INTENSITY + 0.3, `終了時刻には平常値近くに戻る(${late})`);
+  assert.ok(late < WAVE_BASELINE_INTENSITY + 0.6, `終了時刻には平常値近くに戻る(${late})`);
   // 観測全体で、ピーク(+ノイズ)を大きくは超えない
   let max = -Infinity;
   for (let t = st.pArrivalMs; t <= st.endMs; t += 100) max = Math.max(max, waveValueAt(st, t)!);
@@ -93,14 +93,44 @@ test("波形: P波の前はデータなし。P波の段階は弱く、S波の後
   assert.ok(max >= st.peak - 0.1);
 });
 
-test("波形: ピーク後は一定に保たず、強弱(複数のピーク)がある。台形ではない", () => {
+test("波形: 強い揺れの間の強弱(揺らぎ)は小さい。ピーク付近では、ピークから大きく外れない", () => {
   const waves = prepareRealisticWaves(quake, stations);
   const st = [...waves.values()].find(w => w.peak > 3)!;
   const t0 = st.sArrivalMs + st.riseMs;
   const samples: number[] = [];
-  for (let t = t0; t < t0 + st.strongMs + 6000; t += 250) samples.push(waveValueAt(st, t)!);
+  for (let t = t0; t <= t0 + st.strongMs; t += 250) samples.push(waveValueAt(st, t)!);
   const range = Math.max(...samples) - Math.min(...samples);
-  assert.ok(range > 0.15, `ピーク後の値に強弱がある(幅${range.toFixed(2)})`);
+  assert.ok(range > 0.02, `強弱はある(幅${range.toFixed(2)})`);
+  assert.ok(range < 0.45, `強弱は小さい(幅${range.toFixed(2)})`);
+  assert.ok(st.fluctAmp <= 0.06);
+  assert.ok(st.noiseAmp <= 0.03);
+});
+
+test("波形: 最終震度が大きい観測点ほど、強い揺れが長く続き、収まるまでの減衰も長い", () => {
+  const waves = prepareRealisticWaves(quake, stations);
+  const list = [...waves.values()].filter(w => w.peak > 0.5).sort((a, b) => a.peak - b.peak);
+  const weak = list[0], strong = list[list.length - 1];
+  assert.ok(strong.peak > weak.peak + 1.5);
+  assert.ok(strong.strongMs > weak.strongMs, "強い揺れの継続");
+  assert.ok(strong.tailMs > weak.tailMs, "減衰の時間スケール");
+  assert.ok(strong.endMs - strong.sArrivalMs > weak.endMs - weak.sArrivalMs, "収まるまでの全体");
+});
+
+test("波形: 大きな揺れは、収まるまでが十分に長い(M6.3の震度4程度で1分以上、M7.5の震度6程度で数分)", () => {
+  const sec = (q: any, minPeak: number, maxPeak: number, opt = {}) => {
+    const w = [...prepareRealisticWaves(q, stations, opt).values()].find(x => x.peak >= minPeak && x.peak < maxPeak)!;
+    // 最大値の半分(平常値からの差)まで下がる時刻と、ほぼ平常値に戻る時刻
+    let tHalf = 0;
+    for (let t = w.sArrivalMs + w.riseMs; t <= w.endMs; t += 250) {
+      if (waveValueAt(w, t)! < WAVE_BASELINE_INTENSITY + (w.peak - WAVE_BASELINE_INTENSITY) / 2) { tHalf = t; break; }
+    }
+    return { fromPeakToHalf: (tHalf - (w.sArrivalMs + w.riseMs)) / 1000, total: (w.endMs - w.sArrivalMs) / 1000 };
+  };
+  const m63 = sec({ ...quake, magnitude: 6.3 }, 3.8, 4.6);
+  assert.ok(m63.total > 90, `M6.3・震度4程度の全体(${m63.total.toFixed(0)}秒)`);
+  assert.ok(m63.fromPeakToHalf > 15, `M6.3・ピークから半分まで(${m63.fromPeakToHalf.toFixed(0)}秒)`);
+  const m75 = sec({ ...quake, magnitude: 7.5 }, 5.5, 6.5, { fault: { strikeDeg: 0, direction: "both", ruptureSpeedKmS: 2.8 } });
+  assert.ok(m75.total > 240, `M7.5・震度6程度の全体(${m75.total.toFixed(0)}秒)`);
 });
 
 test("波形: 遠い観測点ほどS波の立ち上がりが長く、Mが大きいほど揺れが長く続く", () => {

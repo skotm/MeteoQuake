@@ -30,6 +30,10 @@ const FAULT_SAMPLE_MIN_SPACING_KM = 12;
 export const DEFAULT_RUPTURE_SPEED_KM_S = 2.8;
 const SITE_SEARCH_MAX_KM = 40; // 観測点から、これより遠い気象庁観測点の地盤値は使わない
 
+// 減衰は2成分(速い成分と、遅い成分)の和。遅い成分の重みと、時間スケールの倍率。
+const TAIL_SLOW_WEIGHT = 0.4;
+const TAIL_SLOW_SCALE = 3.5;
+
 // 揺れが届く前の平常値(shindoColorScale.tsの配色スケール下限に合わせる)
 export const WAVE_BASELINE_INTENSITY = -3.0;
 
@@ -190,8 +194,8 @@ export function buildWaveProfile(input: WaveInput): WaveProfile | null {
   const { stationId, magnitude: M, hypoKm, site } = input;
   const u = (k: string) => stableUnit(`${stationId}:${k}`);
   const siteAmp = siteAmplification(site);
-  // 観測点ごとの、式では説明できない揺れのばらつき(±0.2程度)。同じ観測点なら毎回同じ。
-  const scatter = (u("peak") - 0.5) * 0.4;
+  // 観測点ごとの、式では説明できない揺れのばらつき(±0.1程度)。同じ観測点なら毎回同じ。
+  const scatter = (u("peak") - 0.5) * 0.2;
   const peak = Math.min(peakIntensityAt(M, hypoKm, siteAmp) + scatter, 7);
   if (peak <= WAVE_BASELINE_INTENSITY) return null;
 
@@ -213,21 +217,25 @@ export function buildWaveProfile(input: WaveInput): WaveProfile | null {
 
   // S波の立ち上がり: 遠いほど・柔らかいほど・大きなMほど長い。
   const riseMs = clamp(1100 + 13 * hypoKm + 500 * soft01 + 150 * Math.max(M - 6, 0), 1000, 5500);
-  // 揺れの継続時間(秒): Mが大きく、遠いほど長い。有限断層では、小震源のS波が着く時間差の分だけ延びる。沖合は長め。
+  // 揺れの継続時間(秒): Mが大きいほど長く、最終震度が大きいほど長い(大きな揺れほど長く続き、収まるまでも長くかかる)。
+  // 有限断層では、小震源のS波が着く時間差の分だけ延びる。沖合は長め。距離そのものの影響は小さい。
   const spreadSec = clamp((input.sLastSec - input.sSec) * 0.5, 0, 60);
-  const durationSec = (clamp(10 + 13 * (M - 5), 6, 70) + clamp(0.1 * hypoKm, 0, 30) + spreadSec) * (input.offshore ? 1.2 : 1);
-  const strongMs = durationSec * 1000 * 0.2;
-  const tailMs = (durationSec * 1000) / 4;
-  // 減衰が0.01を下回るまで(2成分のうち遅い成分で見積もる)
-  const endMs = sArrivalMs + riseMs + strongMs + tailMs * 3 * Math.log(30);
+  const intensityFactor = 0.5 + 0.2 * clamp(peak, 0, 7); // 最終震度0で0.5倍、2.5で1.0倍、5で1.5倍、7で1.9倍
+  const durationSec = (clamp(14 + 15 * (M - 5), 8, 120) + clamp(0.05 * hypoKm, 0, 12) + spreadSec)
+    * intensityFactor * (input.offshore ? 1.2 : 1);
+  const strongMs = durationSec * 1000 * 0.3;   // ピーク付近の強い揺れが続く時間
+  const tailMs = (durationSec * 1000) / 3.2;   // その後の減衰の時間スケール(大きな揺れほど、収まるまでが長い)
+  // 終了: 平常値との差が約0.4まで戻った時(2成分のうち遅い成分で見積もる)。揺れが大きいほど、そこまで戻るのに長くかかる。
+  const endEnv = clamp(0.4 / (peak - WAVE_BASELINE_INTENSITY), 0.005, 0.1);
+  const endMs = sArrivalMs + riseMs + strongMs + tailMs * TAIL_SLOW_SCALE * Math.log(TAIL_SLOW_WEIGHT / endEnv);
 
   return {
     model: "realistic",
     peak, pLevel, pArrivalMs, sArrivalMs, riseMs, strongMs, tailMs, endMs,
     surge: 0.84 + 0.13 * u("surge"),
-    fluctAmp: 0.10 + 0.02 * clamp(M - 5, 0, 3) + (input.offshore ? 0.03 : 0),
+    fluctAmp: 0.025 + 0.008 * clamp(M - 5, 0, 3) + (input.offshore ? 0.01 : 0),
     fluctPeriodMs: 2500 + 3500 * u("fp"),
-    noiseAmp: 0.06,
+    noiseAmp: 0.03,
     noisePhase1: u("n1") * 2 * Math.PI, noisePhase2: u("n2") * 2 * Math.PI,
     noisePeriod1Ms: 3000 + 4000 * u("np1"), noisePeriod2Ms: 900 + 1400 * u("np2"),
   };
@@ -262,7 +270,7 @@ export function waveValueAt(st: WaveProfile, elapsedMs: number): number | undefi
       let env = 1;
       if (tc > st.strongMs) {
         const x = (tc - st.strongMs) / st.tailMs;
-        env = 0.7 * Math.exp(-x) + 0.3 * Math.exp(-x / 3);
+        env = (1 - TAIL_SLOW_WEIGHT) * Math.exp(-x) + TAIL_SLOW_WEIGHT * Math.exp(-x / TAIL_SLOW_SCALE);
       }
       // 複数のピーク(揺れの強弱)。ピークの瞬間(tc=0)は強弱の谷でなく、最大。
       // 周期の異なる2つの強弱を重ねて、規則的になりすぎないようにする(tc=0では両方0 → ピークの瞬間は最大)
