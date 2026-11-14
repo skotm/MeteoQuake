@@ -641,6 +641,42 @@ export function ShakeDetectionTestPanel({ shakeTests = [], onAction, shakeTestFo
               </select>
             </div>
           </div>
+          {/* 大きな地震(M6.6以上)は、断層が広がって破壊が進むものとして扱う。既定のままでも動く。 */}
+          {f.magnitude >= 6.6 && (
+            <details>
+              <summary style={{ fontSize: 11.5, fontWeight: 700, color: tokens.text, cursor: "pointer" }}>
+                断層の設定(M6.6以上)
+              </summary>
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <label style={labelStyle}>走向(度)</label>
+                  <input
+                    type="number" min={0} max={359} step={5}
+                    value={f.faultStrike ?? 0}
+                    onChange={e => patchForm({ faultStrike: Math.min(359, Math.max(0, parseFloat(e.target.value) || 0)) })}
+                    style={inputStyle}
+                  />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <label style={labelStyle}>破壊の向き</label>
+                  <select value={f.faultDirection ?? "both"} onChange={e => patchForm({ faultDirection: e.target.value })} style={inputStyle}>
+                    <option value="both">両側</option>
+                    <option value="forward">走向の向き</option>
+                    <option value="backward">走向と逆</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <label style={labelStyle}>破壊速度</label>
+                  <select value={f.faultSpeed ?? 2.8} onChange={e => patchForm({ faultSpeed: parseFloat(e.target.value) })} style={inputStyle}>
+                    {[2.0, 2.4, 2.8, 3.2, 3.6].map(v => <option key={v} value={v}>{v.toFixed(1)}km/s</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{ fontSize: 10.5, color: `rgba(${tokens.ink},0.5)`, lineHeight: 1.5, marginTop: 4 }}>
+                震源を破壊の開始点として、走向の線上に断層(Mから決まる長さ)を置きます。
+              </div>
+            </details>
+          )}
         </div>
       </SettingsCard>
 
