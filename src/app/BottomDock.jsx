@@ -2939,13 +2939,15 @@ export function BottomDock({
                     現在緊急地震速報は発表されていません
                   </div>
                 )}
-                {hasActiveEew && eews.map(eew => (
+                {/* 地震を選択して詳細を見ている間は、地震カードと同じフローティングに
+                    緊急地震速報・揺れ検知(地震検知情報)のカードは出さない。 */}
+                {hasActiveEew && selectedQuakeId == null && eews.map(eew => (
                   <EewDetailFloatingCard key={eew.eventId} eew={eew} onHandoffToPanelDrag={handlePointerDown}/>
                 ))}
                 {/* 揺れ検知エンジンが検出したイベント(確定分のみ)。緊急地震速報の
                     下・平常時の内容の上に並べる。未確定のものは地図上のみで示し、
                     このリストにはノイズを避けるため出さない。 */}
-                {shakeEvents.filter(e => e.confirmed).map(e => (
+                {selectedQuakeId == null && shakeEvents.filter(e => e.confirmed).map(e => (
                   <ShakeEventCard key={e.id} event={e}/>
                 ))}
                 {selectedQuakeId != null ? (() => {
