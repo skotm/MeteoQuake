@@ -4,7 +4,7 @@ import { ESTIMATE_MIN_DISPLAY_CONFIDENCE } from "../engines/epicenterConfidence"
 import { EMPTY_EQDB_LIST } from "./eqdb";
 import { GlassOpaqueContext } from "./glass";
 import { ThemeContext } from "./theme";
-import { SETTINGS_ITEMS, SETTINGS_MENU, SettingsCard, SettingsCardDivider, SettingsHeader, SettingsMenuRow, SettingsSegmentRow, SettingsToggleRow, TAB_SETTINGS_CATEGORIES } from "./settingsPrimitives";
+import { SETTINGS_ITEMS, SETTINGS_MENU, SettingsCard, SettingsCardDivider, SettingsCheckRow, SettingsHeader, SettingsMenuRow, SettingsSegmentRow, SettingsToggleRow, TAB_SETTINGS_CATEGORIES } from "./settingsPrimitives";
 import { APP_VERSION } from "./consent";
 import { BoundaryLineColorSettings, LicenseFileCard, LogViewerPanel, MapColorSettings, MarkdownFileCard, QuakeColorSchemeSettings, QuakeFetchLimitSettings, StationListDisplayModeSettings } from "./settingsPanels";
 import { EewTestBroadcastPanel, QuakeTestBroadcastPanel, ShakeDetectionTestPanel, TsunamiTestBroadcastPanel } from "./testPanels";
@@ -231,6 +231,36 @@ export function SettingsBody({
     );
   }
 
+  // 発震機構解(CMT解)の取得先(地震カテゴリの項目)の中身。タップでチェックを付け外しする。
+  // どちらもオンが既定。オフにした取得先には通信しない。
+  if (category === "quake" && leaf === "cmtFetchSources") {
+    return (
+      <>
+        <SettingsHeader title="発震機構解(CMT解)の取得先"/>
+        <SettingsCard>
+          <SettingsCheckRow
+            label="気象庁(JMA)"
+            description="気象庁のCMT解・初動解・遠地地震CMTを取得します。"
+            checked={cmtFetchSources.jma}
+            onChange={() => onChangeCmtFetchSources({ ...cmtFetchSources, jma: !cmtFetchSources.jma })}
+          />
+          <SettingsCardDivider/>
+          <SettingsCheckRow
+            label="USGS"
+            description="USGSのモーメントテンソル解を取得します。両方にチェックがある場合、両方に解がある地震では、詳細画面で表示する方を切り替えられます。"
+            checked={cmtFetchSources.usgs}
+            onChange={() => onChangeCmtFetchSources({ ...cmtFetchSources, usgs: !cmtFetchSources.usgs })}
+          />
+        </SettingsCard>
+        {!cmtFetchSources.jma && !cmtFetchSources.usgs && (
+          <div style={{ padding: "0 16px 8px", fontSize: 11.5, color: "#FF9F0A", lineHeight: 1.6 }}>
+            どちらのチェックも外れている間は、発震機構解を取得せず、地震の詳細に発震機構解のボタンも出しません。
+          </div>
+        )}
+      </>
+    );
+  }
+
   // 雨雲レーダー配色(表示設定の項目)の中身
   if (category === "display" && leaf === "nowcastColorScheme") {
     return (
@@ -316,29 +346,9 @@ export function SettingsBody({
         <SettingsHeader title="地震"/>
         <SettingsCard>
           <SettingsMenuRow label="取得件数" onClick={() => onNavigate([...path, "fetchLimit"])}/>
-        </SettingsCard>
-        {/* 発震機構解(CMT解)の取得先。どちらもオンが既定。オフにした取得先には通信しない。 */}
-        <SettingsHeader title="発震機構解(CMT解)の取得先"/>
-        <SettingsCard>
-          <SettingsToggleRow
-            label="気象庁(JMA)"
-            description="気象庁のCMT解・初動解・遠地地震CMTを取得します。"
-            checked={cmtFetchSources.jma}
-            onChange={() => onChangeCmtFetchSources({ ...cmtFetchSources, jma: !cmtFetchSources.jma })}
-          />
           <SettingsCardDivider/>
-          <SettingsToggleRow
-            label="USGS"
-            description="USGSのモーメントテンソル解を取得します。両方オンの場合、両方に解がある地震では、詳細画面で表示する方を切り替えられます。"
-            checked={cmtFetchSources.usgs}
-            onChange={() => onChangeCmtFetchSources({ ...cmtFetchSources, usgs: !cmtFetchSources.usgs })}
-          />
+          <SettingsMenuRow label="発震機構解(CMT解)の取得先" onClick={() => onNavigate([...path, "cmtFetchSources"])}/>
         </SettingsCard>
-        {!cmtFetchSources.jma && !cmtFetchSources.usgs && (
-          <div style={{ padding: "0 16px 8px", fontSize: 11.5, color: "#FF9F0A", lineHeight: 1.6 }}>
-            どちらもオフの間は、発震機構解を取得せず、地震の詳細に発震機構解のボタンも出しません。
-          </div>
-        )}
         {/* 地震タブのフローティングバー左端「リアルタイム」まわりの設定(旧リアルタイムタブ・詳細設定から移動) */}
         <SettingsCard>
           <SettingsMenuRow label="リアルタイム" onClick={() => onNavigate([...path, "realtime"])}/>
