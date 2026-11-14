@@ -35,8 +35,10 @@ export function classifyEpicenterArea(place) {
   return "other";
 }
 
-export function shouldShowMechanismButton(quake) {
+// sources: 取得先の設定({ jma, usgs })。両方オフなら取得できないので、ボタンは出さない。省略時は両方オン。
+export function shouldShowMechanismButton(quake, sources = { jma: true, usgs: true }) {
   if (!quake) return false;
+  if (!sources.jma && !sources.usgs) return false;
   if (classifyEpicenterArea(quake.place) === "land") return true;
   return quake.magnitude != null && quake.magnitude >= MECH_BUTTON_MIN_MAGNITUDE_NON_LAND;
 }

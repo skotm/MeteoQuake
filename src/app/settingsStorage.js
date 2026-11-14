@@ -543,6 +543,7 @@ export function saveCameraSettings(settings) {
    ───────────────────────────────────────────────────── */
 const GRID_DETECTION_ENABLED_STORAGE_KEY = "gridDetectionEnabled";
 const GRID_CELLS_VISIBLE_STORAGE_KEY = "gridCellsVisible";
+const DETECTED_OUTLINE_STORAGE_KEY = "detectedStationOutlineEnabled";
 
 function loadStoredBool(key, fallback, label) {
   try {
@@ -577,4 +578,13 @@ export function loadStoredGridCellsVisible() {
 
 export function saveGridCellsVisible(visible) {
   saveStoredBool(GRID_CELLS_VISIBLE_STORAGE_KEY, visible, "グリッド枠の表示");
+}
+
+// 個別観測点検知方式で、検知済みの観測点を黒い縁取りで強調するか。既定はオン。
+export function loadStoredDetectedOutlineEnabled() {
+  return loadStoredBool(DETECTED_OUTLINE_STORAGE_KEY, true, "検知観測点の黒縁の強調");
+}
+
+export function saveDetectedOutlineEnabled(enabled) {
+  saveStoredBool(DETECTED_OUTLINE_STORAGE_KEY, enabled, "検知観測点の黒縁の強調");
 }

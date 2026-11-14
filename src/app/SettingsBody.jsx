@@ -55,7 +55,7 @@ export function SettingsBody({
   shakeDetectionEnabled, onChangeShakeDetectionEnabled,
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
   epicenterEstimationEnabled, onChangeEpicenterEstimationEnabled,
-  gridDetectionEnabled = false, onChangeGridDetectionEnabled = () => {}, gridCellsVisible = true, onChangeGridCellsVisible = () => {},
+  gridDetectionEnabled = false, onChangeGridDetectionEnabled = () => {}, gridCellsVisible = true, onChangeGridCellsVisible = () => {}, detectedOutlineEnabled = true, onChangeDetectedOutlineEnabled = () => {}, cmtFetchSources = { jma: true, usgs: true }, onChangeCmtFetchSources = () => {},
   showLowConfidenceEstimates, onChangeShowLowConfidenceEstimates,
   cameraSettings = DEFAULT_CAMERA_SETTINGS, onChangeCameraSettings = () => {},
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
@@ -317,6 +317,28 @@ export function SettingsBody({
         <SettingsCard>
           <SettingsMenuRow label="取得件数" onClick={() => onNavigate([...path, "fetchLimit"])}/>
         </SettingsCard>
+        {/* 発震機構解(CMT解)の取得先。どちらもオンが既定。オフにした取得先には通信しない。 */}
+        <SettingsHeader title="発震機構解(CMT解)の取得先"/>
+        <SettingsCard>
+          <SettingsToggleRow
+            label="気象庁(JMA)"
+            description="気象庁のCMT解・初動解・遠地地震CMTを取得します。"
+            checked={cmtFetchSources.jma}
+            onChange={() => onChangeCmtFetchSources({ ...cmtFetchSources, jma: !cmtFetchSources.jma })}
+          />
+          <SettingsCardDivider/>
+          <SettingsToggleRow
+            label="USGS"
+            description="USGSのモーメントテンソル解を取得します。両方オンの場合、両方に解がある地震では、詳細画面で表示する方を切り替えられます。"
+            checked={cmtFetchSources.usgs}
+            onChange={() => onChangeCmtFetchSources({ ...cmtFetchSources, usgs: !cmtFetchSources.usgs })}
+          />
+        </SettingsCard>
+        {!cmtFetchSources.jma && !cmtFetchSources.usgs && (
+          <div style={{ padding: "0 16px 8px", fontSize: 11.5, color: "#FF9F0A", lineHeight: 1.6 }}>
+            どちらもオフの間は、発震機構解を取得せず、地震の詳細に発震機構解のボタンも出しません。
+          </div>
+        )}
         {/* 地震タブのフローティングバー左端「リアルタイム」まわりの設定(旧リアルタイムタブ・詳細設定から移動) */}
         <SettingsCard>
           <SettingsMenuRow label="リアルタイム" onClick={() => onNavigate([...path, "realtime"])}/>
@@ -351,6 +373,14 @@ export function SettingsBody({
                 options={[{ value: "station", label: "個別観測点検知" }, { value: "grid", label: "グリッド検知" }]}
                 onChange={(v) => onChangeGridDetectionEnabled(v === "grid")}
               />
+              {!gridDetectionEnabled && (
+                <SettingsToggleRow
+                  label="検知観測点を黒縁で強調"
+                  description="個別観測点検知で、揺れを検知した観測点を、太い黒の縁取りで強調します。オフにすると、縁取りは付けず、他の観測点と同じ表示になります。"
+                  checked={detectedOutlineEnabled}
+                  onChange={() => onChangeDetectedOutlineEnabled(!detectedOutlineEnabled)}
+                />
+              )}
               {gridDetectionEnabled && (
                 <SettingsToggleRow
                   label="グリッドの枠を表示"

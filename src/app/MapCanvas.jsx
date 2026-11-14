@@ -109,6 +109,8 @@ export function MapCanvas({
   // グリッド(セル)方式の揺れ検知(gridDetection.ts)のON/OFFと、セル枠の表示のON/OFF。
   // 既存の揺れ検知とは独立に動き、併用して比較できる。
   gridDetectionEnabled = false,
+  // 個別観測点検知方式で、検知済みの観測点を黒い縁取りで強調するか(グリッド検知では、そもそも付けない)。
+  detectedOutlineEnabled = true,
   gridCellsVisible = true,
   // 信頼度が下限未満の震源推定も表示するか(設定。デフォルトOFF=表示しない)。
   showLowConfidenceEstimates = false,
@@ -1735,7 +1737,8 @@ export function MapCanvas({
     // 参照することになるが、見た目のズレとしては無視できるレベルなので
     // 許容する。
     // グリッド検知がONの間は、検知済み観測点の黒い縁取りは付けない(処理が重くなるため)。
-    const detectedStationIds = gridDetectionEnabled
+    // 縁取りの強調をオフにしている間も、付けない。
+    const detectedStationIds = gridDetectionEnabled || !detectedOutlineEnabled
       ? new Set()
       : buildDetectedStationIdSet(lastShakeEventsRef.current);
     const features = realtimeStations
@@ -1924,7 +1927,7 @@ export function MapCanvas({
       gridDetectionEnabled,
       epicenterEstimationEnabled,
     }, applyAnalysis);
-  }, [realtimeStations, realtimeValues, status, showRealtimeMapLayers, realtimeIntensityThreshold, realtimeRisingEnabled, replayJmaColorEnabled, shakeDetectionEnabled, epicenterEstimationEnabled, gridDetectionEnabled, gridCellsVisible, showLowConfidenceEstimates, realtimeSourceMode, replayActive, replayDataTimeMs, isWide, cameraSettings]);
+  }, [realtimeStations, realtimeValues, status, showRealtimeMapLayers, realtimeIntensityThreshold, realtimeRisingEnabled, replayJmaColorEnabled, shakeDetectionEnabled, epicenterEstimationEnabled, gridDetectionEnabled, detectedOutlineEnabled, gridCellsVisible, showLowConfidenceEstimates, realtimeSourceMode, replayActive, replayDataTimeMs, isWide, cameraSettings]);
 
   // 緊急地震速報: P波・S波の伝播円と震源マーカーをリアルタイムに更新する。
   // eews自体は1秒間隔のstate更新(App側の生存タイマー)にしか追従しないため、
