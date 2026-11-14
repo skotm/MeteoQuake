@@ -176,6 +176,41 @@ export function SettingsToggleRow({ label, description, checked, onChange, disab
   );
 }
 
+// カード内の1行(チェックマーク切り替え用)。タップするとON/OFFが切り替わり、
+// ONの間だけ右端に「✓」が付く。複数項目を独立して選べる一覧(取得先など)向け。
+export function SettingsCheckRow({ label, description, checked, onChange, disabled = false }) {
+  const { tokens } = useContext(ThemeContext);
+  return (
+    <PressableButton
+      onClick={disabled ? undefined : onChange}
+      role="checkbox"
+      aria-checked={checked}
+      style={{
+        width: "100%", display: "flex", alignItems: "center", gap: 12,
+        padding: "11px 14px",
+        background: checked ? `rgba(${tokens.ink},0.07)` : "transparent",
+        border: "none", cursor: disabled ? "default" : "pointer", textAlign: "left",
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "block", fontSize: 14, fontWeight: 600, color: tokens.text }}>{label}</span>
+        {description && (
+          <span style={{ display: "block", marginTop: 3, fontSize: 11.5, lineHeight: 1.5, color: tokens.textSecondary }}>
+            {description}
+          </span>
+        )}
+      </span>
+      <span aria-hidden="true" style={{
+        flex: "none", width: 20, textAlign: "center", fontSize: 15, fontWeight: 700,
+        color: `rgba(${tokens.ink},0.85)`, lineHeight: 1,
+      }}>
+        {checked ? "✓" : ""}
+      </span>
+    </PressableButton>
+  );
+}
+
 // 選択肢から1つ選ぶ行(分割ボタン形式)。options: [{ value, label }]
 export function SettingsSegmentRow({ label, description, value, options, onChange }) {
   const { tokens } = useContext(ThemeContext);
