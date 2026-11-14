@@ -585,7 +585,7 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
    気象庁とUSGSの両方に解がある場合は、画面上のトグルで表示する方を選べる(選択は保存される)。
    片方にしか無い場合は、ある方を表示する。どちらにも無い場合はその旨を案内する(エラーではない)。
    ───────────────────────────────────────────────────── */
-export function QuakeMechDetailPanel({ quake }) {
+export function QuakeMechDetailPanel({ quake, cmtSources = { jma: true, usgs: true } }) {
   const { tokens } = useContext(ThemeContext);
   // ホーム画面に追加したPWA(スタンドアロン表示)かどうか。
   // iOSのスタンドアロンPWAには「新しいタブ」という概念が無いため、
@@ -595,9 +595,9 @@ export function QuakeMechDetailPanel({ quake }) {
   // スタンドアロン時だけtarget="_blank"を外し、同じWebView内で遷移させることで、
   // これを避ける。
   const isStandalonePwa = useIsStandalonePwa();
-  // 情報源ごとの取得状態。status: "loading" | "found" | "not_found" | "error"
-  const [jma, setJma] = useState({ status: "loading", detail: null });
-  const [usgs, setUsgs] = useState({ status: "loading", detail: null });
+  // 情報源ごとの取得状態。status: "loading" | "found" | "not_found" | "error" | "disabled"(設定で取得先から外している)
+  const [jma, setJma] = useState({ status: cmtSources.jma ? "loading" : "disabled", detail: null });
+  const [usgs, setUsgs] = useState({ status: cmtSources.usgs ? "loading" : "disabled", detail: null });
   // 両方に解がある時にどちらを表示するか("jma" | "usgs")。保存して次回以降も使う。
   const [sourcePref, setSourcePref] = useState(loadStoredCmtSourcePref);
   // 震源球画像のURLが取れても、実際には読み込みに失敗する(ページ構成の想定違いで
@@ -608,12 +608,13 @@ export function QuakeMechDetailPanel({ quake }) {
 
   useEffect(() => {
     let cancelled = false;
-    setJma({ status: "loading", detail: null });
-    setUsgs({ status: "loading", detail: null });
+    setJma({ status: cmtSources.jma ? "loading" : "disabled", detail: null });
+    setUsgs({ status: cmtSources.usgs ? "loading" : "disabled", detail: null });
     setFailedImgUrl(null);
 
     // 気象庁とUSGSは互いに独立に取得する(片方が遅い・失敗しても、もう片方は表示できる)。
-    (async () => {
+    // 設定で取得先から外している方には、通信しない。
+    if (cmtSources.jma) (async () => {
       try {
         // 気象庁の5系統(精査版CMT・速報値・初動・遠地CMT)から、優先順位が最も高い解を1つ得る。
         const d = await findJmaMechanism(quake);
@@ -625,7 +626,7 @@ export function QuakeMechDetailPanel({ quake }) {
       }
     })();
 
-    (async () => {
+    if (cmtSources.usgs) (async () => {
       try {
         const d = await findUsgsCmtForQuake(quake);
         if (cancelled) return;
@@ -637,7 +638,7 @@ export function QuakeMechDetailPanel({ quake }) {
     })();
 
     return () => { cancelled = true; };
-  }, [quake.id]);
+  }, [quake.id, cmtSources.jma, cmtSources.usgs]);
 
   const SOURCE_LABEL = { jma: "気象庁", usgs: "USGS" };
   const bothFound = jma.status === "found" && usgs.status === "found";
@@ -649,7 +650,9 @@ export function QuakeMechDetailPanel({ quake }) {
     : null;
   const detail = shownSource === "jma" ? jma.detail : shownSource === "usgs" ? usgs.detail : null;
   const pending = jma.status === "loading" || usgs.status === "loading";
+  const noSource = jma.status === "disabled" && usgs.status === "disabled";
   const status = detail ? "found"
+    : noSource ? "disabled"
     : pending ? "loading"
     : (jma.status === "error" || usgs.status === "error") ? "error"
     : "not_found";
@@ -716,7 +719,16 @@ export function QuakeMechDetailPanel({ quake }) {
       <div style={{ padding: "2px 14px 16px" }}>
       {status === "loading" && (
         <Glass radius={14} style={{ padding: "24px 16px", textAlign: "center" }}>
-          <div style={{ fontSize: 12, color: tokens.textSecondary }}>気象庁・USGSのデータを確認しています…</div>
+          <div style={{ fontSize: 12, color: tokens.textSecondary }}>{[cmtSources.jma && "気象庁", cmtSources.usgs && "USGS"].filter(Boolean).join("・")}のデータを確認しています…</div>
+        </Glass>
+      )}
+
+      {status === "disabled" && (
+        <Glass radius={14} style={{ padding: "24px 16px", textAlign: "center" }}>
+          <div style={{ fontSize: 12, color: tokens.textSecondary, lineHeight: 1.6 }}>
+            発震機構解の取得先が選ばれていません。<br/>
+            設定の「地震」→「発震機構解(CMT解)の取得先」で、気象庁またはUSGSを選んでください。
+          </div>
         </Glass>
       )}
 

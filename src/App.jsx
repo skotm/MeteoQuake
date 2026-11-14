@@ -11,10 +11,11 @@ import { Filters, LAYERS } from "./app/navigation";
 import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layoutHooks";
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
 import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, computeGlareGuard, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
-import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, saveGridDetectionEnabled, saveGridCellsVisible, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
+import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
 import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
 import { loadEpicenterNamesData, loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
+import { loadStoredCmtFetchSources, saveCmtFetchSources } from "./app/cmtFetchSources";
 import {
   SIM_EEW_FINAL_LINGER_MS, SIM_EEW_ID_PREFIX, SIM_EEW_VANISH_CANCEL_MS,
   buildSimEewCard, buildSimEewFollowUp, buildSimLevelCard, buildSimLevelFollowUp,
@@ -353,6 +354,18 @@ export default function App() {
   // 既存の揺れ検知と併用でき、震源推定(ONの間)も、それぞれの検知結果に対して行う。
   const [gridDetectionEnabled, setGridDetectionEnabledState] = useState(loadStoredGridDetectionEnabled);
   const [gridCellsVisible, setGridCellsVisibleState] = useState(loadStoredGridCellsVisible);
+  // 発震機構解(CMT解)の取得先(気象庁・USGS)。どちらもオンが既定。
+  const [cmtFetchSources, setCmtFetchSourcesState] = useState(loadStoredCmtFetchSources);
+  function handleChangeCmtFetchSources(next) {
+    setCmtFetchSourcesState(next);
+    saveCmtFetchSources(next);
+  }
+  // 個別観測点検知方式で、検知済みの観測点を黒い縁取りで強調するか(既定オン)
+  const [detectedOutlineEnabled, setDetectedOutlineEnabledState] = useState(loadStoredDetectedOutlineEnabled);
+  function handleChangeDetectedOutlineEnabled(next) {
+    setDetectedOutlineEnabledState(next);
+    saveDetectedOutlineEnabled(next);
+  }
   function handleChangeGridDetectionEnabled(next) {
     setGridDetectionEnabledState(next);
     saveGridDetectionEnabled(next);
@@ -3098,6 +3111,7 @@ export default function App() {
           epicenterEstimationEnabled={epicenterEstimationEnabled}
           gridDetectionEnabled={shakeDetectionEnabled && gridDetectionEnabled}
           gridCellsVisible={gridCellsVisible}
+          detectedOutlineEnabled={detectedOutlineEnabled}
           showLowConfidenceEstimates={showLowConfidenceEstimates}
           onEpicenterEstimateChange={setEpicenterEstimates}
           shakeTestTrueEpicenters={shakeTestTrueEpicenters}
@@ -3527,7 +3541,11 @@ export default function App() {
                   gridDetectionEnabled={gridDetectionEnabled}
                   onChangeGridDetectionEnabled={handleChangeGridDetectionEnabled}
                   gridCellsVisible={gridCellsVisible}
+                  detectedOutlineEnabled={detectedOutlineEnabled}
                   onChangeGridCellsVisible={handleChangeGridCellsVisible}
+                  onChangeDetectedOutlineEnabled={handleChangeDetectedOutlineEnabled}
+                  cmtFetchSources={cmtFetchSources}
+                  onChangeCmtFetchSources={handleChangeCmtFetchSources}
                   showLowConfidenceEstimates={showLowConfidenceEstimates}
                   onChangeShowLowConfidenceEstimates={handleChangeShowLowConfidenceEstimates}
                   shakeEvents={shakeEvents}
@@ -3678,7 +3696,11 @@ export default function App() {
               gridDetectionEnabled={gridDetectionEnabled}
               onChangeGridDetectionEnabled={handleChangeGridDetectionEnabled}
               gridCellsVisible={gridCellsVisible}
+              detectedOutlineEnabled={detectedOutlineEnabled}
               onChangeGridCellsVisible={handleChangeGridCellsVisible}
+              onChangeDetectedOutlineEnabled={handleChangeDetectedOutlineEnabled}
+              cmtFetchSources={cmtFetchSources}
+              onChangeCmtFetchSources={handleChangeCmtFetchSources}
               showLowConfidenceEstimates={showLowConfidenceEstimates}
               onChangeShowLowConfidenceEstimates={handleChangeShowLowConfidenceEstimates}
               shakeEvents={shakeEvents}

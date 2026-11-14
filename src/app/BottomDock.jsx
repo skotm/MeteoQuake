@@ -90,7 +90,8 @@ export function BottomDock({
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
   cameraSettings, onChangeCameraSettings,
   epicenterEstimationEnabled, onChangeEpicenterEstimationEnabled,
-  gridDetectionEnabled, onChangeGridDetectionEnabled, gridCellsVisible, onChangeGridCellsVisible,
+  gridDetectionEnabled, onChangeGridDetectionEnabled, gridCellsVisible, onChangeGridCellsVisible, detectedOutlineEnabled, onChangeDetectedOutlineEnabled,
+  cmtFetchSources = { jma: true, usgs: true }, onChangeCmtFetchSources,
   showLowConfidenceEstimates, onChangeShowLowConfidenceEstimates,
   shakeEvents = EMPTY_EQDB_LIST,
   realtimeDataTime,
@@ -2632,7 +2633,7 @@ export function BottomDock({
                     if (mechDetailOpen) {
                       return (
                         <div key={`${selected.id}:mech`}>
-                          <QuakeMechDetailPanel quake={selected}/>
+                          <QuakeMechDetailPanel quake={selected} cmtSources={cmtFetchSources}/>
                         </div>
                       );
                     }
@@ -2671,7 +2672,7 @@ export function BottomDock({
                         )}
                         {/* 震央地名が陸域なら初動解の対象なのでMに関わらず出し、海域・その他は
                             CMT解/USGSの対象になるM4.5以上のときだけ出す(cmt.jsのshouldShowMechanismButton)。 */}
-                        {shouldShowMechanismButton(selected) && (
+                        {shouldShowMechanismButton(selected, cmtFetchSources) && (
                           <div style={{ margin: "8px 14px 4px" }}>
                             <PressableButton
                               type="button"
@@ -2810,6 +2811,10 @@ export function BottomDock({
                   onChangeGridDetectionEnabled={onChangeGridDetectionEnabled}
                   gridCellsVisible={gridCellsVisible}
                   onChangeGridCellsVisible={onChangeGridCellsVisible}
+                  detectedOutlineEnabled={detectedOutlineEnabled}
+                  onChangeDetectedOutlineEnabled={onChangeDetectedOutlineEnabled}
+                  cmtFetchSources={cmtFetchSources}
+                  onChangeCmtFetchSources={onChangeCmtFetchSources}
                   showLowConfidenceEstimates={showLowConfidenceEstimates}
                   onChangeShowLowConfidenceEstimates={onChangeShowLowConfidenceEstimates}
                   testTsunami={testTsunami}
@@ -2974,7 +2979,7 @@ export function BottomDock({
                   if (mechDetailOpen) {
                     return (
                       <div key={`${selected.id}:mech`}>
-                        <QuakeMechDetailPanel quake={selected}/>
+                        <QuakeMechDetailPanel quake={selected} cmtSources={cmtFetchSources}/>
                       </div>
                     );
                   }
@@ -3013,7 +3018,7 @@ export function BottomDock({
                       )}
                       {/* 震央地名が陸域なら初動解の対象なのでMに関わらず出し、海域・その他は
                           CMT解/USGSの対象になるM4.5以上のときだけ出す(cmt.jsのshouldShowMechanismButton)。 */}
-                      {shouldShowMechanismButton(selected) && (
+                      {shouldShowMechanismButton(selected, cmtFetchSources) && (
                         <div style={{ margin: "8px 14px 4px" }}>
                           <PressableButton
                             type="button"
