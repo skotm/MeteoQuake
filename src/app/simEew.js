@@ -242,11 +242,11 @@ export function buildSimLevelFollowUp(card, { areaNames, nowMs }) {
      予想震度(地域) = max(通常方式の距離減衰による予測, PLUM法の予測)  (合成はsimEewRules.buildForecast)
    PLUM法の予測 = その地域の代表点(細分区域の重心)から半径PLUM_RADIUS_KM以内のシミュレーション観測点の
    うち、観測震度がPLUM_MIN_OBSERVED_INTENSITY以上のものの最大観測震度(観測点別の地盤増幅などは考慮しない簡易版)。
-   発表条件の閾値は気象庁のPLUM法(震度5弱以上)に合わせた既定値で、定数で調整できる。
+   適用する観測震度の下限は震度4(計測震度3.5)。気象庁の資料にPLUM法の閾値の数値は無く、この値はMeteoQuakeの設定で、定数で調整できる。
    一度出た予想震度は下げない(holdPlum)。
    ───────────────────────────────────────────────────── */
 export const PLUM_RADIUS_KM = 30;
-export const PLUM_MIN_OBSERVED_INTENSITY = 4.5; // 計測震度4.5 = 震度5弱
+export const PLUM_MIN_OBSERVED_INTENSITY = 3.5; // 計測震度3.5 = 震度4(震度4以上の観測点から適用する)
 
 const centroidCache = new WeakMap();
 function areaCentroids(areasGeoJSON) {
