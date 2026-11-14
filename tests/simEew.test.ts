@@ -5,7 +5,7 @@ import {
   isSimEew, isRealEewActive, collectSimStationIds, isSimulationOnlyEvent,
   findOwnerTest, canIssueFromEstimate,
   buildSimEewCard, buildSimEewFollowUp,
-  calcPlumAreaIntensities, holdPlum, PLUM_RADIUS_KM,
+  calcPlumAreaIntensities, holdPlum, PLUM_RADIUS_KM, PLUM_MIN_OBSERVED_INTENSITY,
 } from "../src/app/simEew.js";
 import { buildForecast, evaluateReport } from "../src/app/simEewRules.js";
 import { filterEstimatesNearEew, isSuppressingEew } from "../src/app/eewEstimateFilter.js";
@@ -111,13 +111,17 @@ const geo = { type: "FeatureCollection", features: [square("近い地域", 35.0,
 const stations = [{ id: 1, lat: 35.0, lon: 139.0 }, { id: 2, lat: 35.0, lon: 139.0 }];
 const simIds = new Set([1]);
 
-test("PLUM: 観測震度5弱以上の観測点から半径30km以内の地域だけが対象(5弱未満・シミュレーション外の観測点は使わない)", () => {
+test("PLUM: 観測震度4以上(計測震度3.5以上)の観測点から半径30km以内の地域が対象(震度4未満・シミュレーション外の観測点は使わない)", () => {
   assert.equal(PLUM_RADIUS_KM, 30);
+  assert.equal(PLUM_MIN_OBSERVED_INTENSITY, 3.5);
   const hit = calcPlumAreaIntensities(geo, stations, new Map([[1, 5.2]]), simIds);
   assert.equal(hit.get("近い地域")?.key, "5+");
   assert.equal(hit.get("やや近い地域")?.key, "5+"); // 約17km
   assert.equal(hit.has("遠い地域"), false);          // 約111km
-  assert.equal(calcPlumAreaIntensities(geo, stations, new Map([[1, 4.4]]), simIds).size, 0);
+  // 震度4(計測震度3.5〜4.4)の観測点も適用する。震度4未満は適用しない。
+  assert.equal(calcPlumAreaIntensities(geo, stations, new Map([[1, 4.4]]), simIds).get("近い地域")?.key, "4");
+  assert.equal(calcPlumAreaIntensities(geo, stations, new Map([[1, 3.5]]), simIds).get("近い地域")?.key, "4");
+  assert.equal(calcPlumAreaIntensities(geo, stations, new Map([[1, 3.4]]), simIds).size, 0);
   assert.equal(calcPlumAreaIntensities(geo, stations, new Map([[2, 6.0]]), simIds).size, 0); // 観測点2はシミュレーション外
 });
 
