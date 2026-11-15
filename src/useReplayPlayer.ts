@@ -144,7 +144,7 @@ function frameIndexAtOrBefore(frames: IntensityDeltaMessage[], ms: number): numb
 }
 
 /**
- * 読み込み直後の再生位置(UTCミリ秒)。EEWがあり、その開始時刻(地震波検知時刻)が
+ * 読み込み直後の再生位置(UTCミリ秒)。EEWがあり、その地震の発生時刻が
  * フレームの範囲内なら、そこから始める。無ければ先頭から。
  */
 function initialClockMs(frames: IntensityDeltaMessage[], eew: ReplayEewData | null): number {
@@ -209,7 +209,7 @@ export function useReplayPlayer(): ReplayPlayer {
       binFramesRef.current = frames;
       framesRef.current = frames;
       const eew = eewRef.current;
-      // EEWも読み込み済みなら、地震波検知時刻から始める。
+      // EEWも読み込み済みなら、地震の発生時刻から始める。
       const startMs = initialClockMs(frames, eew);
       const index = jumpTo(frames, startMs);
       setState((prev) => ({
@@ -233,7 +233,7 @@ export function useReplayPlayer(): ReplayPlayer {
 
   // EEWファイル(.eew.json)の読み込み。震度ファイルが無ければ、EEWの時間範囲から
   // 値が空のフレームを作って、EEWだけで再生できるようにする。
-  // 震度ファイルもある場合は、地震波検知時刻(無ければ第1報の少し前)に再生位置を移す。
+  // 震度ファイルもある場合は、地震の発生時刻に再生位置を移す。
   const loadEewFile = useCallback(async (file: File) => {
     try {
       const eew = parseReplayEewJson(await file.text());
