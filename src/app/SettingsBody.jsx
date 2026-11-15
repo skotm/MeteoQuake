@@ -55,7 +55,7 @@ export function SettingsBody({
   shakeDetectionEnabled, onChangeShakeDetectionEnabled,
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
   epicenterEstimationEnabled, onChangeEpicenterEstimationEnabled,
-  gridDetectionEnabled = false, onChangeGridDetectionEnabled = () => {}, gridCellsVisible = true, onChangeGridCellsVisible = () => {}, detectedOutlineEnabled = true, onChangeDetectedOutlineEnabled = () => {}, cmtFetchSources = { jma: true, usgs: true }, onChangeCmtFetchSources = () => {},
+  gridDetectionEnabled = false, onChangeGridDetectionEnabled = () => {}, gridCellsVisible = true, onChangeGridCellsVisible = () => {}, detectedOutlineEnabled = false, onChangeDetectedOutlineEnabled = () => {}, cmtFetchSources = { jma: true, usgs: true }, onChangeCmtFetchSources = () => {},
   showLowConfidenceEstimates, onChangeShowLowConfidenceEstimates,
   cameraSettings = DEFAULT_CAMERA_SETTINGS, onChangeCameraSettings = () => {},
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
