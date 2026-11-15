@@ -43,6 +43,8 @@ export interface ReplayEewReport {
 export interface ReplayEewData {
   eventId: string;
   originTimeMs: number;
+  /** 地震波検知時刻(UTCミリ秒)。ファイルに無ければnull。リプレイはここから始める。 */
+  detectionTimeMs: number | null;
   hypocenterName: string | null;
   reports: ReplayEewReport[]; // issuedAtMsの昇順
   startMs: number; // 再生範囲の先頭(最初の報/発生の少し前)
@@ -127,19 +129,29 @@ export function parseReplayEewJson(text: string): ReplayEewData {
   reports[reports.length - 1].isFinal = true;
 
   const originTimeMs = isNum(ev.originTimeMs) ? ev.originTimeMs : reports[0].issuedAtMs;
-  const startMs = Math.min(originTimeMs, reports[0].issuedAtMs) - LEAD_IN_MS;
+  const detectionTimeMs = isNum(ev.detectionTimeMs) ? ev.detectionTimeMs : null;
+  const startMs = Math.min(originTimeMs, detectionTimeMs ?? Infinity, reports[0].issuedAtMs) - LEAD_IN_MS;
   const endMs = reports[reports.length - 1].issuedAtMs + keepMsAfter(reports[reports.length - 1]);
   const warnings: string[] = Array.isArray(n.warnings) ? n.warnings.filter((w: unknown) => typeof w === "string") : [];
   if (skipped > 0) warnings.push(`震源の位置が無い報が${skipped}件あり、再生から除きました。`);
   return {
     eventId: String(ev.eventId || `eew_${originTimeMs}`),
     originTimeMs,
+    detectionTimeMs,
     hypocenterName: typeof ev.hypocenterName === "string" ? ev.hypocenterName : null,
     reports,
     startMs,
     endMs,
     warnings,
   };
+}
+
+/**
+ * 震度ファイルとEEWを一緒に再生する時の、再生の開始時刻(UTCミリ秒)。
+ * 地震波検知時刻から始める。ファイルに無ければ、第1報の少し前。
+ */
+export function replayStartMs(data: ReplayEewData): number {
+  return data.detectionTimeMs ?? data.reports[0].issuedAtMs - 2000;
 }
 
 /** UTCミリ秒を、アプリのEEWカードのoriginTime形式(JSTの "YYYY/MM/DD HH:mm:ss")にする。 */
