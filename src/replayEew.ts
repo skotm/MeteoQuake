@@ -167,6 +167,14 @@ export function formatJstSlash(ms: number): string {
 }
 
 /**
+ * PLUM法の報か。PLUM法のEEWは、震源・Mが求まらないため、仮定震源要素として
+ * M1.0・深さ10kmで発表される。この値の報はPLUM法として扱う。
+ */
+export function isPlumHypocenter(h: { depthKm: number | null; magnitude: number | null }): boolean {
+  return h.magnitude != null && Math.abs(h.magnitude - 1.0) < 0.05 && h.depthKm != null && Math.round(h.depthKm) === 10;
+}
+
+/**
  * 警報の対象地域は、続報で広がることはあっても、狭まることはない。
  *  ・当初対象外の地域が震度5弱以上(長周期階級3以上)の予想になると続報が出て、
  *    その時点で震度4以上が予想される地域もまとめて対象に加わる。
@@ -202,6 +210,7 @@ export function buildReplayEewAt(data: ReplayEewData | null, timeMs: number | nu
   const last = data.reports[data.reports.length - 1];
   if (timeMs >= last.issuedAtMs + keepMsAfter(last)) return [];
   const areas = current.isCancel ? [] : accumulateWarningAreas(data.reports, current);
+  const isPlum = !current.isCancel && isPlumHypocenter(current.hypocenter);
 
   return [{
     id: `replay_${data.eventId}_${current.serial}`,
@@ -213,7 +222,7 @@ export function buildReplayEewAt(data: ReplayEewData | null, timeMs: number | nu
     // 地図のP波・S波の円はこちらを優先して使う(文字列を端末のタイムゾーンで解釈しないため)。
     originTimeMs: data.originTimeMs,
     arrivalTime: null,
-    isAssumedHypocenter: false,
+    isAssumedHypocenter: isPlum,
     place: data.hypocenterName || "震源地不明",
     reducedPlace: null,
     latitude: current.hypocenter.latitude,
@@ -226,10 +235,10 @@ export function buildReplayEewAt(data: ReplayEewData | null, timeMs: number | nu
       scaleFrom: null,
       scaleTo: null,
       maxIntensityKey: a.maxIntensityKey ?? "?",
-      isPlum: false,
+      isPlum,
     })),
     maxIntensityKey: current.maxIntensityKey ?? "?",
-    isPlum: false,
+    isPlum,
     source: "replay",
     isReplay: true,
     isFinal: current.isFinal,

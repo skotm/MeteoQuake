@@ -179,3 +179,17 @@ test("EEWの一部が震度ファイルの範囲外でも、フレームを延�
   const far = [frameAt(ORIGIN + 9_000_000)];
   assert.equal(extendFramesForEew(far, data), far);
 });
+
+test("M1.0・深さ10kmの報はPLUM法として扱う", () => {
+  const j = JSON.parse(sampleJson());
+  // サンプルは配列の先頭が第2報
+  j.normalized.reports[1].hypocenter = { latitude: 36.1, longitude: 139.9, depthKm: 10, magnitude: 1.0 };
+  const d = parseReplayEewJson(JSON.stringify(j));
+  const plum = buildReplayEewAt(d, ORIGIN + 50_000)[0];
+  assert.equal(plum.isPlum, true);
+  assert.equal(plum.areas.every((a: any) => a.isPlum), true);
+  // 続報で通常の震源に変われば、PLUM法ではなくなる
+  const normal = buildReplayEewAt(d, ORIGIN + 60_000)[0];
+  assert.equal(normal.isPlum, false);
+  assert.equal(normal.areas.some((a: any) => a.isPlum), false);
+});
