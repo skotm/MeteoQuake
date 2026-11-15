@@ -1,0 +1,103 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { buildEewOnlyFrames, buildReplayEewAt, eewRangeNote, parseReplayEewJson, REPLAY_EEW_KEEP_MS } from "../src/replayEew.ts";
+
+// JmaEewParser(v0.4.0)の .eew.json のうち、MeteoQuakeが使う normalized 部分。
+const ORIGIN = Date.UTC(2026, 7, 22, 17, 0, 0); // 2026-08-23 02:00:00 JST
+function sampleJson(overrides: Record<string, unknown> = {}) {
+  return JSON.stringify({
+    schemaVersion: "1.2.0",
+    normalized: {
+      formatVersion: 1,
+      event: { eventId: "jma-1", originTimeMs: ORIGIN, hypocenterName: "茨城県南部", latitude: 36.1, longitude: 139.9, depthKm: 50, magnitude: 5.9 },
+      reports: [
+        { serial: 2, issuedAtMs: ORIGIN + 56_000, isFinal: true, maxIntensityKey: "5+", areas: [{ name: "茨城県南部", minIntensityKey: "5-", maxIntensityKey: "5+", openEnded: false }] },
+        { serial: 1, issuedAtMs: ORIGIN + 50_000, isFinal: false, maxIntensityKey: "5-", areas: [{ name: "茨城県南部", minIntensityKey: "4", maxIntensityKey: "5-", openEnded: false }] },
+      ],
+      warnings: [],
+      ...overrides,
+    },
+  });
+}
+const data = parseReplayEewJson(sampleJson());
+
+test("報を発表時刻順に並べ、最後を最終報にする", () => {
+  assert.deepEqual(data.reports.map((r) => r.serial), [1, 2]);
+  assert.equal(data.reports[1].isFinal, true);
+  assert.equal(data.endMs, ORIGIN + 56_000 + REPLAY_EEW_KEEP_MS);
+});
+
+test("normalizedが無い古いJSONは分かりやすいエラー", () => {
+  assert.throws(() => parseReplayEewJson(JSON.stringify({ schemaVersion: "1.1.0", event: {}, reports: [] })), /v0\.4\.0/);
+});
+
+test("JSONでないものはエラー", () => {
+  assert.throws(() => parseReplayEewJson("not json"));
+});
+
+test("緯度経度が数値でなければエラー", () => {
+  const j = JSON.parse(sampleJson());
+  j.normalized.event.latitude = null;
+  assert.throws(() => parseReplayEewJson(JSON.stringify(j)), /緯度・経度/);
+});
+
+test("発表時刻のある報が無ければエラー", () => {
+  assert.throws(() => parseReplayEewJson(sampleJson({ reports: [{ serial: 1, issuedAtMs: null, areas: [] }] })), /1件もありません/);
+});
+
+test("最初の報の前は出さない", () => {
+  assert.deepEqual(buildReplayEewAt(data, ORIGIN + 49_999), []);
+});
+
+test("再生時刻までの最新の報を出す(続報は同じeventId)", () => {
+  const first = buildReplayEewAt(data, ORIGIN + 50_000)[0];
+  assert.equal(first.serial, "1");
+  assert.equal(first.isFinal, false);
+  assert.equal(first.maxIntensityKey, "5-");
+  const second = buildReplayEewAt(data, ORIGIN + 70_000)[0];
+  assert.equal(second.serial, "2");
+  assert.equal(second.isFinal, true);
+  assert.equal(second.eventId, first.eventId);
+});
+
+test("カードの形がライブのEEWと同じ", () => {
+  const c = buildReplayEewAt(data, ORIGIN + 60_000)[0];
+  assert.equal(c.cancelled, false);
+  assert.equal(c.isTraining, false);
+  assert.equal(c.isWarnLevel, true);
+  assert.equal(c.isPlum, false);
+  assert.equal(c.source, "replay");
+  assert.equal(c.originTime, "2026/08/23 02:00:00");
+  assert.equal(c.originTimeMs, ORIGIN);
+  assert.equal(c.place, "茨城県南部");
+  assert.equal(c.depth, 50);
+  assert.equal(c.magnitude, 5.9);
+  assert.equal(c.areas[0].name, "茨城県南部");
+  assert.equal(c.areas[0].maxIntensityKey, "5+");
+});
+
+test("最終報から一定時間たつと消える", () => {
+  const last = ORIGIN + 56_000;
+  assert.equal(buildReplayEewAt(data, last + REPLAY_EEW_KEEP_MS - 1).length, 1);
+  assert.deepEqual(buildReplayEewAt(data, last + REPLAY_EEW_KEEP_MS), []);
+});
+
+test("データなし・時刻なしは空", () => {
+  assert.deepEqual(buildReplayEewAt(null, ORIGIN), []);
+  assert.deepEqual(buildReplayEewAt(data, null), []);
+});
+
+test("EEWだけの再生: 1秒刻みで値が空のフレームを範囲全体に作る", () => {
+  const frames = buildEewOnlyFrames(data);
+  assert.equal(frames[0].dataTime.getTime(), Math.floor(data.startMs / 1000) * 1000);
+  assert.equal(frames[1].dataTime.getTime() - frames[0].dataTime.getTime(), 1000);
+  assert.ok(frames[frames.length - 1].dataTime.getTime() >= data.endMs);
+  assert.ok(frames.every((f) => f.entries.length === 0));
+});
+
+test("震度ファイルの範囲との照合", () => {
+  const frameAt = (ms: number) => ({ dataTime: new Date(ms), entries: [] });
+  assert.equal(eewRangeNote([frameAt(ORIGIN - 60_000), frameAt(ORIGIN + 600_000)], data), null);
+  assert.match(eewRangeNote([frameAt(ORIGIN + 600_000), frameAt(ORIGIN + 700_000)], data) ?? "", /範囲外/);
+  assert.match(eewRangeNote([frameAt(ORIGIN + 53_000), frameAt(ORIGIN + 700_000)], data) ?? "", /一部/);
+});

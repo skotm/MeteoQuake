@@ -1676,6 +1676,9 @@ export function MapCanvas({
   // P波・S波到達円のアニメーションを、エンジン時刻と同じ時間軸(データ時刻)で
   // 進めるための基準(最後にデータ時刻が更新された時点の、データ時刻と壁時計)。
   const replayClockRef = useRef({ dataMs: null, wallMs: 0 });
+  // EEWのP波・S波の円(依存配列が[status]のeffect)が、最新のリプレイ状態を読めるようにrefへ写す。
+  const replayViewRef = useRef({ active: false, playing: false, speed: 1 });
+  replayViewRef.current = { active: replayActive, playing: replayPlaying, speed: replaySpeed };
   if (replayActive && replayDataTimeMs != null) {
     if (replayClockRef.current.dataMs !== replayDataTimeMs) {
       replayClockRef.current = { dataMs: replayDataTimeMs, wallMs: Date.now() };
@@ -1957,9 +1960,19 @@ export function MapCanvas({
             properties: { isPlum: !!eew.isPlum },
           });
           if (eew.isPlum) return; // PLUM法は到達時刻の予測が無いため円は描かない
-          const originMs = eew.originTime ? new Date(eew.originTime.replace(/-/g, "/")).getTime() : NaN;
+          // リプレイのEEWは数値のoriginTimeMs(UTC)を持つので、それを優先する(文字列は端末のタイムゾーンで解釈されるため)。
+          const originMs = Number.isFinite(eew.originTimeMs)
+            ? eew.originTimeMs
+            : (eew.originTime ? new Date(eew.originTime.replace(/-/g, "/")).getTime() : NaN);
           if (!Number.isFinite(originMs)) return;
-          const elapsedSec = (Date.now() - originMs) / 1000;
+          // リプレイ中は、データ時刻(最後に更新された時点から壁時計の経過×再生速度で補間)で円を進める。
+          // 一時停止中は補間せず、停止した時点の円のままにする。
+          const view = replayViewRef.current;
+          const clock = replayClockRef.current;
+          const nowMs = (view.active && clock.dataMs != null)
+            ? clock.dataMs + (view.playing ? (Date.now() - clock.wallMs) * view.speed : 0)
+            : Date.now();
+          const elapsedSec = (nowMs - originMs) / 1000;
           const pRadiusKm = eewWaveSurfaceRadiusKm(elapsedSec, eew.depth, EEW_P_WAVE_SPEED_KM_S);
           const sRadiusKm = eewWaveSurfaceRadiusKm(elapsedSec, eew.depth, EEW_S_WAVE_SPEED_KM_S);
           const pRing = eewCirclePolygon(eew.latitude, eew.longitude, pRadiusKm);

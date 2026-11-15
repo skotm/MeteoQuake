@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useRealtimeStream } from "./useRealtimeStream";
 import { useReplayPlayer } from "./useReplayPlayer";
+import { buildReplayEewAt } from "./replayEew";
 import { prepareShakeTest, isShakeTestFinished, computeShakeTestValues } from "./engines/shakeTestSimulation";
 import { buildSiteLookup } from "./engines/shakeTestWaveform";
 import { setJmaTravelTimeTable, tableFromJSON } from "./engines/jmaTravelTime";
@@ -786,7 +787,26 @@ export default function App() {
 
   // テスト配信中は、実際の一覧の先頭にテストデータを合成する。地図・パネルとも、
   // 以降のEEW関連の判定はこちら(effectiveEews)を使う。
-  const effectiveEews = testEews.length > 0 ? [...testEews, ...eews] : eews;
+  // リプレイにEEWファイル(.eew.json)を読み込んでいる間は、ライブのEEWは出さず、
+  // 再生時刻(データ時刻)に合わせたリプレイのEEWだけを出す。ライブと混ざらないようにするため。
+  const replayEewTimeMs = replayPlayer.loaded && replayPlayer.eew
+    ? (replayPlayer.frames[replayPlayer.currentIndex]?.dataTime?.getTime() ?? null)
+    : null;
+  const replayEews = useMemo(
+    () => buildReplayEewAt(replayPlayer.eew, replayEewTimeMs),
+    [replayPlayer.eew, replayEewTimeMs],
+  );
+  const baseEews = replayPlayer.loaded && replayPlayer.eew ? replayEews : eews;
+  const effectiveEews = testEews.length > 0 ? [...testEews, ...baseEews] : baseEews;
+
+  // リプレイのEEWが新しく出た時は、ライブの新規EEWと同じく、設定タブ以外ならEEW詳細を自動で開く
+  // (リプレイの再生や、巻き戻して見直した時にも同じ動き)。
+  const prevReplayEewEventRef = useRef(null);
+  useEffect(() => {
+    const id = replayEews[0]?.eventId ?? null;
+    if (id && id !== prevReplayEewEventRef.current && activeNavRef.current !== "settings") setEewDetailOpen(true);
+    prevReplayEewEventRef.current = id;
+  }, [replayEews]);
 
   // 緊急地震速報(取消済みでないもの)が新たに発表された瞬間は、地震タブを「リアルタイム」に
   // 切り替えて速報を見落とさないようにする。その後は固定せず、虫眼鏡ボタンから地震検索を
@@ -1089,7 +1109,7 @@ export default function App() {
           setShakeTestEewNotice("連動には、設定の「揺れ検知」と「震源推定」をONにし、検知方式を通常方式にする必要があります。");
           return;
         }
-        if (isRealEewActive(eews)) {
+        if (isRealEewActive([...eews, ...replayEews])) {
           setShakeTestEewNotice("実際の緊急地震速報が発表中のため、開始できません。");
           return;
         }
@@ -1223,7 +1243,7 @@ export default function App() {
      ───────────────────────────────────────────────────── */
   const linkedShakeTests = useMemo(() => shakeTests.filter(t => t.eewLinked), [shakeTests]);
   const hasLinkedShakeTest = linkedShakeTests.length > 0;
-  const realEewActive = isRealEewActive(eews);
+  const realEewActive = isRealEewActive([...eews, ...replayEews]);
   useEffect(() => {
     shakeTestsRef.current = shakeTests;
     realEewActiveRef.current = realEewActive;

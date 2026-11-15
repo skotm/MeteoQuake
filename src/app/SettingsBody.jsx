@@ -489,100 +489,146 @@ export function SettingsBody({
       e.target.value = "";
     };
 
+    const handleEewFileChange = (e) => {
+      const file = e.target.files?.[0];
+      if (file) replayPlayer.loadEewFile(file);
+      e.target.value = "";
+    };
+    const pickerLabelStyle = {
+      display: "inline-flex", alignItems: "center", gap: 6,
+      padding: "9px 14px", borderRadius: 10,
+      border: `1px solid rgba(${tokens.ink},0.15)`,
+      background: `rgba(${tokens.ink},0.04)`,
+      fontSize: 13, color: `rgba(${tokens.ink},0.85)`, cursor: "pointer",
+    };
+    const titleStyle = { fontSize: 13, fontWeight: 600, color: `rgba(${tokens.ink},0.85)`, marginBottom: 6 };
+    const descStyle = { fontSize: 12, color: `rgba(${tokens.ink},0.55)`, marginBottom: 10, lineHeight: 1.5 };
+    const fileRowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 };
+    const fileNameStyle = { fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 };
+    const linkButtonStyle = { background: "none", border: "none", cursor: "pointer", fontSize: 13, color: `rgba(${tokens.ink},0.5)`, padding: 0, flex: "none" };
+    const eew = replayPlayer.eew;
+    const eewFinal = eew ? eew.reports[eew.reports.length - 1] : null;
+
     return (
       <>
         <SettingsHeader title="リプレイ"/>
         <SettingsCard>
           <div style={{ padding: "14px 16px" }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: `rgba(${tokens.ink},0.85)`, marginBottom: 6 }}>
-              リプレイファイル
-            </div>
-            <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, marginBottom: 10, lineHeight: 1.5 }}>
+            <div style={titleStyle}>リプレイファイル(震度)</div>
+            <div style={descStyle}>
               バックフィルサーバーで生成した過去データのファイル(.bin)を読み込むと、
               地震タブの地図(バー「リアルタイム」)で過去の揺れを再生できます。
             </div>
-
-            {!replayPlayer.loaded ? (
-              <label
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 6,
-                  padding: "9px 14px", borderRadius: 10,
-                  border: `1px solid rgba(${tokens.ink},0.15)`,
-                  background: `rgba(${tokens.ink},0.04)`,
-                  fontSize: 13, color: `rgba(${tokens.ink},0.85)`, cursor: "pointer",
-                }}
-              >
+            {!replayPlayer.hasBin ? (
+              <label style={pickerLabelStyle}>
                 ファイルを選択
                 <input type="file" accept=".bin" onChange={handleFileChange} style={{ display: "none" }}/>
               </label>
             ) : (
-              <div>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
-                    {replayPlayer.fileName}
-                  </span>
-                  <button
-                    onClick={replayPlayer.close}
-                    style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: `rgba(${tokens.ink},0.5)`, padding: 0 }}
-                  >
-                    閉じる
-                  </button>
-                </div>
-
-                <div style={{ fontSize: 12, fontVariantNumeric: "tabular-nums", color: `rgba(${tokens.ink},0.55)`, marginBottom: 8 }}>
-                  {replayPlayer.frames[replayPlayer.currentIndex]
-                    ? replayPlayer.frames[replayPlayer.currentIndex].dataTime.toLocaleString("ja-JP", { hour12: false })
-                    : "--"}
-                  {"  ("}{replayPlayer.currentIndex + 1}/{replayPlayer.frames.length}{")"}
-                </div>
-
-                <input
-                  type="range"
-                  min={0}
-                  max={Math.max(0, replayPlayer.frames.length - 1)}
-                  value={replayPlayer.currentIndex}
-                  onChange={(e) => replayPlayer.seek(Number(e.target.value))}
-                  style={{ width: "100%", marginBottom: 10 }}
-                />
-
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <button
-                    onClick={replayPlayer.isPlaying ? replayPlayer.pause : replayPlayer.play}
-                    style={{
-                      background: `rgba(${tokens.ink},0.08)`, border: "none", borderRadius: 8,
-                      padding: "6px 14px", fontSize: 13, cursor: "pointer", color: `rgba(${tokens.ink},0.85)`,
-                    }}
-                  >
-                    {replayPlayer.isPlaying ? "⏸ 一時停止" : "▶ 再生"}
-                  </button>
-                  <select
-                    value={replayPlayer.speed}
-                    onChange={(e) => replayPlayer.setSpeed(Number(e.target.value))}
-                    style={{
-                      background: `rgba(${tokens.ink},0.08)`, border: "none", borderRadius: 8,
-                      padding: "6px 8px", fontSize: 13, color: `rgba(${tokens.ink},0.85)`,
-                      // PCブラウザのネイティブポップアップの配色をモードに合わせる
-                      // (無いとダークモードで文字が背景に埋もれて読めない)。
-                      colorScheme: themeMode === "dark" ? "dark" : "light",
-                    }}
-                  >
-                    <option value={1}>1倍速</option>
-                    <option value={2}>2倍速</option>
-                    <option value={4}>4倍速</option>
-                  </select>
-                </div>
+              <div style={fileRowStyle}>
+                <span style={fileNameStyle}>{replayPlayer.fileName}</span>
+                <button onClick={replayPlayer.closeBin} style={linkButtonStyle}>閉じる</button>
               </div>
-            )}
-
-            {replayPlayer.error && (
-              <div style={{ marginTop: 10, fontSize: 12, color: "#FF453A" }}>{replayPlayer.error}</div>
             )}
           </div>
         </SettingsCard>
 
-        {/* 観測点の色を気象庁震度階級に換算して表示する設定。リプレイ再生時
-            (ファイル読み込み後)のみ意味を持つため、その間だけ表示する。 */}
+        <SettingsCard>
+          <div style={{ padding: "14px 16px" }}>
+            <div style={titleStyle}>緊急地震速報(EEW)ファイル</div>
+            <div style={descStyle}>
+              JmaEewParserで作成したEEWのファイル(.eew.json)を読み込むと、再生時刻に合わせて緊急地震速報が表示されます。
+              震度のファイルと一緒に読み込むほか、EEWだけでも再生できます。EEWを読み込んでいる間は、リアルタイムの緊急地震速報は表示しません。
+            </div>
+            {!eew ? (
+              <label style={pickerLabelStyle}>
+                ファイルを選択
+                <input type="file" accept=".json,application/json" onChange={handleEewFileChange} style={{ display: "none" }}/>
+              </label>
+            ) : (
+              <div>
+                <div style={fileRowStyle}>
+                  <span style={fileNameStyle}>{replayPlayer.eewFileName}</span>
+                  <button onClick={replayPlayer.clearEew} style={linkButtonStyle}>外す</button>
+                </div>
+                <div style={{ marginTop: 6, fontSize: 12, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.5 }}>
+                  {eew.hypocenterName || "震源地不明"}{eew.magnitude != null ? ` M${eew.magnitude}` : ""}
+                  {" ・ "}{eew.reports.length}報(第{eewFinal.serial}報まで)
+                </div>
+                {!replayPlayer.hasBin && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.5 }}>
+                    震度のファイルが無いため、EEWだけを再生します(観測点の揺れは表示されません)。
+                  </div>
+                )}
+                {replayPlayer.eewNote && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: "#FF9F0A", lineHeight: 1.5 }}>{replayPlayer.eewNote}</div>
+                )}
+                {eew.warnings.length > 0 && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: "#FF9F0A", lineHeight: 1.5 }}>
+                    ファイル作成時の注意: {eew.warnings.join(" / ")}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </SettingsCard>
+
         {replayPlayer.loaded && (
+          <SettingsCard>
+            <div style={{ padding: "14px 16px" }}>
+              <div style={{ fontSize: 12, fontVariantNumeric: "tabular-nums", color: `rgba(${tokens.ink},0.55)`, marginBottom: 8 }}>
+                {replayPlayer.frames[replayPlayer.currentIndex]
+                  ? replayPlayer.frames[replayPlayer.currentIndex].dataTime.toLocaleString("ja-JP", { hour12: false })
+                  : "--"}
+                {"  ("}{replayPlayer.currentIndex + 1}/{replayPlayer.frames.length}{")"}
+              </div>
+
+              <input
+                type="range"
+                min={0}
+                max={Math.max(0, replayPlayer.frames.length - 1)}
+                value={replayPlayer.currentIndex}
+                onChange={(e) => replayPlayer.seek(Number(e.target.value))}
+                style={{ width: "100%", marginBottom: 10 }}
+              />
+
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button
+                  onClick={replayPlayer.isPlaying ? replayPlayer.pause : replayPlayer.play}
+                  style={{
+                    background: `rgba(${tokens.ink},0.08)`, border: "none", borderRadius: 8,
+                    padding: "6px 14px", fontSize: 13, cursor: "pointer", color: `rgba(${tokens.ink},0.85)`,
+                  }}
+                >
+                  {replayPlayer.isPlaying ? "⏸ 一時停止" : "▶ 再生"}
+                </button>
+                <select
+                  value={replayPlayer.speed}
+                  onChange={(e) => replayPlayer.setSpeed(Number(e.target.value))}
+                  style={{
+                    background: `rgba(${tokens.ink},0.08)`, border: "none", borderRadius: 8,
+                    padding: "6px 8px", fontSize: 13, color: `rgba(${tokens.ink},0.85)`,
+                    // PCブラウザのネイティブポップアップの配色をモードに合わせる
+                    // (無いとダークモードで文字が背景に埋もれて読めない)。
+                    colorScheme: themeMode === "dark" ? "dark" : "light",
+                  }}
+                >
+                  <option value={1}>1倍速</option>
+                  <option value={2}>2倍速</option>
+                  <option value={4}>4倍速</option>
+                </select>
+              </div>
+            </div>
+          </SettingsCard>
+        )}
+
+        {replayPlayer.error && (
+          <div style={{ padding: "0 16px 8px", fontSize: 12, color: "#FF453A", lineHeight: 1.5 }}>{replayPlayer.error}</div>
+        )}
+
+        {/* 観測点の色を気象庁震度階級に換算して表示する設定。震度ファイル(.bin)を
+            読み込んだ時のみ意味を持つため、その間だけ表示する。 */}
+        {replayPlayer.hasBin && (
           <SettingsCard>
             <SettingsToggleRow
               label="震度階級で表示"
