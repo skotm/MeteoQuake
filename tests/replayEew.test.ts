@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildEewOnlyFrames, buildReplayEewAt, eewRangeNote, parseReplayEewJson, REPLAY_EEW_KEEP_MS } from "../src/replayEew.ts";
+import { buildEewOnlyFrames, buildReplayEewAt, eewRangeNote, parseReplayEewJson, REPLAY_EEW_CANCEL_KEEP_MS, REPLAY_EEW_KEEP_MS } from "../src/replayEew.ts";
 
 // JmaEewParser(v0.4.0)の .eew.json のうち、MeteoQuakeが使う normalized 部分。
 const ORIGIN = Date.UTC(2026, 7, 22, 17, 0, 0); // 2026-08-23 02:00:00 JST
@@ -35,10 +35,28 @@ test("JSONでないものはエラー", () => {
   assert.throws(() => parseReplayEewJson("not json"));
 });
 
-test("緯度経度が数値でなければエラー", () => {
+test("事例の緯度経度が無くても、各報に震源があれば再生できる。どちらも無ければエラー", () => {
   const j = JSON.parse(sampleJson());
   j.normalized.event.latitude = null;
   assert.throws(() => parseReplayEewJson(JSON.stringify(j)), /緯度・経度/);
+  // サンプルは配列の先頭が第2報、2番目が第1報
+  j.normalized.reports[0].hypocenter = { latitude: 35.5, longitude: 140.5, depthKm: null, magnitude: null };
+  j.normalized.reports[1].hypocenter = { latitude: 35, longitude: 140, depthKm: 10, magnitude: 6 };
+  const d = parseReplayEewJson(JSON.stringify(j));
+  const c = buildReplayEewAt(d, ORIGIN + 80_000)[0];
+  assert.equal(c.latitude, 35.5);
+  assert.equal(c.depth, 50); // 報側の深さが無い時は事例全体の値で補う
+  assert.equal(buildReplayEewAt(d, ORIGIN + 50_000)[0].latitude, 35);
+});
+
+test("キャンセル報は取消として出し、短い時間で消える", () => {
+  const j = JSON.parse(sampleJson());
+  j.normalized.reports.push({ serial: 3, issuedAtMs: ORIGIN + 80_000, isFinal: true, isCancel: true, maxIntensityKey: null, areas: [] });
+  const d = parseReplayEewJson(JSON.stringify(j));
+  assert.equal(buildReplayEewAt(d, ORIGIN + 70_000)[0].cancelled, false);
+  assert.equal(buildReplayEewAt(d, ORIGIN + 80_000)[0].cancelled, true);
+  assert.equal(buildReplayEewAt(d, ORIGIN + 80_000 + REPLAY_EEW_CANCEL_KEEP_MS - 1).length, 1);
+  assert.deepEqual(buildReplayEewAt(d, ORIGIN + 80_000 + REPLAY_EEW_CANCEL_KEEP_MS), []);
 });
 
 test("発表時刻のある報が無ければエラー", () => {

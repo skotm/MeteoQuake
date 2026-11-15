@@ -552,7 +552,7 @@ export function SettingsBody({
                   <button onClick={replayPlayer.clearEew} style={linkButtonStyle}>外す</button>
                 </div>
                 <div style={{ marginTop: 6, fontSize: 12, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.5 }}>
-                  {eew.hypocenterName || "震源地不明"}{eew.magnitude != null ? ` M${eew.magnitude}` : ""}
+                  {eew.hypocenterName || "震源地不明"}{eewFinal.hypocenter.magnitude != null ? ` M${eewFinal.hypocenter.magnitude}` : ""}{eewFinal.isCancel ? "(キャンセル報で終了)" : ""}
                   {" ・ "}{eew.reports.length}報(第{eewFinal.serial}報まで)
                 </div>
                 {!replayPlayer.hasBin && (
