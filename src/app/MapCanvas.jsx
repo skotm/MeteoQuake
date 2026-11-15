@@ -98,6 +98,8 @@ export function MapCanvas({
   replayActive = false,
   replaySpeed = 1,
   replayDataTimeMs = null,
+  // リプレイの再生時計(フレームの時刻に丸めない連続した時刻)。EEWのP波・S波の円はこれで進める。
+  replayClockMs = null,
   replayPlaying = false,
   shakeDetectionEnabled = true,
   cameraSettings = DEFAULT_CAMERA_SETTINGS,
@@ -1679,6 +1681,13 @@ export function MapCanvas({
   // EEWのP波・S波の円(依存配列が[status]のeffect)が、最新のリプレイ状態を読めるようにrefへ写す。
   const replayViewRef = useRef({ active: false, playing: false, speed: 1 });
   replayViewRef.current = { active: replayActive, playing: replayPlaying, speed: replaySpeed };
+  // EEWの円の基準(最後に再生時計が更新された時点の再生時刻と壁時計)。
+  const replayEewClockRef = useRef({ ms: null, wallMs: 0 });
+  if (replayActive && replayClockMs != null) {
+    if (replayEewClockRef.current.ms !== replayClockMs) replayEewClockRef.current = { ms: replayClockMs, wallMs: Date.now() };
+  } else if (replayEewClockRef.current.ms !== null) {
+    replayEewClockRef.current = { ms: null, wallMs: 0 };
+  }
   if (replayActive && replayDataTimeMs != null) {
     if (replayClockRef.current.dataMs !== replayDataTimeMs) {
       replayClockRef.current = { dataMs: replayDataTimeMs, wallMs: Date.now() };
@@ -1967,10 +1976,11 @@ export function MapCanvas({
           if (!Number.isFinite(originMs)) return;
           // リプレイ中は、データ時刻(最後に更新された時点から壁時計の経過×再生速度で補間)で円を進める。
           // 一時停止中は補間せず、停止した時点の円のままにする。
+          // 基準はEEWの表示と同じ再生時計(replayClockMs)。震度のフレームの時刻ではなく、こちらを使う。
           const view = replayViewRef.current;
-          const clock = replayClockRef.current;
-          const nowMs = (view.active && clock.dataMs != null)
-            ? clock.dataMs + (view.playing ? (Date.now() - clock.wallMs) * view.speed : 0)
+          const clock = replayEewClockRef.current;
+          const nowMs = (view.active && clock.ms != null)
+            ? clock.ms + (view.playing ? (Date.now() - clock.wallMs) * view.speed : 0)
             : Date.now();
           const elapsedSec = (nowMs - originMs) / 1000;
           const pRadiusKm = eewWaveSurfaceRadiusKm(elapsedSec, eew.depth, EEW_P_WAVE_SPEED_KM_S);

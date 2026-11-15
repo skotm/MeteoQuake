@@ -789,8 +789,10 @@ export default function App() {
   // 以降のEEW関連の判定はこちら(effectiveEews)を使う。
   // リプレイにEEWファイル(.eew.json)を読み込んでいる間は、ライブのEEWは出さず、
   // 再生時刻(データ時刻)に合わせたリプレイのEEWだけを出す。ライブと混ざらないようにするため。
+  // 再生時計(clockMs)で決める。フレームの時刻に丸めないので、フレームの間隔が長くても
+  // 報が飛ばず、震度の再生と同じ時計で動く。
   const replayEewTimeMs = replayPlayer.loaded && replayPlayer.eew
-    ? (replayPlayer.frames[replayPlayer.currentIndex]?.dataTime?.getTime() ?? null)
+    ? (replayPlayer.clockMs ?? replayPlayer.frames[replayPlayer.currentIndex]?.dataTime?.getTime() ?? null)
     : null;
   const replayEews = useMemo(
     () => buildReplayEewAt(replayPlayer.eew, replayEewTimeMs),
@@ -3124,6 +3126,7 @@ export default function App() {
           replaySpeed={replayPlayer.speed}
           replayPlaying={replayPlayer.isPlaying}
           replayDataTimeMs={replayPlayer.loaded ? (replayPlayer.frames[replayPlayer.currentIndex]?.dataTime?.getTime() ?? null) : null}
+          replayClockMs={replayPlayer.loaded ? replayPlayer.clockMs : null}
           shakeDetectionEnabled={shakeDetectionEnabled}
           weakArrayDetectionEnabled={weakArrayDetectionEnabled}
           cameraSettings={mapCameraSettings}

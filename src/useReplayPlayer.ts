@@ -39,7 +39,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { decodeIntensityDelta, type IntensityDeltaMessage } from "./realtimeProtocolClient";
-import { buildEewOnlyFrames, eewRangeNote, parseReplayEewJson, type ReplayEewData } from "./replayEew";
+import { buildEewOnlyFrames, eewRangeNote, parseReplayEewJson, replayStartMs, type ReplayEewData } from "./replayEew";
 
 export interface ReplayState {
   /** 震度ファイル(.bin)かEEWファイル(.eew.json)の、どちらかでも読み込まれていればtrue。 */
@@ -55,6 +55,11 @@ export interface ReplayState {
   eewNote: string | null;
   frames: IntensityDeltaMessage[];
   currentIndex: number; // 0 = ベースラインフレームのみ適用した状態
+  /**
+   * 再生時刻(UTCミリ秒)。フレームの時刻に丸めない連続した時計で、再生中は実時間×速度で進む。
+   * EEWの表示・P波S波の円は、すべてこの時計で決める(震度のフレームとEEWを同じ時計で動かすため)。
+   */
+  clockMs: number | null;
   isPlaying: boolean;
   speed: number; // 再生速度倍率(1 = 等倍)
   values: Map<number, number>; // currentIndex時点での全観測点の値
@@ -72,6 +77,9 @@ const MIN_TICK_WAIT_MS = 4;
 // する(録画の谷間などで極端に間隔が空いている場合に、いつまでも次の
 // tickが来ないのを防ぐ)。
 const MAX_REAL_INTERVAL_MS = 5000;
+// EEWを読み込んでいる間、再生時計(clockMs)を更新する最長の間隔(実時間ms)。
+// フレームの間隔が長くても、EEWの報がこの粒度で切り替わるようにする(報が飛ばないようにするため)。
+const EEW_TICK_MS = 100;
 
 function parseReplayBuffer(buf: ArrayBuffer): IntensityDeltaMessage[] {
   const frames: IntensityDeltaMessage[] = [];
@@ -123,8 +131,34 @@ export interface ReplayPlayer extends ReplayState {
   close: () => void;
 }
 
-export function useReplayPlayer(): ReplayPlayer {
-  const [state, setState] = useState<ReplayState>({
+/** dataTimeが ms 以下の最後のフレームの番号(binary search)。ms がベースラインより前なら0。 */
+function frameIndexAtOrBefore(frames: IntensityDeltaMessage[], ms: number): number {
+  let lo = 0;
+  let hi = frames.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (frames[mid].dataTime.getTime() <= ms) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/**
+ * 読み込み直後の再生位置(UTCミリ秒)。EEWがあり、その開始時刻(地震波検知時刻)が
+ * フレームの範囲内なら、そこから始める。無ければ先頭から。
+ */
+function initialClockMs(frames: IntensityDeltaMessage[], eew: ReplayEewData | null): number {
+  const first = frames[0].dataTime.getTime();
+  const last = frames[frames.length - 1].dataTime.getTime();
+  if (eew) {
+    const start = replayStartMs(eew);
+    if (start >= first && start <= last) return start;
+  }
+  return first;
+}
+
+function emptyState(): ReplayState {
+  return {
     loaded: false,
     fileName: null,
     hasBin: false,
@@ -133,21 +167,40 @@ export function useReplayPlayer(): ReplayPlayer {
     eewNote: null,
     frames: [],
     currentIndex: 0,
+    clockMs: null,
     isPlaying: false,
     speed: DEFAULT_SPEED,
     values: new Map(),
     error: null,
-  });
+  };
+}
+
+export function useReplayPlayer(): ReplayPlayer {
+  const [state, setState] = useState<ReplayState>(emptyState);
+  // 再生中にスライダーで位置を移した時に、再生タイマーを基準から作り直させるための信号。
+  const [seekEpoch, setSeekEpoch] = useState(0);
 
   // 直前に適用した値(累積結果)をrefでも保持し、1コマ進める時に
   // 全フレーム再計算せず直前の状態から差分だけ足せるようにする。
   const valuesRef = useRef<Map<number, number>>(new Map());
   const framesRef = useRef<IntensityDeltaMessage[]>([]);
-  const playTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 適用済みの最後のフレーム番号と、再生時計(clockMs)の現在値。再生タイマーが
+  // stateの更新を待たずに続きから計算できるようにrefでも持つ。
+  const indexRef = useRef(0);
+  const clockMsRef = useRef(0);
   // 震度ファイル(.bin)のフレームとEEWを別々に持つ。再生に使うフレームは、
   // 震度ファイルがあればそれ、無ければEEWの時間範囲から作った空のフレーム。
   const binFramesRef = useRef<IntensityDeltaMessage[] | null>(null);
   const eewRef = useRef<ReplayEewData | null>(null);
+
+  /** 再生位置を ms(UTCミリ秒)に移し、その時点の値を作り直す。 */
+  const jumpTo = useCallback((frames: IntensityDeltaMessage[], ms: number) => {
+    const index = frameIndexAtOrBefore(frames, ms);
+    valuesRef.current = computeValuesAt(frames, index);
+    indexRef.current = index;
+    clockMsRef.current = ms;
+    return index;
+  }, []);
 
   const loadFile = useCallback(async (file: File) => {
     try {
@@ -155,8 +208,10 @@ export function useReplayPlayer(): ReplayPlayer {
       const frames = parseReplayBuffer(buf);
       binFramesRef.current = frames;
       framesRef.current = frames;
-      valuesRef.current = computeValuesAt(frames, 0);
       const eew = eewRef.current;
+      // EEWも読み込み済みなら、地震波検知時刻から始める。
+      const startMs = initialClockMs(frames, eew);
+      const index = jumpTo(frames, startMs);
       setState((prev) => ({
         ...prev,
         loaded: true,
@@ -164,7 +219,8 @@ export function useReplayPlayer(): ReplayPlayer {
         hasBin: true,
         eewNote: eew ? eewRangeNote(frames, eew) : null,
         frames,
-        currentIndex: 0,
+        currentIndex: index,
+        clockMs: startMs,
         isPlaying: false,
         speed: DEFAULT_SPEED,
         values: new Map(valuesRef.current),
@@ -173,41 +229,37 @@ export function useReplayPlayer(): ReplayPlayer {
     } catch (e) {
       setState((prev) => ({ ...prev, error: String(e) }));
     }
-  }, []);
+  }, [jumpTo]);
 
   // EEWファイル(.eew.json)の読み込み。震度ファイルが無ければ、EEWの時間範囲から
   // 値が空のフレームを作って、EEWだけで再生できるようにする。
+  // 震度ファイルもある場合は、地震波検知時刻(無ければ第1報の少し前)に再生位置を移す。
   const loadEewFile = useCallback(async (file: File) => {
     try {
       const eew = parseReplayEewJson(await file.text());
       eewRef.current = eew;
       const bin = binFramesRef.current;
-      if (bin) {
-        setState((prev) => ({ ...prev, eew, eewFileName: file.name, eewNote: eewRangeNote(bin, eew), error: null }));
-        return;
-      }
-      const frames = buildEewOnlyFrames(eew);
+      const frames = bin ?? buildEewOnlyFrames(eew);
       framesRef.current = frames;
-      valuesRef.current = new Map();
+      const startMs = initialClockMs(frames, eew);
+      const index = jumpTo(frames, startMs);
       setState((prev) => ({
         ...prev,
         loaded: true,
-        fileName: null,
-        hasBin: false,
         eew,
         eewFileName: file.name,
-        eewNote: null,
+        eewNote: bin ? eewRangeNote(bin, eew) : null,
         frames,
-        currentIndex: 0,
+        currentIndex: index,
+        clockMs: startMs,
         isPlaying: false,
-        speed: DEFAULT_SPEED,
-        values: new Map(),
+        values: new Map(valuesRef.current),
         error: null,
       }));
     } catch (e) {
       setState((prev) => ({ ...prev, error: e instanceof Error ? e.message : String(e) }));
     }
-  }, []);
+  }, [jumpTo]);
 
   // EEWだけを外す。震度ファイルが無ければ、リプレイ自体を閉じる。
   const clearEew = useCallback(() => {
@@ -218,20 +270,23 @@ export function useReplayPlayer(): ReplayPlayer {
     }
     framesRef.current = [];
     valuesRef.current = new Map();
-    if (playTimerRef.current) clearTimeout(playTimerRef.current);
-    setState({
-      loaded: false, fileName: null, hasBin: false, eew: null, eewFileName: null, eewNote: null,
-      frames: [], currentIndex: 0, isPlaying: false, speed: DEFAULT_SPEED, values: new Map(), error: null,
-    });
+    indexRef.current = 0;
+    clockMsRef.current = 0;
+    setState(emptyState());
   }, []);
 
   const seek = useCallback((index: number) => {
     const frames = framesRef.current;
     if (frames.length === 0) return;
     const clamped = Math.min(Math.max(index, 0), frames.length - 1);
+    const ms = frames[clamped].dataTime.getTime();
+    jumpTo(frames, ms);
+    // 同じ時刻のフレームが続く場合でも、指定された番号の位置にする。
+    indexRef.current = clamped;
     valuesRef.current = computeValuesAt(frames, clamped);
-    setState((prev) => ({ ...prev, currentIndex: clamped, values: new Map(valuesRef.current) }));
-  }, []);
+    setState((prev) => ({ ...prev, currentIndex: clamped, clockMs: ms, values: new Map(valuesRef.current) }));
+    setSeekEpoch((n) => n + 1);
+  }, [jumpTo]);
 
   const play = useCallback(() => setState((prev) => ({ ...prev, isPlaying: true })), []);
   const pause = useCallback(() => setState((prev) => ({ ...prev, isPlaying: false })), []);
@@ -245,21 +300,9 @@ export function useReplayPlayer(): ReplayPlayer {
     binFramesRef.current = null;
     eewRef.current = null;
     valuesRef.current = new Map();
-    if (playTimerRef.current) clearTimeout(playTimerRef.current);
-    setState({
-      loaded: false,
-      fileName: null,
-      hasBin: false,
-      eew: null,
-      eewFileName: null,
-      eewNote: null,
-      frames: [],
-      currentIndex: 0,
-      isPlaying: false,
-      speed: DEFAULT_SPEED,
-      values: new Map(),
-      error: null,
-    });
+    indexRef.current = 0;
+    clockMsRef.current = 0;
+    setState(emptyState());
   }, []);
 
   // 震度ファイル(.bin)だけを閉じる。EEWが読み込まれていれば、EEWだけの再生に戻す。
@@ -267,73 +310,79 @@ export function useReplayPlayer(): ReplayPlayer {
     const eew = eewRef.current;
     if (!eew) { close(); return; }
     binFramesRef.current = null;
-    if (playTimerRef.current) clearTimeout(playTimerRef.current);
     const frames = buildEewOnlyFrames(eew);
     framesRef.current = frames;
-    valuesRef.current = new Map();
+    const startMs = initialClockMs(frames, eew);
+    const index = jumpTo(frames, startMs);
     setState((prev) => ({
-      ...prev, fileName: null, hasBin: false, eewNote: null, frames, currentIndex: 0, isPlaying: false, values: new Map(),
+      ...prev, fileName: null, hasBin: false, eewNote: null, frames,
+      currentIndex: index, clockMs: startMs, isPlaying: false, values: new Map(valuesRef.current),
     }));
-  }, [close]);
+  }, [close, jumpTo]);
 
-  // 再生タイマー: 「経過した実時間 × 速度」から今どこまで進んでいるべきか
-  // (targetDataTimeMs)を求め、そこに届くまでのフレームをまとめて適用する。
-  // 1フレーム=1tickという前提を置かないため、0.1秒刻み・2秒刻みなど
-  // フレーム間隔がどのような値でも同じロジックで正しく扱える。
+  // 再生タイマー。
+  // 【時計は1つ】再生中の「今の再生時刻」は、再生を始めた(または速度を変えた)時点の
+  // 再生時刻と実時間の経過×速度だけから決める(clockMs)。フレームの番号や各tickの
+  // 遅れには依存しないので、tickが遅れてもズレが積み重ならない。震度の値(フレーム)も
+  // EEWの表示・P波S波の円も、この同じ時計から決める。
+  // 【フレームは飛ばさない】時計に届いたフレームの差分は、間引かず順に全て適用する
+  // (差分は累積するため、飛ばすと値が壊れる)。
+  // 【EEWの報が飛ばないように】EEWを読み込んでいる間は、フレームの間隔が長くても
+  // EEW_TICK_MSごとに時計を更新する。
   useEffect(() => {
     if (!state.isPlaying) return;
     const frames = framesRef.current;
-    if (frames.length === 0 || state.currentIndex >= frames.length - 1) {
+    if (frames.length === 0) {
+      setState((prev) => ({ ...prev, isPlaying: false }));
+      return;
+    }
+    const lastMs = frames[frames.length - 1].dataTime.getTime();
+    const speed = state.speed;
+    const baseDataMs = Math.max(clockMsRef.current, frames[0].dataTime.getTime());
+    const baseWallMs = Date.now();
+    if (baseDataMs >= lastMs) {
       setState((prev) => ({ ...prev, isPlaying: false }));
       return;
     }
 
-    const tickStartRealMs = Date.now();
-    const startDataTimeMs = frames[state.currentIndex].dataTime.getTime();
-
-    // 次のtickまでの待ち時間の目安(次の1フレーム分の実時間換算)。あくまで
-    // 「だいたいこのくらいで次を見に行く」ためのものであり、実際にどこまで
-    // 進めるかはtick発火時に改めてtargetDataTimeMsから計算し直す。
-    const next = frames[state.currentIndex + 1];
-    const realIntervalMs = Math.max(0, next.dataTime.getTime() - startDataTimeMs);
-    const cappedIntervalMs = Math.min(realIntervalMs, MAX_REAL_INTERVAL_MS);
-    const waitMs = Math.max(MIN_TICK_WAIT_MS, cappedIntervalMs / state.speed);
-
-    playTimerRef.current = setTimeout(() => {
-      const elapsedRealMs = Date.now() - tickStartRealMs;
-      const targetDataTimeMs = startDataTimeMs + elapsedRealMs * state.speed;
-
-      // startからtargetDataTimeMsに届くところまで、差分を1件ずつ順に適用
-      // しながら進める(スキップした場合、途中のフレームの差分が累積結果に
-      // 反映されず値が壊れるため、間引かずに全て適用する)。
-      let nextIndex = state.currentIndex;
-      while (
-        nextIndex < frames.length - 1 &&
-        frames[nextIndex + 1].dataTime.getTime() <= targetDataTimeMs
-      ) {
-        nextIndex++;
-        for (const entry of frames[nextIndex].entries) {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = () => {
+      const nowMs = Math.min(lastMs, baseDataMs + (Date.now() - baseWallMs) * speed);
+      let index = indexRef.current;
+      const before = index;
+      while (index < frames.length - 1 && frames[index + 1].dataTime.getTime() <= nowMs) {
+        index++;
+        for (const entry of frames[index].entries) {
           if (entry.intensity === null) valuesRef.current.delete(entry.id);
           else valuesRef.current.set(entry.id, entry.intensity);
         }
       }
-      // タイマーの発火がわずかに早く、まだ次のフレームに届いていなかった
-      // 場合でも、最低1コマは進めて再生が完全に止まって見えないようにする。
-      if (nextIndex === state.currentIndex && nextIndex < frames.length - 1) {
-        nextIndex++;
-        for (const entry of frames[nextIndex].entries) {
-          if (entry.intensity === null) valuesRef.current.delete(entry.id);
-          else valuesRef.current.set(entry.id, entry.intensity);
-        }
-      }
+      indexRef.current = index;
+      clockMsRef.current = nowMs;
+      const finished = nowMs >= lastMs;
+      setState((prev) => ({
+        ...prev,
+        currentIndex: index,
+        clockMs: nowMs,
+        values: index !== before ? new Map(valuesRef.current) : prev.values,
+        isPlaying: finished ? false : prev.isPlaying,
+      }));
+      if (finished) return;
 
-      setState((prev) => ({ ...prev, currentIndex: nextIndex, values: new Map(valuesRef.current) }));
-    }, waitMs);
+      // 次に起きる時刻: 次のフレームに届く時刻まで(EEWがある間は最長EEW_TICK_MS)。
+      const untilFrameMs = Math.min(
+        Math.max(0, frames[index + 1].dataTime.getTime() - nowMs) / speed,
+        MAX_REAL_INTERVAL_MS,
+      );
+      const waitMs = eewRef.current ? Math.min(untilFrameMs, EEW_TICK_MS) : untilFrameMs;
+      timer = setTimeout(tick, Math.max(MIN_TICK_WAIT_MS, waitMs));
+    };
+    timer = setTimeout(tick, MIN_TICK_WAIT_MS);
 
     return () => {
-      if (playTimerRef.current) clearTimeout(playTimerRef.current);
+      if (timer) clearTimeout(timer);
     };
-  }, [state.isPlaying, state.currentIndex, state.speed]);
+  }, [state.isPlaying, state.speed, state.frames, seekEpoch]);
 
   return { ...state, loadFile, loadEewFile, clearEew, closeBin, play, pause, seek, setSpeed, close };
 }
