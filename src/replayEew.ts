@@ -62,6 +62,11 @@ const LEAD_IN_MS = 10000;
 /** EEWだけの再生で作るフレームの最大数(異常に長い範囲で重くならないように)。 */
 const MAX_SYNTHETIC_FRAMES = 3 * 60 * 60;
 
+// 地域名に混ざったページの案内文(「このページのトップへ」など)。古いEEWファイルにも入っていることがあるため、
+// 読み込み時にも除く。JmaEewParserのisPlausibleAreaNameと同じ判定。
+const PAGE_CHROME = /(トップへ|ホームページ|ページ|サイトマップ|プライバシー|著作権|お問い合わせ|ご意見|リンク|免責|利用上の注意|ご利用|ナビゲーション|メニュー)/;
+const isPlausibleAreaName = (name: string) => !!name && name.length <= 24 && !PAGE_CHROME.test(name);
+
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
 /** .eew.jsonの文字列を読み込む。形式が違う・使えない場合はErrorを投げる。 */
@@ -113,7 +118,7 @@ export function parseReplayEewJson(text: string): ReplayEewData {
       },
       maxIntensityKey: typeof r.maxIntensityKey === "string" ? r.maxIntensityKey : null,
       areas: (Array.isArray(r.areas) ? r.areas : [])
-        .filter((a: any) => a && typeof a.name === "string" && a.name)
+        .filter((a: any) => a && typeof a.name === "string" && isPlausibleAreaName(a.name.trim()))
         .map((a: any) => ({
           name: a.name,
           minIntensityKey: typeof a.minIntensityKey === "string" ? a.minIntensityKey : null,
@@ -147,11 +152,11 @@ export function parseReplayEewJson(text: string): ReplayEewData {
 }
 
 /**
- * 震度ファイルとEEWを一緒に再生する時の、再生の開始時刻(UTCミリ秒)。
- * 地震波検知時刻から始める。ファイルに無ければ、第1報の少し前。
+ * 再生の開始時刻(UTCミリ秒)。地震の発生時刻から始める。
+ * (発生時刻がファイルに無い場合、読み込み時に第1報の発表時刻で補っている。)
  */
 export function replayStartMs(data: ReplayEewData): number {
-  return data.detectionTimeMs ?? data.reports[0].issuedAtMs - 2000;
+  return data.originTimeMs;
 }
 
 /** UTCミリ秒を、アプリのEEWカードのoriginTime形式(JSTの "YYYY/MM/DD HH:mm:ss")にする。 */

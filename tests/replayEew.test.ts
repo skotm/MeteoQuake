@@ -120,14 +120,26 @@ test("震度ファイルの範囲との照合", () => {
   assert.match(eewRangeNote([frameAt(ORIGIN + 53_000), frameAt(ORIGIN + 700_000)], data) ?? "", /一部/);
 });
 
-test("再生の開始は地震波検知時刻(無ければ第1報の少し前)", async () => {
+test("再生の開始は地震の発生時刻", async () => {
   const { replayStartMs } = await import("../src/replayEew.ts");
+  const d = parseReplayEewJson(sampleJson());
+  assert.equal(replayStartMs(d), ORIGIN);
+  // 発生時刻が無いファイルは、第1報の発表時刻で補う
   const j = JSON.parse(sampleJson());
-  assert.equal(replayStartMs(parseReplayEewJson(JSON.stringify(j))), ORIGIN + 50_000 - 2000);
-  j.normalized.event.detectionTimeMs = ORIGIN + 46_100;
+  j.normalized.event.originTimeMs = null;
+  assert.equal(replayStartMs(parseReplayEewJson(JSON.stringify(j))), ORIGIN + 50_000);
+  // フレームの範囲の先頭は、発生時刻より前から始まる
+  assert.ok(d.startMs < ORIGIN);
+});
+
+test("対象地域にページの案内文が混ざっていても除く(古いファイル対策)", () => {
+  const j = JSON.parse(sampleJson());
+  j.normalized.reports[0].areas = [
+    { name: "東北", minIntensityKey: "6-", maxIntensityKey: "6-", openEnded: false },
+    { name: "このページのトップへ", minIntensityKey: "6-", maxIntensityKey: "6-", openEnded: false },
+    { name: "気象庁ホームページについて", minIntensityKey: "6-", maxIntensityKey: "6-", openEnded: false },
+  ];
   const d = parseReplayEewJson(JSON.stringify(j));
-  assert.equal(d.detectionTimeMs, ORIGIN + 46_100);
-  assert.equal(replayStartMs(d), ORIGIN + 46_100);
-  // フレームの範囲の先頭も、検知時刻より前から始まる
-  assert.ok(d.startMs < ORIGIN + 46_100);
+  const card = buildReplayEewAt(d, ORIGIN + 70_000)[0];
+  assert.deepEqual(card.areas.map((a: any) => a.name), ["東北"]);
 });
