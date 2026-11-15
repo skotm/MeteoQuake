@@ -21,10 +21,21 @@ export interface ReplayEewArea {
   openEnded: boolean;
 }
 
+export interface ReplayEewHypocenter {
+  latitude: number;
+  longitude: number;
+  depthKm: number | null;
+  magnitude: number | null;
+}
+
 export interface ReplayEewReport {
   serial: number;
   issuedAtMs: number;
   isFinal: boolean;
+  /** キャンセル報(取消)か。 */
+  isCancel: boolean;
+  /** その報の震源。ファイルに無ければ、事例全体の震源を入れてある。 */
+  hypocenter: ReplayEewHypocenter;
   maxIntensityKey: string | null;
   areas: ReplayEewArea[];
 }
@@ -33,10 +44,6 @@ export interface ReplayEewData {
   eventId: string;
   originTimeMs: number;
   hypocenterName: string | null;
-  latitude: number | null;
-  longitude: number | null;
-  depthKm: number | null;
-  magnitude: number | null;
   reports: ReplayEewReport[]; // issuedAtMsの昇順
   startMs: number; // 再生範囲の先頭(最初の報/発生の少し前)
   endMs: number;   // 再生範囲の末尾(最終報+表示を残す時間)
@@ -45,6 +52,9 @@ export interface ReplayEewData {
 
 /** 最終報(最後に届いた報)の後も、画面にEEWを残す時間。ライブのEEW_STALE_MSと同じ値。 */
 export const REPLAY_EEW_KEEP_MS = 90000;
+/** 取消(キャンセル報)の後に、「取消」の表示を残す時間。ライブのEEW_CANCEL_LINGER_MSと同じ値。 */
+export const REPLAY_EEW_CANCEL_KEEP_MS = 10000;
+const keepMsAfter = (r: { isCancel: boolean }) => (r.isCancel ? REPLAY_EEW_CANCEL_KEEP_MS : REPLAY_EEW_KEEP_MS);
 /** EEWだけで再生する時、最初の報より前に置く余白。 */
 const LEAD_IN_MS = 10000;
 /** EEWだけの再生で作るフレームの最大数(異常に長い範囲で重くならないように)。 */
@@ -69,12 +79,36 @@ export function parseReplayEewJson(text: string): ReplayEewData {
   }
   const ev = n.event || {};
   const reportsRaw: any[] = Array.isArray(n.reports) ? n.reports : [];
-  const reports: ReplayEewReport[] = reportsRaw
-    .filter((r) => isNum(r?.issuedAtMs))
-    .map((r) => ({
+  const eventHypo = {
+    latitude: isNum(ev.latitude) ? ev.latitude : null,
+    longitude: isNum(ev.longitude) ? ev.longitude : null,
+    depthKm: isNum(ev.depthKm) ? ev.depthKm : null,
+    magnitude: isNum(ev.magnitude) ? ev.magnitude : null,
+  };
+  const withTime = reportsRaw.filter((r) => isNum(r?.issuedAtMs));
+  if (withTime.length === 0) {
+    throw new Error("発表時刻のある報が1件もありません。JmaEewParserの「確認が必要な点」を確認してください。");
+  }
+  // 各報の震源は、その報の震源要素があればそれ、無ければ事例全体の震源を使う。
+  // 深さ・Mが報側で取れていない時は、事例全体の値で補う。
+  const reports: ReplayEewReport[] = [];
+  let skipped = 0;
+  for (const r of withTime.sort((a, b) => a.issuedAtMs - b.issuedAtMs || (a.serial ?? 0) - (b.serial ?? 0))) {
+    const h = r.hypocenter && isNum(r.hypocenter.latitude) && isNum(r.hypocenter.longitude) ? r.hypocenter : null;
+    const latitude = h ? h.latitude : eventHypo.latitude;
+    const longitude = h ? h.longitude : eventHypo.longitude;
+    if (latitude == null || longitude == null) { skipped++; continue; }
+    reports.push({
       serial: isNum(r.serial) ? r.serial : 0,
       issuedAtMs: r.issuedAtMs,
       isFinal: !!r.isFinal,
+      isCancel: !!r.isCancel,
+      hypocenter: {
+        latitude,
+        longitude,
+        depthKm: h && isNum(h.depthKm) ? h.depthKm : eventHypo.depthKm,
+        magnitude: h && isNum(h.magnitude) ? h.magnitude : eventHypo.magnitude,
+      },
       maxIntensityKey: typeof r.maxIntensityKey === "string" ? r.maxIntensityKey : null,
       areas: (Array.isArray(r.areas) ? r.areas : [])
         .filter((a: any) => a && typeof a.name === "string" && a.name)
@@ -84,33 +118,27 @@ export function parseReplayEewJson(text: string): ReplayEewData {
           maxIntensityKey: typeof a.maxIntensityKey === "string" ? a.maxIntensityKey : null,
           openEnded: !!a.openEnded,
         })),
-    }))
-    .sort((a, b) => a.issuedAtMs - b.issuedAtMs || a.serial - b.serial);
-
-  if (reports.length === 0) {
-    throw new Error("発表時刻のある報が1件もありません。JmaEewParserの「確認が必要な点」を確認してください。");
+    });
   }
-  if (!isNum(ev.latitude) || !isNum(ev.longitude)) {
-    throw new Error("震源の緯度・経度が数値で取得できていないため再生できません。");
+  if (reports.length === 0) {
+    throw new Error("震源の緯度・経度が数値で取得できていないため再生できません。JmaEewParserで緯度・経度を入力してから保存し直してください。");
   }
   // 最終報の印が付いていない場合でも、最後の報を最終報として扱う。
   reports[reports.length - 1].isFinal = true;
 
   const originTimeMs = isNum(ev.originTimeMs) ? ev.originTimeMs : reports[0].issuedAtMs;
   const startMs = Math.min(originTimeMs, reports[0].issuedAtMs) - LEAD_IN_MS;
-  const endMs = reports[reports.length - 1].issuedAtMs + REPLAY_EEW_KEEP_MS;
+  const endMs = reports[reports.length - 1].issuedAtMs + keepMsAfter(reports[reports.length - 1]);
+  const warnings: string[] = Array.isArray(n.warnings) ? n.warnings.filter((w: unknown) => typeof w === "string") : [];
+  if (skipped > 0) warnings.push(`震源の位置が無い報が${skipped}件あり、再生から除きました。`);
   return {
     eventId: String(ev.eventId || `eew_${originTimeMs}`),
     originTimeMs,
     hypocenterName: typeof ev.hypocenterName === "string" ? ev.hypocenterName : null,
-    latitude: ev.latitude,
-    longitude: ev.longitude,
-    depthKm: isNum(ev.depthKm) ? ev.depthKm : null,
-    magnitude: isNum(ev.magnitude) ? ev.magnitude : null,
     reports,
     startMs,
     endMs,
-    warnings: Array.isArray(n.warnings) ? n.warnings.filter((w: unknown) => typeof w === "string") : [],
+    warnings,
   };
 }
 
@@ -137,13 +165,13 @@ export function buildReplayEewAt(data: ReplayEewData | null, timeMs: number | nu
   }
   if (!current) return [];
   const last = data.reports[data.reports.length - 1];
-  if (timeMs >= last.issuedAtMs + REPLAY_EEW_KEEP_MS) return [];
+  if (timeMs >= last.issuedAtMs + keepMsAfter(last)) return [];
 
   return [{
     id: `replay_${data.eventId}_${current.serial}`,
     eventId: `replay_${data.eventId}`,
     serial: String(current.serial),
-    cancelled: false,
+    cancelled: current.isCancel,
     isTraining: false,
     originTime: formatJstSlash(data.originTimeMs),
     // 地図のP波・S波の円はこちらを優先して使う(文字列を端末のタイムゾーンで解釈しないため)。
@@ -152,10 +180,10 @@ export function buildReplayEewAt(data: ReplayEewData | null, timeMs: number | nu
     isAssumedHypocenter: false,
     place: data.hypocenterName || "震源地不明",
     reducedPlace: null,
-    latitude: data.latitude,
-    longitude: data.longitude,
-    depth: data.depthKm != null && data.depthKm >= 0 ? Math.round(data.depthKm) : null,
-    magnitude: data.magnitude != null && data.magnitude > 0 ? data.magnitude : null,
+    latitude: current.hypocenter.latitude,
+    longitude: current.hypocenter.longitude,
+    depth: current.hypocenter.depthKm != null && current.hypocenter.depthKm >= 0 ? Math.round(current.hypocenter.depthKm) : null,
+    magnitude: current.hypocenter.magnitude != null && current.hypocenter.magnitude > 0 ? current.hypocenter.magnitude : null,
     areas: current.areas.map((a) => ({
       pref: "",
       name: a.name,
