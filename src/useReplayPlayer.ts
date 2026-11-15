@@ -39,10 +39,20 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { decodeIntensityDelta, type IntensityDeltaMessage } from "./realtimeProtocolClient";
+import { buildEewOnlyFrames, eewRangeNote, parseReplayEewJson, type ReplayEewData } from "./replayEew";
 
 export interface ReplayState {
+  /** 震度ファイル(.bin)かEEWファイル(.eew.json)の、どちらかでも読み込まれていればtrue。 */
   loaded: boolean;
+  /** 震度ファイル(.bin)の名前。EEWだけの時はnull。 */
   fileName: string | null;
+  /** 震度ファイル(.bin)を読み込んでいるか。falseでloadedがtrueならEEWだけの再生(値が空のフレーム)。 */
+  hasBin: boolean;
+  /** 読み込んだEEW(.eew.json)。無ければnull。 */
+  eew: ReplayEewData | null;
+  eewFileName: string | null;
+  /** EEWの時刻が震度ファイルの範囲と合わない時の注意文。 */
+  eewNote: string | null;
   frames: IntensityDeltaMessage[];
   currentIndex: number; // 0 = ベースラインフレームのみ適用した状態
   isPlaying: boolean;
@@ -103,6 +113,9 @@ function computeValuesAt(frames: IntensityDeltaMessage[], index: number): Map<nu
 
 export interface ReplayPlayer extends ReplayState {
   loadFile: (file: File) => Promise<void>;
+  loadEewFile: (file: File) => Promise<void>;
+  clearEew: () => void;
+  closeBin: () => void;
   play: () => void;
   pause: () => void;
   seek: (index: number) => void;
@@ -114,6 +127,10 @@ export function useReplayPlayer(): ReplayPlayer {
   const [state, setState] = useState<ReplayState>({
     loaded: false,
     fileName: null,
+    hasBin: false,
+    eew: null,
+    eewFileName: null,
+    eewNote: null,
     frames: [],
     currentIndex: 0,
     isPlaying: false,
@@ -127,26 +144,85 @@ export function useReplayPlayer(): ReplayPlayer {
   const valuesRef = useRef<Map<number, number>>(new Map());
   const framesRef = useRef<IntensityDeltaMessage[]>([]);
   const playTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 震度ファイル(.bin)のフレームとEEWを別々に持つ。再生に使うフレームは、
+  // 震度ファイルがあればそれ、無ければEEWの時間範囲から作った空のフレーム。
+  const binFramesRef = useRef<IntensityDeltaMessage[] | null>(null);
+  const eewRef = useRef<ReplayEewData | null>(null);
 
   const loadFile = useCallback(async (file: File) => {
     try {
       const buf = await file.arrayBuffer();
       const frames = parseReplayBuffer(buf);
+      binFramesRef.current = frames;
       framesRef.current = frames;
       valuesRef.current = computeValuesAt(frames, 0);
-      setState({
+      const eew = eewRef.current;
+      setState((prev) => ({
+        ...prev,
         loaded: true,
         fileName: file.name,
+        hasBin: true,
+        eewNote: eew ? eewRangeNote(frames, eew) : null,
         frames,
         currentIndex: 0,
         isPlaying: false,
         speed: DEFAULT_SPEED,
         values: new Map(valuesRef.current),
         error: null,
-      });
+      }));
     } catch (e) {
-      setState((prev) => ({ ...prev, loaded: false, error: String(e) }));
+      setState((prev) => ({ ...prev, error: String(e) }));
     }
+  }, []);
+
+  // EEWファイル(.eew.json)の読み込み。震度ファイルが無ければ、EEWの時間範囲から
+  // 値が空のフレームを作って、EEWだけで再生できるようにする。
+  const loadEewFile = useCallback(async (file: File) => {
+    try {
+      const eew = parseReplayEewJson(await file.text());
+      eewRef.current = eew;
+      const bin = binFramesRef.current;
+      if (bin) {
+        setState((prev) => ({ ...prev, eew, eewFileName: file.name, eewNote: eewRangeNote(bin, eew), error: null }));
+        return;
+      }
+      const frames = buildEewOnlyFrames(eew);
+      framesRef.current = frames;
+      valuesRef.current = new Map();
+      setState((prev) => ({
+        ...prev,
+        loaded: true,
+        fileName: null,
+        hasBin: false,
+        eew,
+        eewFileName: file.name,
+        eewNote: null,
+        frames,
+        currentIndex: 0,
+        isPlaying: false,
+        speed: DEFAULT_SPEED,
+        values: new Map(),
+        error: null,
+      }));
+    } catch (e) {
+      setState((prev) => ({ ...prev, error: e instanceof Error ? e.message : String(e) }));
+    }
+  }, []);
+
+  // EEWだけを外す。震度ファイルが無ければ、リプレイ自体を閉じる。
+  const clearEew = useCallback(() => {
+    eewRef.current = null;
+    if (binFramesRef.current) {
+      setState((prev) => ({ ...prev, eew: null, eewFileName: null, eewNote: null }));
+      return;
+    }
+    framesRef.current = [];
+    valuesRef.current = new Map();
+    if (playTimerRef.current) clearTimeout(playTimerRef.current);
+    setState({
+      loaded: false, fileName: null, hasBin: false, eew: null, eewFileName: null, eewNote: null,
+      frames: [], currentIndex: 0, isPlaying: false, speed: DEFAULT_SPEED, values: new Map(), error: null,
+    });
   }, []);
 
   const seek = useCallback((index: number) => {
@@ -166,11 +242,17 @@ export function useReplayPlayer(): ReplayPlayer {
 
   const close = useCallback(() => {
     framesRef.current = [];
+    binFramesRef.current = null;
+    eewRef.current = null;
     valuesRef.current = new Map();
     if (playTimerRef.current) clearTimeout(playTimerRef.current);
     setState({
       loaded: false,
       fileName: null,
+      hasBin: false,
+      eew: null,
+      eewFileName: null,
+      eewNote: null,
       frames: [],
       currentIndex: 0,
       isPlaying: false,
@@ -179,6 +261,20 @@ export function useReplayPlayer(): ReplayPlayer {
       error: null,
     });
   }, []);
+
+  // 震度ファイル(.bin)だけを閉じる。EEWが読み込まれていれば、EEWだけの再生に戻す。
+  const closeBin = useCallback(() => {
+    const eew = eewRef.current;
+    if (!eew) { close(); return; }
+    binFramesRef.current = null;
+    if (playTimerRef.current) clearTimeout(playTimerRef.current);
+    const frames = buildEewOnlyFrames(eew);
+    framesRef.current = frames;
+    valuesRef.current = new Map();
+    setState((prev) => ({
+      ...prev, fileName: null, hasBin: false, eewNote: null, frames, currentIndex: 0, isPlaying: false, values: new Map(),
+    }));
+  }, [close]);
 
   // 再生タイマー: 「経過した実時間 × 速度」から今どこまで進んでいるべきか
   // (targetDataTimeMs)を求め、そこに届くまでのフレームをまとめて適用する。
@@ -239,5 +335,5 @@ export function useReplayPlayer(): ReplayPlayer {
     };
   }, [state.isPlaying, state.currentIndex, state.speed]);
 
-  return { ...state, loadFile, play, pause, seek, setSpeed, close };
+  return { ...state, loadFile, loadEewFile, clearEew, closeBin, play, pause, seek, setSpeed, close };
 }
