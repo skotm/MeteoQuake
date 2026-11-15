@@ -141,5 +141,41 @@ test("対象地域にページの案内文が混ざっていても除く(古い�
   ];
   const d = parseReplayEewJson(JSON.stringify(j));
   const card = buildReplayEewAt(d, ORIGIN + 70_000)[0];
-  assert.deepEqual(card.areas.map((a: any) => a.name), ["東北"]);
+  // 対象地域は累積するため、第1報の茨城県南部も残る
+  assert.deepEqual(card.areas.map((a: any) => a.name).sort(), ["東北", "茨城県南部"].sort());
+});
+
+test("警報の対象地域は続報で広がるだけで、狭まらない", () => {
+  const j = JSON.parse(sampleJson());
+  const area = (name: string, k: string) => ({ name, minIntensityKey: k, maxIntensityKey: k, openEnded: false });
+  // サンプルは配列の先頭が第2報
+  j.normalized.reports[1].areas = [area("茨城県南部", "5-")];
+  j.normalized.reports[0].areas = [area("千葉県北西部", "5-"), area("茨城県南部", "4")];
+  const d = parseReplayEewJson(JSON.stringify(j));
+  const c1 = buildReplayEewAt(d, ORIGIN + 50_000)[0];
+  assert.deepEqual(c1.areas.map((a: any) => a.name), ["茨城県南部"]);
+  const c2 = buildReplayEewAt(d, ORIGIN + 60_000)[0];
+  assert.deepEqual(c2.areas.map((a: any) => a.name).sort(), ["千葉県北西部", "茨城県南部"]);
+  // 地域ごとの予想震度は、最後に出た報の値
+  assert.equal(c2.areas.find((a: any) => a.name === "茨城県南部").maxIntensityKey, "4");
+  // 後の報で地域が欠けても、対象のまま残る
+  j.normalized.reports[0].areas = [area("千葉県北西部", "5-")];
+  const d2 = parseReplayEewJson(JSON.stringify(j));
+  const c3 = buildReplayEewAt(d2, ORIGIN + 60_000)[0];
+  assert.deepEqual(c3.areas.map((a: any) => a.name).sort(), ["千葉県北西部", "茨城県南部"]);
+});
+
+test("EEWの一部が震度ファイルの範囲外でも、フレームを延ばして発生時刻から始められる", async () => {
+  const { extendFramesForEew } = await import("../src/replayEew.ts");
+  const frameAt = (ms: number) => ({ dataTime: new Date(ms), entries: [] });
+  // 震度ファイルは発生の20秒後から始まる
+  const bin = [frameAt(ORIGIN + 20_000), frameAt(ORIGIN + 53_000)];
+  const out = extendFramesForEew(bin, data);
+  assert.ok(out[0].dataTime.getTime() <= ORIGIN);
+  assert.ok(out[out.length - 1].dataTime.getTime() >= data.endMs - 1000);
+  assert.ok(out.includes(bin[0]) && out.includes(bin[1]));
+  assert.equal(out.filter((f) => f.dataTime.getTime() === bin[0].dataTime.getTime()).length, 1);
+  // 全く重ならないなら、そのまま
+  const far = [frameAt(ORIGIN + 9_000_000)];
+  assert.equal(extendFramesForEew(far, data), far);
 });

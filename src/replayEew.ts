@@ -167,6 +167,24 @@ export function formatJstSlash(ms: number): string {
 }
 
 /**
+ * 警報の対象地域は、続報で広がることはあっても、狭まることはない。
+ *  ・当初対象外の地域が震度5弱以上(長周期階級3以上)の予想になると続報が出て、
+ *    その時点で震度4以上が予想される地域もまとめて対象に加わる。
+ *  ・震度4の地域だけが増えても続報は出ない。
+ * そのため、current までの報に一度でも出た地域は対象地域として残す。
+ * 地域ごとの予想震度は、その地域が最後に出た報の値を使う(今の報に無ければ、前の値のまま)。
+ */
+export function accumulateWarningAreas(reports: ReplayEewReport[], current: ReplayEewReport): ReplayEewArea[] {
+  const byName = new Map<string, ReplayEewArea>();
+  for (const r of reports) {
+    if (r.isCancel) continue;
+    for (const a of r.areas) byName.set(a.name, a);
+    if (r === current) break;
+  }
+  return [...byName.values()];
+}
+
+/**
  * 再生時刻 timeMs(UTCミリ秒)に画面へ出すEEWカードを返す(0件または1件)。
  *  ・最初の報より前 → なし
  *  ・以降 → issuedAtMs <= timeMs の最新の報
@@ -183,6 +201,7 @@ export function buildReplayEewAt(data: ReplayEewData | null, timeMs: number | nu
   if (!current) return [];
   const last = data.reports[data.reports.length - 1];
   if (timeMs >= last.issuedAtMs + keepMsAfter(last)) return [];
+  const areas = current.isCancel ? [] : accumulateWarningAreas(data.reports, current);
 
   return [{
     id: `replay_${data.eventId}_${current.serial}`,
@@ -201,7 +220,7 @@ export function buildReplayEewAt(data: ReplayEewData | null, timeMs: number | nu
     longitude: current.hypocenter.longitude,
     depth: current.hypocenter.depthKm != null && current.hypocenter.depthKm >= 0 ? Math.round(current.hypocenter.depthKm) : null,
     magnitude: current.hypocenter.magnitude != null && current.hypocenter.magnitude > 0 ? current.hypocenter.magnitude : null,
-    areas: current.areas.map((a) => ({
+    areas: areas.map((a) => ({
       pref: "",
       name: a.name,
       scaleFrom: null,
@@ -234,6 +253,28 @@ export function buildEewOnlyFrames(data: ReplayEewData): IntensityDeltaMessage[]
 }
 
 /**
+ * 震度ファイルのフレームを、EEWの再生範囲(startMs〜endMs)まで空のフレームで延ばす。
+ * EEWの一部が震度ファイルの範囲外でも、地震の発生時刻から再生を始められるようにするため。
+ * 範囲外の間は震度の値が変わらず、EEWだけが進む。EEWが震度ファイルと全く重ならない時は、そのまま返す。
+ */
+export function extendFramesForEew(bin: IntensityDeltaMessage[], data: ReplayEewData): IntensityDeltaMessage[] {
+  if (bin.length === 0) return bin;
+  const from = bin[0].dataTime.getTime();
+  const to = bin[bin.length - 1].dataTime.getTime();
+  const firstIssued = data.reports[0].issuedAtMs;
+  const lastIssued = data.reports[data.reports.length - 1].issuedAtMs;
+  if (lastIssued < from || firstIssued > to) return bin;
+  const before: IntensityDeltaMessage[] = [];
+  const startSec = Math.max(Math.floor(data.startMs / 1000), Math.ceil(from / 1000) - MAX_SYNTHETIC_FRAMES);
+  for (let s = startSec; s * 1000 < from; s++) before.push({ dataTime: new Date(s * 1000), entries: [] });
+  const after: IntensityDeltaMessage[] = [];
+  const endSec = Math.min(Math.ceil(data.endMs / 1000), Math.floor(to / 1000) + MAX_SYNTHETIC_FRAMES);
+  for (let s = Math.floor(to / 1000) + 1; s <= endSec; s++) after.push({ dataTime: new Date(s * 1000), entries: [] });
+  if (before.length === 0 && after.length === 0) return bin;
+  return [...before, ...bin, ...after];
+}
+
+/**
  * EEWの時刻が、読み込んでいる震度ファイルの範囲に入っているかの注意文(入っていれば null)。
  * 範囲外だと、再生してもEEWが出ないため。
  */
@@ -247,7 +288,7 @@ export function eewRangeNote(frames: IntensityDeltaMessage[], data: ReplayEewDat
     return "EEWの時刻が、読み込んだ震度ファイルの範囲外です。再生してもEEWは表示されません。";
   }
   if (firstIssued < from || lastIssued > to) {
-    return "EEWの一部が、読み込んだ震度ファイルの範囲外です。範囲外の報は表示されません。";
+    return "EEWの一部が、読み込んだ震度ファイルの範囲外です。範囲外の間は、震度は表示されず、EEWだけを再生します。";
   }
   return null;
 }
