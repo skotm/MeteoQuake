@@ -580,9 +580,9 @@ export function saveGridCellsVisible(visible) {
   saveStoredBool(GRID_CELLS_VISIBLE_STORAGE_KEY, visible, "グリッド枠の表示");
 }
 
-// 個別観測点検知方式で、検知済みの観測点を黒い縁取りで強調するか。既定はオン。
+// 個別観測点検知方式で、検知済みの観測点を黒い縁取りで強調するか。既定はオフ。
 export function loadStoredDetectedOutlineEnabled() {
-  return loadStoredBool(DETECTED_OUTLINE_STORAGE_KEY, true, "検知観測点の黒縁の強調");
+  return loadStoredBool(DETECTED_OUTLINE_STORAGE_KEY, false, "検知観測点の黒縁の強調");
 }
 
 export function saveDetectedOutlineEnabled(enabled) {

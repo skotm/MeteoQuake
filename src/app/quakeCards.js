@@ -199,7 +199,8 @@ export function buildQuakeMessage(quake) {
   const { tokens } = useContext(ThemeContext);
 
   const tsunami = TSUNAMI_TEXT[quake.domesticTsunami] || TSUNAMI_TEXT.None;
-  const lines = [{ label: "津波情報", text: tsunami.text, color: tsunami.color || tokens.textSecondary }];
+  // alert: 注意が必要な津波情報(調査中・警報等)。本文も同じ色にして目立たせる。
+  const lines = [{ label: "津波情報", text: tsunami.text, color: tsunami.color || tokens.textSecondary, alert: !!tsunami.color }];
   if (quake.freeFormComment) {
     lines.push({ label: "付加文", text: quake.freeFormComment, color: `rgba(${tokens.ink},0.75)` });
   }

@@ -110,7 +110,7 @@ export function MapCanvas({
   // 既存の揺れ検知とは独立に動き、併用して比較できる。
   gridDetectionEnabled = false,
   // 個別観測点検知方式で、検知済みの観測点を黒い縁取りで強調するか(グリッド検知では、そもそも付けない)。
-  detectedOutlineEnabled = true,
+  detectedOutlineEnabled = false,
   gridCellsVisible = true,
   // 信頼度が下限未満の震源推定も表示するか(設定。デフォルトOFF=表示しない)。
   showLowConfidenceEstimates = false,

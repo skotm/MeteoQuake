@@ -265,12 +265,18 @@ export function QuakeMessageCard({ quake }) {
         background: `rgba(${tokens.ink},0.04)`,
         boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)`,
       }}>
+        {/* 見出しは本文の頭に同じ行でつなげて出す(縦に1行積まない)ことで、
+            文字を大きくしてもカードの高さがほとんど増えないようにしている。 */}
         {lines.map((line, i) => (
-          <div key={i} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: line.color }}>
+          <div key={i} style={{ lineHeight: 1.45 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: line.color, marginRight: 4 }}>
               【{line.label}】
             </span>
-            <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.5 }}>
+            <span style={{
+              fontSize: 14, lineHeight: 1.45,
+              fontWeight: line.alert ? 600 : 400,
+              color: line.alert ? line.color : `rgba(${tokens.ink},0.9)`,
+            }}>
               {line.text}
             </span>
           </div>
