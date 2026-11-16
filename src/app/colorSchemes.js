@@ -186,11 +186,11 @@ export const QUAKE_COLOR_SCHEME_ORDER = ["fill", "jma", "legacy", "srev", "kiwi"
 // 画像)で表示する(realtime-points-icon-layer参照)ため、この関数が使われる
 // のは震度0の範囲のみになる。気象庁の指針では震度0は単一の薄いグレー
 // (QUAKE_COLOR_SCHEMES.*.colors["0"])で一括りにされてしまい、平常時との差が
-// 見えなくなるため、代わりに計測震度0.0〜0.4の範囲だけは「透明→薄グレー→
+// 見えなくなるため、代わりに計測震度-1.0〜0.4の範囲だけは「透明→薄グレー→
 // グレー」の3点グラデーションにして、震度0の中でも実際の揺れの強さの
 // 違いがうっすら見えるようにする(0.4〜0.5未満はグレーのまま)。
-const REPLAY_JMA_SUBTHRESHOLD_MIN = 0.0; // これ未満(計測震度が負)の観測点は、MapCanvas側で表示しない
-const REPLAY_JMA_SUBTHRESHOLD_MID = 0.15; // 透明→薄グレーと薄グレー→グレーの折り返し点
+const REPLAY_JMA_SUBTHRESHOLD_MIN = -1.0; // これ未満の観測点は、MapCanvas側で表示しない
+const REPLAY_JMA_SUBTHRESHOLD_MID = -0.3; // 透明→薄グレーと薄グレー→グレーの折り返し点
 const REPLAY_JMA_SUBTHRESHOLD_MAX = 0.4;
 const REPLAY_JMA_SUBTHRESHOLD_RGB = "142,142,147"; // iOSのsystemGray相当
 const REPLAY_JMA_SUBTHRESHOLD_MID_ALPHA = 0.35; // 「薄グレー」時点の不透明度
