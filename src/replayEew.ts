@@ -10,9 +10,10 @@
  *   既存のリプレイ(再生・一時停止・シーク・倍速)をそのまま使い回す。
  * ・表示するかどうかは、現在時刻ではなく「再生時刻(データ時刻)」で決める。
  *   ライブのEEWのような受信時刻(receivedLocalAt)のタイムアウトは使わない。
- * ・気象庁の公開履歴は警報のみなので、すべて警報(isWarnLevel:true)として扱う。
+ * ・警報の対象地域は、eewWarningAreas.ts の共通ルールで決める(警報になる前の報は予報として扱い、対象地域は出さない)。
  */
 import type { IntensityDeltaMessage } from "./realtimeProtocolClient";
+import { advanceWarningAreas, type WarningAreaCandidate } from "./eewWarningAreas.ts";
 
 export interface ReplayEewArea {
   name: string;
@@ -37,6 +38,10 @@ export interface ReplayEewReport {
   /** その報の震源。ファイルに無ければ、事例全体の震源を入れてある。 */
   hypocenter: ReplayEewHypocenter;
   maxIntensityKey: string | null;
+  /** 最大震度が「〜程度以上」としか分からない報(予報区ごとの予測が無い初期の報)。 */
+  maxIntensityOpenEnded: boolean;
+  /** 長周期地震動階級の予想(地域名と階級)。 */
+  longPeriod: Array<{ name: string; grade: number }>;
   areas: ReplayEewArea[];
 }
 
@@ -117,6 +122,10 @@ export function parseReplayEewJson(text: string): ReplayEewData {
         magnitude: h && isNum(h.magnitude) ? h.magnitude : eventHypo.magnitude,
       },
       maxIntensityKey: typeof r.maxIntensityKey === "string" ? r.maxIntensityKey : null,
+      maxIntensityOpenEnded: !!r.maxIntensityOpenEnded,
+      longPeriod: (Array.isArray(r.longPeriod) ? r.longPeriod : [])
+        .filter((a: any) => a && typeof a.name === "string" && typeof a.grade === "number" && isPlausibleAreaName(a.name.trim()))
+        .map((a: any) => ({ name: a.name, grade: a.grade })),
       areas: (Array.isArray(r.areas) ? r.areas : [])
         .filter((a: any) => a && typeof a.name === "string" && isPlausibleAreaName(a.name.trim()))
         .map((a: any) => ({
@@ -167,21 +176,57 @@ export function formatJstSlash(ms: number): string {
 }
 
 /**
- * 警報の対象地域は、続報で広がることはあっても、狭まることはない。
- *  ・当初対象外の地域が震度5弱以上(長周期階級3以上)の予想になると続報が出て、
- *    その時点で震度4以上が予想される地域もまとめて対象に加わる。
- *  ・震度4の地域だけが増えても続報は出ない。
- * そのため、current までの報に一度でも出た地域は対象地域として残す。
- * 地域ごとの予想震度は、その地域が最後に出た報の値を使う(今の報に無ければ、前の値のまま)。
+ * PLUM法の報か。PLUM法のEEWは、震源・Mが求まらないため、仮定震源要素として
+ * M1.0・深さ10kmで発表される。この値の報はPLUM法として扱う。
  */
-export function accumulateWarningAreas(reports: ReplayEewReport[], current: ReplayEewReport): ReplayEewArea[] {
-  const byName = new Map<string, ReplayEewArea>();
-  for (const r of reports) {
-    if (r.isCancel) continue;
-    for (const a of r.areas) byName.set(a.name, a);
-    if (r === current) break;
+export function isPlumHypocenter(h: { depthKm: number | null; magnitude: number | null }): boolean {
+  return h.magnitude != null && Math.abs(h.magnitude - 1.0) < 0.05 && h.depthKm != null && Math.round(h.depthKm) === 10;
+}
+
+const INTENSITY_RANK = ["0", "1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
+const rankOf = (key: string | null) => (key == null ? -1 : INTENSITY_RANK.indexOf(key));
+
+/** 1つの報から、警報の対象地域を決めるための候補を作る(震度4以上=対象、5弱以上または長周期階級3以上=強い)。 */
+function warningCandidates(r: ReplayEewReport): WarningAreaCandidate[] {
+  const byName = new Map<string, WarningAreaCandidate>();
+  for (const a of r.areas) {
+    const rank = rankOf(a.maxIntensityKey);
+    byName.set(a.name, { name: a.name, isTarget: rank >= 4, isStrong: rank >= 5 });
+  }
+  for (const lp of r.longPeriod) {
+    const cur = byName.get(lp.name) ?? { name: lp.name, isTarget: false, isStrong: false };
+    if (lp.grade >= 3) { cur.isTarget = true; cur.isStrong = true; }
+    byName.set(lp.name, cur);
   }
   return [...byName.values()];
+}
+
+/**
+ * current までの報から、警報の対象地域を返す(共通ルールは eewWarningAreas.ts)。
+ * 地域ごとの予想震度は、その地域が最後に出た報の値(今の報に無ければ前の値のまま)。
+ * 警報になる前の報は、対象地域なし(空)。
+ */
+export function warningAreasAt(reports: ReplayEewReport[], current: ReplayEewReport): ReplayEewArea[] {
+  let names = new Set<string>();
+  const latest = new Map<string, ReplayEewArea>();
+  for (const r of reports) {
+    if (r.isCancel) { if (r === current) break; continue; }
+    for (const a of r.areas) latest.set(a.name, a);
+    for (const lp of r.longPeriod) if (!latest.has(lp.name)) latest.set(lp.name, { name: lp.name, minIntensityKey: null, maxIntensityKey: null, openEnded: false });
+    names = advanceWarningAreas(names, warningCandidates(r)).names;
+    if (r === current) break;
+  }
+  return [...names].map((n) => latest.get(n)).filter((a): a is ReplayEewArea => !!a);
+}
+
+/** その報の時点で警報になっているか。 */
+export function isWarnLevelAt(reports: ReplayEewReport[], current: ReplayEewReport): boolean {
+  let names = new Set<string>();
+  for (const r of reports) {
+    if (!r.isCancel) names = advanceWarningAreas(names, warningCandidates(r)).names;
+    if (r === current) break;
+  }
+  return names.size > 0;
 }
 
 /**
@@ -201,7 +246,9 @@ export function buildReplayEewAt(data: ReplayEewData | null, timeMs: number | nu
   if (!current) return [];
   const last = data.reports[data.reports.length - 1];
   if (timeMs >= last.issuedAtMs + keepMsAfter(last)) return [];
-  const areas = current.isCancel ? [] : accumulateWarningAreas(data.reports, current);
+  const areas = current.isCancel ? [] : warningAreasAt(data.reports, current);
+  const isWarn = isWarnLevelAt(data.reports, current);
+  const isPlum = !current.isCancel && isPlumHypocenter(current.hypocenter);
 
   return [{
     id: `replay_${data.eventId}_${current.serial}`,
@@ -213,7 +260,7 @@ export function buildReplayEewAt(data: ReplayEewData | null, timeMs: number | nu
     // 地図のP波・S波の円はこちらを優先して使う(文字列を端末のタイムゾーンで解釈しないため)。
     originTimeMs: data.originTimeMs,
     arrivalTime: null,
-    isAssumedHypocenter: false,
+    isAssumedHypocenter: isPlum,
     place: data.hypocenterName || "震源地不明",
     reducedPlace: null,
     latitude: current.hypocenter.latitude,
@@ -226,14 +273,14 @@ export function buildReplayEewAt(data: ReplayEewData | null, timeMs: number | nu
       scaleFrom: null,
       scaleTo: null,
       maxIntensityKey: a.maxIntensityKey ?? "?",
-      isPlum: false,
+      isPlum,
     })),
     maxIntensityKey: current.maxIntensityKey ?? "?",
-    isPlum: false,
+    isPlum,
     source: "replay",
     isReplay: true,
     isFinal: current.isFinal,
-    isWarnLevel: true,
+    isWarnLevel: isWarn,
     receivedLocalAt: current.issuedAtMs,
     cancelledLocalAt: null,
   }];

@@ -147,3 +147,24 @@ test("終了条件の定数: 検知から600秒。揺れが収まった場合の
   assert.ok(endMinElapsedMs(7) > endMinElapsedMs(4));
   assert.ok(endMinElapsedMs(9) <= 120000);
 });
+
+test("カードに載せる地域は警報の対象地域だけ。予報の段階は載せず、続報で広がるのは新たに震度5弱以上が出た時だけ", () => {
+  const mk = (prev: any, areas: Array<[string, number]>) => evaluateReport(prev, {
+    raw: { lat: 35, lon: 139, depthKm: 20, magnitude: 6.0 }, stationCount: 5, inland: true,
+    forecast: buildForecast({ areaValues: new Map(areas) }, new Map()),
+  })!;
+  // 予報(最大震度4): 地域は載せない
+  const f1 = mk(null, [["A", 3.8], ["B", 3.6]]);
+  assert.equal(f1.display.isWarnLevel, false);
+  assert.deepEqual(f1.display.areas, []);
+  // 警報(5弱): 震度4以上の地域がまとめて入る。震度3の地域は入らない
+  const f2 = mk(f1.state, [["A", 4.6], ["B", 3.6], ["C", 3.0]]);
+  assert.equal(f2.display.isWarnLevel, true);
+  assert.deepEqual(f2.display.areas.map((a: any) => a.name).sort(), ["A", "B"]);
+  // 震度4の地域だけが増えても、対象地域は増えない
+  const f3 = mk(f2.state, [["A", 4.6], ["B", 3.6], ["D", 3.7]]);
+  assert.deepEqual(f3.display.areas.map((a: any) => a.name).sort(), ["A", "B"]);
+  // 新たに震度5弱以上の地域が出ると、その時点の震度4の地域もまとめて加わる
+  const f4 = mk(f3.state, [["A", 4.6], ["E", 4.7], ["D", 3.7]]);
+  assert.deepEqual(f4.display.areas.map((a: any) => a.name).sort(), ["A", "B", "D", "E"]);
+});

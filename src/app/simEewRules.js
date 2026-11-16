@@ -1,3 +1,4 @@
+import { advanceWarningAreas } from "../eewWarningAreas.ts";
 import { INTENSITY_SCALE_CODE, instrumentalIntensityToScaleKey } from "./testSimulation";
 
 /* ─────────────────────────────────────────────────────
@@ -131,10 +132,16 @@ export function evaluateReport(prev, latest) {
   const warnAreas = new Map(prev?.warnAreas || []);
   const newWarnAreas = [];
   if (warnNow) {
-    for (const [name, v] of values) {
-      if (!atLeast(v, R.WARN_MIN_INTENSITY)) continue;
-      if (!warnAreas.has(name)) newWarnAreas.push(name);
-      if (!(warnAreas.get(name) >= v)) warnAreas.set(name, v);
+    // 警報の対象地域は共通ルール(eewWarningAreas.ts)で決める。
+    // 続報で広がるのは、対象外だった地域に新たに震度5弱以上が予測された時だけ(その時、震度4以上の地域もまとめて加わる)。
+    const step = advanceWarningAreas(
+      new Set(warnAreas.keys()),
+      [...values].map(([name, v]) => ({ name, isTarget: atLeast(v, R.AREA_MIN_INTENSITY), isStrong: atLeast(v, R.WARN_MIN_INTENSITY) })),
+    );
+    newWarnAreas.push(...step.added);
+    for (const name of step.names) {
+      const v = values.get(name);
+      if (v !== undefined && !(warnAreas.get(name) >= v)) warnAreas.set(name, v);
     }
   }
 
@@ -175,9 +182,10 @@ export function evaluateReport(prev, latest) {
     if (reasons.length > 1) reasons.push("複数条件の同時成立");
   }
 
+  // カードに載せる地域は、警報の対象地域だけ(予報の段階では載せない)。
   const areas = [];
   for (const [name, v] of values) {
-    if (!atLeast(v, R.AREA_MIN_INTENSITY)) continue;
+    if (!warnNow || !warnAreas.has(name)) continue;
     const key = instrumentalIntensityToScaleKey(v);
     const code = INTENSITY_SCALE_CODE[key] ?? 40;
     areas.push({
