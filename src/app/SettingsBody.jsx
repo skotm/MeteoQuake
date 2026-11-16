@@ -640,7 +640,7 @@ export function SettingsBody({
           <SettingsCard>
             <SettingsToggleRow
               label="震度階級で表示"
-              description="観測点の色を、強震モニタ本来の連続配色ではなく気象庁の震度階級に換算して表示します。震度1以上は地震情報の観測点マーカーと同じアイコン(設定中の震度配色に対応)、震度0(計測震度-1.0〜0.4)は透明→薄いグレー→グレーの段階で表示し、震度0の中での揺れの強さの違いも見えるようにしています。"
+              description="観測点の色を、強震モニタ本来の連続配色ではなく気象庁の震度階級に換算して表示します。震度1以上は地震情報の観測点マーカーと同じアイコン(設定中の震度配色に対応)、震度0(計測震度-1.0〜0.4)は透明→薄いグレー→グレーの段階で表示し、震度0の中での揺れの強さの違いも見えるようにしています。計測震度-1.0未満の観測点は表示しません。"
               checked={replayJmaColorEnabled}
               onChange={() => onChangeReplayJmaColorEnabled(!replayJmaColorEnabled)}
             />
