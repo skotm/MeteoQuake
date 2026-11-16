@@ -63,6 +63,8 @@ export const REPLAY_EEW_KEEP_MS = 90000;
 export const REPLAY_EEW_CANCEL_KEEP_MS = 10000;
 const keepMsAfter = (r: { isCancel: boolean }) => (r.isCancel ? REPLAY_EEW_CANCEL_KEEP_MS : REPLAY_EEW_KEEP_MS);
 /** EEWだけで再生する時、最初の報より前に置く余白。 */
+/** 発生時刻が分単位の時の推定: 検知時刻のこれだけ前に発生したとみなす。 */
+export const ORIGIN_BEFORE_DETECTION_MS = 8_000;
 const LEAD_IN_MS = 10000;
 /** EEWだけの再生で作るフレームの最大数(異常に長い範囲で重くならないように)。 */
 const MAX_SYNTHETIC_FRAMES = 3 * 60 * 60;
@@ -142,11 +144,21 @@ export function parseReplayEewJson(text: string): ReplayEewData {
   // 最終報の印が付いていない場合でも、最後の報を最終報として扱う。
   reports[reports.length - 1].isFinal = true;
 
-  const originTimeMs = isNum(ev.originTimeMs) ? ev.originTimeMs : reports[0].issuedAtMs;
   const detectionTimeMs = isNum(ev.detectionTimeMs) ? ev.detectionTimeMs : null;
+  let originEstimated = false;
+  let originTimeMs = isNum(ev.originTimeMs) ? ev.originTimeMs : reports[0].issuedAtMs;
+  // 気象庁の予報の履歴ページは、発生時刻が分単位(秒が無い)。秒を0として扱うと、検知時刻より最大1分近く早くなり、
+  // 開始位置もP波・S波の円もずれる。発生は検知より前なので、検知時刻の ORIGIN_BEFORE_DETECTION_MS 前を推定値にする
+  // (その分の範囲内に収める)。例: 2026-11-06 関東東方沖 M6.1 は、震度の到達時刻から発生を検知の約8秒前と推定できた。
+  if (ev.originTimePrecision === "minute" && detectionTimeMs != null) {
+    const minuteStart = originTimeMs;
+    originTimeMs = Math.min(Math.max(detectionTimeMs - ORIGIN_BEFORE_DETECTION_MS, minuteStart), detectionTimeMs);
+    originEstimated = true;
+  }
   const startMs = Math.min(originTimeMs, detectionTimeMs ?? Infinity, reports[0].issuedAtMs) - LEAD_IN_MS;
   const endMs = reports[reports.length - 1].issuedAtMs + keepMsAfter(reports[reports.length - 1]);
   const warnings: string[] = Array.isArray(n.warnings) ? n.warnings.filter((w: unknown) => typeof w === "string") : [];
+  if (originEstimated) warnings.push(`発生時刻が分単位のため、検知時刻の${ORIGIN_BEFORE_DETECTION_MS / 1000}秒前(${formatJstSlash(originTimeMs)})と推定しました。P波・S波の円の位置はおおよそです。`);
   if (skipped > 0) warnings.push(`震源の位置が無い報が${skipped}件あり、再生から除きました。`);
   return {
     eventId: String(ev.eventId || `eew_${originTimeMs}`),
@@ -286,39 +298,88 @@ export function buildReplayEewAt(data: ReplayEewData | null, timeMs: number | nu
   }];
 }
 
+/** EEWだけで再生する時の、複数ファイルの範囲を合わせた時間範囲。 */
+export function eewListRange(list: ReplayEewData[]): { startMs: number; endMs: number } {
+  return {
+    startMs: Math.min(...list.map((d) => d.startMs)),
+    endMs: Math.max(...list.map((d) => d.endMs)),
+  };
+}
+
+/** EEWだけで再生できる、全ファイルを合わせた時間範囲の上限(これを超える組み合わせは読み込めない)。 */
+export const MAX_EEW_ONLY_SPAN_MS = MAX_SYNTHETIC_FRAMES * 1000;
+
 /**
- * EEWだけで再生する時の、値が空のフレーム列(1秒刻み)。先頭がベースライン。
- * 既存のリプレイ(useReplayPlayer)の再生・シーク・倍速をそのまま使うための土台。
+ * EEWだけの再生用に、全ファイルの時間範囲を1秒刻みで埋める、値が空のフレームを作る。
+ * 震度ファイルが無いので値は無い。再生の時計と報の切り替えは、このフレームの範囲で動く。
  */
-export function buildEewOnlyFrames(data: ReplayEewData): IntensityDeltaMessage[] {
-  const startSec = Math.floor(data.startMs / 1000);
-  const endSec = Math.ceil(data.endMs / 1000);
+export function buildEewOnlyFramesFor(list: ReplayEewData[]): IntensityDeltaMessage[] {
+  const { startMs, endMs } = eewListRange(list);
+  const startSec = Math.floor(startMs / 1000);
+  const endSec = Math.ceil(endMs / 1000);
   const count = Math.min(Math.max(2, endSec - startSec + 1), MAX_SYNTHETIC_FRAMES);
   const frames: IntensityDeltaMessage[] = new Array(count);
   for (let i = 0; i < count; i++) frames[i] = { dataTime: new Date((startSec + i) * 1000), entries: [] };
   return frames;
 }
 
+export function buildEewOnlyFrames(data: ReplayEewData): IntensityDeltaMessage[] {
+  return buildEewOnlyFramesFor([data]);
+}
+
+/** そのEEWが、震度ファイル(from〜to)の時間範囲と少しでも重なるか。 */
+export function eewOverlapsRange(data: ReplayEewData, fromMs: number, toMs: number): boolean {
+  const firstIssued = data.reports[0].issuedAtMs;
+  const lastIssued = data.reports[data.reports.length - 1].issuedAtMs;
+  return !(lastIssued < fromMs || firstIssued > toMs);
+}
+
 /**
- * 震度ファイルのフレームを、EEWの再生範囲(startMs〜endMs)まで空のフレームで延ばす。
+ * 震度ファイルのフレームを、EEWの再生範囲まで空のフレームで延ばす。
  * EEWの一部が震度ファイルの範囲外でも、地震の発生時刻から再生を始められるようにするため。
- * 範囲外の間は震度の値が変わらず、EEWだけが進む。EEWが震度ファイルと全く重ならない時は、そのまま返す。
+ * 範囲外の間は震度の値が変わらず、EEWだけが進む。震度ファイルと重なるEEWだけが対象
+ * (全く重ならないEEWは、再生されないので範囲に入れない)。複数のEEWは、まとめた範囲まで延ばす。
  */
-export function extendFramesForEew(bin: IntensityDeltaMessage[], data: ReplayEewData): IntensityDeltaMessage[] {
+export function extendFramesForEews(bin: IntensityDeltaMessage[], list: ReplayEewData[]): IntensityDeltaMessage[] {
   if (bin.length === 0) return bin;
   const from = bin[0].dataTime.getTime();
   const to = bin[bin.length - 1].dataTime.getTime();
-  const firstIssued = data.reports[0].issuedAtMs;
-  const lastIssued = data.reports[data.reports.length - 1].issuedAtMs;
-  if (lastIssued < from || firstIssued > to) return bin;
+  const used = list.filter((d) => eewOverlapsRange(d, from, to));
+  if (used.length === 0) return bin;
+  const { startMs, endMs } = eewListRange(used);
   const before: IntensityDeltaMessage[] = [];
-  const startSec = Math.max(Math.floor(data.startMs / 1000), Math.ceil(from / 1000) - MAX_SYNTHETIC_FRAMES);
+  const startSec = Math.max(Math.floor(startMs / 1000), Math.ceil(from / 1000) - MAX_SYNTHETIC_FRAMES);
   for (let s = startSec; s * 1000 < from; s++) before.push({ dataTime: new Date(s * 1000), entries: [] });
   const after: IntensityDeltaMessage[] = [];
-  const endSec = Math.min(Math.ceil(data.endMs / 1000), Math.floor(to / 1000) + MAX_SYNTHETIC_FRAMES);
+  const endSec = Math.min(Math.ceil(endMs / 1000), Math.floor(to / 1000) + MAX_SYNTHETIC_FRAMES);
   for (let s = Math.floor(to / 1000) + 1; s <= endSec; s++) after.push({ dataTime: new Date(s * 1000), entries: [] });
   if (before.length === 0 && after.length === 0) return bin;
   return [...before, ...bin, ...after];
+}
+
+export function extendFramesForEew(bin: IntensityDeltaMessage[], data: ReplayEewData): IntensityDeltaMessage[] {
+  return extendFramesForEews(bin, [data]);
+}
+
+/** 読み込んだ複数のEEWから、再生を始める位置(UTCミリ秒)。範囲内にあるEEWのうち、最も早い地震の発生時刻。 */
+export function replayStartForList(list: ReplayEewData[], fromMs: number, toMs: number): number | null {
+  const starts = list.map(replayStartMs).filter((t) => t >= fromMs && t <= toMs);
+  return starts.length > 0 ? Math.min(...starts) : null;
+}
+
+/**
+ * 読み込んだすべてのEEWについて、再生時刻 timeMs に出すカードをまとめて返す。
+ * 複数の地震のEEWが同時に出ている時は、新しい地震(発生時刻が後)を先頭にする。
+ */
+export function buildReplayEewsAt(list: ReplayEewData[] | null | undefined, timeMs: number | null): any[] {
+  if (!list || list.length === 0 || timeMs == null) return [];
+  const out: Array<{ origin: number; cards: any[] }> = [];
+  for (const d of list) {
+    const cards = buildReplayEewAt(d, timeMs);
+    if (cards.length > 0) out.push({ origin: d.originTimeMs, cards });
+  }
+  out.sort((a, b) => b.origin - a.origin);
+  return out.flatMap((o) => o.cards);
 }
 
 /**

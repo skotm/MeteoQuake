@@ -39,7 +39,19 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { decodeIntensityDelta, type IntensityDeltaMessage } from "./realtimeProtocolClient";
-import { buildEewOnlyFrames, eewRangeNote, extendFramesForEew, parseReplayEewJson, replayStartMs, type ReplayEewData } from "./replayEew";
+import {
+  buildEewOnlyFramesFor, eewListRange, eewRangeNote, extendFramesForEews, MAX_EEW_ONLY_SPAN_MS,
+  parseReplayEewJson, replayStartForList, type ReplayEewData,
+} from "./replayEew";
+
+export interface ReplayEewEntry {
+  /** 地震の識別子(eventId)。 */
+  id: string;
+  fileName: string;
+  data: ReplayEewData;
+  /** このEEWの時刻が震度ファイルの範囲と合わない時の注意文。 */
+  note: string | null;
+}
 
 export interface ReplayState {
   /** 震度ファイル(.bin)かEEWファイル(.eew.json)の、どちらかでも読み込まれていればtrue。 */
@@ -48,11 +60,8 @@ export interface ReplayState {
   fileName: string | null;
   /** 震度ファイル(.bin)を読み込んでいるか。falseでloadedがtrueならEEWだけの再生(値が空のフレーム)。 */
   hasBin: boolean;
-  /** 読み込んだEEW(.eew.json)。無ければnull。 */
-  eew: ReplayEewData | null;
-  eewFileName: string | null;
-  /** EEWの時刻が震度ファイルの範囲と合わない時の注意文。 */
-  eewNote: string | null;
+  /** 読み込んだEEW(.eew.json)。複数読み込める。同じ地震(eventId)は後から読んだ方に置き換わる。発生時刻順。 */
+  eews: ReplayEewEntry[];
   frames: IntensityDeltaMessage[];
   currentIndex: number; // 0 = ベースラインフレームのみ適用した状態
   /**
@@ -121,7 +130,11 @@ function computeValuesAt(frames: IntensityDeltaMessage[], index: number): Map<nu
 
 export interface ReplayPlayer extends ReplayState {
   loadFile: (file: File) => Promise<void>;
-  loadEewFile: (file: File) => Promise<void>;
+  /** EEWファイル(.eew.json)を読み込む。複数のファイルをまとめて渡せる。 */
+  loadEewFiles: (files: File[]) => Promise<void>;
+  /** 指定した地震(id)のEEWだけを外す。 */
+  removeEew: (id: string) => void;
+  /** EEWをすべて外す。 */
   clearEew: () => void;
   closeBin: () => void;
   play: () => void;
@@ -144,17 +157,19 @@ function frameIndexAtOrBefore(frames: IntensityDeltaMessage[], ms: number): numb
 }
 
 /**
- * 読み込み直後の再生位置(UTCミリ秒)。EEWがあり、その地震の発生時刻が
- * フレームの範囲内なら、そこから始める。無ければ先頭から。
+ * 読み込み直後の再生位置(UTCミリ秒)。EEWがあり、その地震の発生時刻がフレームの範囲内なら、
+ * そこから始める(複数あれば、最も早い地震から)。無ければ先頭から。
  */
-function initialClockMs(frames: IntensityDeltaMessage[], eew: ReplayEewData | null): number {
+function initialClockMs(frames: IntensityDeltaMessage[], eews: ReplayEewData[]): number {
   const first = frames[0].dataTime.getTime();
   const last = frames[frames.length - 1].dataTime.getTime();
-  if (eew) {
-    const start = replayStartMs(eew);
-    if (start >= first && start <= last) return start;
-  }
-  return first;
+  return replayStartForList(eews, first, last) ?? first;
+}
+
+/** 震度ファイルとEEWから、再生に使うフレームを作る。震度ファイルがあればそれ(EEWの範囲まで延ばす)、無ければEEWの範囲の空のフレーム。 */
+function composeFrames(bin: IntensityDeltaMessage[] | null, eews: ReplayEewData[]): IntensityDeltaMessage[] {
+  if (bin) return eews.length > 0 ? extendFramesForEews(bin, eews) : bin;
+  return buildEewOnlyFramesFor(eews);
 }
 
 function emptyState(): ReplayState {
@@ -162,9 +177,7 @@ function emptyState(): ReplayState {
     loaded: false,
     fileName: null,
     hasBin: false,
-    eew: null,
-    eewFileName: null,
-    eewNote: null,
+    eews: [],
     frames: [],
     currentIndex: 0,
     clockMs: null,
@@ -191,7 +204,7 @@ export function useReplayPlayer(): ReplayPlayer {
   // 震度ファイル(.bin)のフレームとEEWを別々に持つ。再生に使うフレームは、
   // 震度ファイルがあればそれ、無ければEEWの時間範囲から作った空のフレーム。
   const binFramesRef = useRef<IntensityDeltaMessage[] | null>(null);
-  const eewRef = useRef<ReplayEewData | null>(null);
+  const eewsRef = useRef<ReplayEewEntry[]>([]);
 
   /** 再生位置を ms(UTCミリ秒)に移し、その時点の値を作り直す。 */
   const jumpTo = useCallback((frames: IntensityDeltaMessage[], ms: number) => {
@@ -207,19 +220,20 @@ export function useReplayPlayer(): ReplayPlayer {
       const buf = await file.arrayBuffer();
       const frames = parseReplayBuffer(buf);
       binFramesRef.current = frames;
-      const eew = eewRef.current;
       // EEWも読み込み済みなら、震度ファイルの範囲外まで空のフレームで延ばし、
-      // 地震の発生時刻から始める。
-      const playFrames = eew ? extendFramesForEew(frames, eew) : frames;
+      // 最も早い地震の発生時刻から始める。
+      const eews = eewsRef.current.map((e) => e.data);
+      const playFrames = composeFrames(frames, eews);
       framesRef.current = playFrames;
-      const startMs = initialClockMs(playFrames, eew);
+      eewsRef.current = eewsRef.current.map((e) => ({ ...e, note: eewRangeNote(frames, e.data) }));
+      const startMs = initialClockMs(playFrames, eews);
       const index = jumpTo(playFrames, startMs);
       setState((prev) => ({
         ...prev,
         loaded: true,
         fileName: file.name,
         hasBin: true,
-        eewNote: eew ? eewRangeNote(frames, eew) : null,
+        eews: eewsRef.current,
         frames: playFrames,
         currentIndex: index,
         clockMs: startMs,
@@ -233,57 +247,80 @@ export function useReplayPlayer(): ReplayPlayer {
     }
   }, [jumpTo]);
 
-  // EEWファイル(.eew.json)の読み込み。震度ファイルが無ければ、EEWの時間範囲から
+  // EEWファイル(.eew.json)の読み込み(複数可)。震度ファイルが無ければ、EEWの時間範囲から
   // 値が空のフレームを作って、EEWだけで再生できるようにする。
-  // 震度ファイルもある場合は、地震の発生時刻に再生位置を移す。
-  const loadEewFile = useCallback(async (file: File) => {
-    try {
-      const eew = parseReplayEewJson(await file.text());
-      eewRef.current = eew;
-      const bin = binFramesRef.current;
-      const frames = bin ? extendFramesForEew(bin, eew) : buildEewOnlyFrames(eew);
-      framesRef.current = frames;
-      const startMs = initialClockMs(frames, eew);
-      const index = jumpTo(frames, startMs);
-      setState((prev) => ({
-        ...prev,
-        loaded: true,
-        eew,
-        eewFileName: file.name,
-        eewNote: bin ? eewRangeNote(bin, eew) : null,
-        frames,
-        currentIndex: index,
-        clockMs: startMs,
-        isPlaying: false,
-        values: new Map(valuesRef.current),
-        error: null,
-      }));
-    } catch (e) {
-      setState((prev) => ({ ...prev, error: e instanceof Error ? e.message : String(e) }));
-    }
-  }, [jumpTo]);
-
-  // EEWだけを外す。震度ファイルが無ければ、リプレイ自体を閉じる。
-  const clearEew = useCallback(() => {
-    eewRef.current = null;
+  // 読み込むと、最も早い地震の発生時刻に再生位置を移す。
+  // 同じ地震(eventId)のファイルは置き換える。震度ファイルが無い時は、全ファイルを合わせた
+  // 時間範囲が上限(MAX_EEW_ONLY_SPAN_MS)以内に収まるものだけ読み込む。
+  const applyEews = useCallback((entries: ReplayEewEntry[], error: string | null, keepPosition = false) => {
+    const sorted = [...entries].sort((a, b) => a.data.originTimeMs - b.data.originTimeMs);
     const bin = binFramesRef.current;
-    if (bin) {
-      // 延ばしていたフレームを、震度ファイル本来の範囲に戻す。
-      framesRef.current = bin;
-      const ms = Math.min(Math.max(clockMsRef.current, bin[0].dataTime.getTime()), bin[bin.length - 1].dataTime.getTime());
-      const index = jumpTo(bin, ms);
-      setState((prev) => ({
-        ...prev, eew: null, eewFileName: null, eewNote: null, frames: bin,
-        currentIndex: index, clockMs: ms, isPlaying: false, values: new Map(valuesRef.current),
-      }));
+    const datas = sorted.map((e) => e.data);
+    const withNotes = sorted.map((e) => ({ ...e, note: bin ? eewRangeNote(bin, e.data) : null }));
+    eewsRef.current = withNotes;
+    if (withNotes.length === 0 && !bin) {
+      framesRef.current = [];
+      valuesRef.current = new Map();
+      indexRef.current = 0;
+      clockMsRef.current = 0;
+      setState((prev) => ({ ...emptyState(), error: error ?? prev.error }));
       return;
     }
-    framesRef.current = [];
-    valuesRef.current = new Map();
-    indexRef.current = 0;
-    clockMsRef.current = 0;
-    setState(emptyState());
+    const frames = composeFrames(bin, datas);
+    framesRef.current = frames;
+    // 読み込んだ時は最も早い地震の発生時刻へ。外した時は、今の位置を(新しい範囲に収めて)保つ。
+    const startMs = keepPosition
+      ? Math.min(Math.max(clockMsRef.current, frames[0].dataTime.getTime()), frames[frames.length - 1].dataTime.getTime())
+      : initialClockMs(frames, datas);
+    const index = jumpTo(frames, startMs);
+    setState((prev) => ({
+      ...prev,
+      loaded: true,
+      eews: withNotes,
+      frames,
+      currentIndex: index,
+      clockMs: startMs,
+      isPlaying: false,
+      values: new Map(valuesRef.current),
+      error,
+    }));
   }, [jumpTo]);
+
+  const loadEewFiles = useCallback(async (files: File[]) => {
+    const errors: string[] = [];
+    let entries = [...eewsRef.current];
+    const bin = binFramesRef.current;
+    for (const file of files) {
+      try {
+        const data = parseReplayEewJson(await file.text());
+        const next = [...entries.filter((e) => e.id !== data.eventId), { id: data.eventId, fileName: file.name, data, note: null }];
+        if (!bin) {
+          const { startMs, endMs } = eewListRange(next.map((e) => e.data));
+          if (endMs - startMs > MAX_EEW_ONLY_SPAN_MS) {
+            errors.push(`${file.name}: 他のEEWと時間が離れすぎています(震度ファイルが無い時は、全体で${MAX_EEW_ONLY_SPAN_MS / 3600000}時間以内)`);
+            continue;
+          }
+        }
+        entries = next;
+      } catch (e) {
+        errors.push(`${file.name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    if (entries.length === eewsRef.current.length && entries.every((e, i) => e === eewsRef.current[i])) {
+      if (errors.length > 0) setState((prev) => ({ ...prev, error: errors.join("\n") }));
+      return;
+    }
+    applyEews(entries, errors.length > 0 ? errors.join("\n") : null);
+  }, [applyEews]);
+
+  // EEWを外す。震度ファイルが無く、EEWが無くなれば、リプレイ自体を閉じる。
+  const removeEew = useCallback((id: string) => {
+    applyEews(eewsRef.current.filter((e) => e.id !== id), null, true);
+  }, [applyEews]);
+
+  const clearEew = useCallback(() => {
+    applyEews([], null, true);
+  }, [applyEews]);
 
   const seek = useCallback((index: number) => {
     const frames = framesRef.current;
@@ -308,7 +345,7 @@ export function useReplayPlayer(): ReplayPlayer {
   const close = useCallback(() => {
     framesRef.current = [];
     binFramesRef.current = null;
-    eewRef.current = null;
+    eewsRef.current = [];
     valuesRef.current = new Map();
     indexRef.current = 0;
     clockMsRef.current = 0;
@@ -317,15 +354,16 @@ export function useReplayPlayer(): ReplayPlayer {
 
   // 震度ファイル(.bin)だけを閉じる。EEWが読み込まれていれば、EEWだけの再生に戻す。
   const closeBin = useCallback(() => {
-    const eew = eewRef.current;
-    if (!eew) { close(); return; }
+    const eews = eewsRef.current.map((e) => e.data);
+    if (eews.length === 0) { close(); return; }
     binFramesRef.current = null;
-    const frames = buildEewOnlyFrames(eew);
+    eewsRef.current = eewsRef.current.map((e) => ({ ...e, note: null }));
+    const frames = composeFrames(null, eews);
     framesRef.current = frames;
-    const startMs = initialClockMs(frames, eew);
+    const startMs = initialClockMs(frames, eews);
     const index = jumpTo(frames, startMs);
     setState((prev) => ({
-      ...prev, fileName: null, hasBin: false, eewNote: null, frames,
+      ...prev, fileName: null, hasBin: false, eews: eewsRef.current, frames,
       currentIndex: index, clockMs: startMs, isPlaying: false, values: new Map(valuesRef.current),
     }));
   }, [close, jumpTo]);
@@ -384,7 +422,7 @@ export function useReplayPlayer(): ReplayPlayer {
         Math.max(0, frames[index + 1].dataTime.getTime() - nowMs) / speed,
         MAX_REAL_INTERVAL_MS,
       );
-      const waitMs = eewRef.current ? Math.min(untilFrameMs, EEW_TICK_MS) : untilFrameMs;
+      const waitMs = eewsRef.current.length > 0 ? Math.min(untilFrameMs, EEW_TICK_MS) : untilFrameMs;
       timer = setTimeout(tick, Math.max(MIN_TICK_WAIT_MS, waitMs));
     };
     timer = setTimeout(tick, MIN_TICK_WAIT_MS);
@@ -394,5 +432,5 @@ export function useReplayPlayer(): ReplayPlayer {
     };
   }, [state.isPlaying, state.speed, state.frames, seekEpoch]);
 
-  return { ...state, loadFile, loadEewFile, clearEew, closeBin, play, pause, seek, setSpeed, close };
+  return { ...state, loadFile, loadEewFiles, removeEew, clearEew, closeBin, play, pause, seek, setSpeed, close };
 }

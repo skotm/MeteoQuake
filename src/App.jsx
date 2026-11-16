@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useRealtimeStream } from "./useRealtimeStream";
 import { useReplayPlayer } from "./useReplayPlayer";
-import { buildReplayEewAt } from "./replayEew";
+import { buildReplayEewsAt } from "./replayEew";
 import { prepareShakeTest, isShakeTestFinished, computeShakeTestValues } from "./engines/shakeTestSimulation";
 import { buildSiteLookup } from "./engines/shakeTestWaveform";
 import { setJmaTravelTimeTable, tableFromJSON } from "./engines/jmaTravelTime";
@@ -791,14 +791,15 @@ export default function App() {
   // 再生時刻(データ時刻)に合わせたリプレイのEEWだけを出す。ライブと混ざらないようにするため。
   // 再生時計(clockMs)で決める。フレームの時刻に丸めないので、フレームの間隔が長くても
   // 報が飛ばず、震度の再生と同じ時計で動く。
-  const replayEewTimeMs = replayPlayer.loaded && replayPlayer.eew
+  const replayHasEew = replayPlayer.loaded && replayPlayer.eews.length > 0;
+  const replayEewTimeMs = replayHasEew
     ? (replayPlayer.clockMs ?? replayPlayer.frames[replayPlayer.currentIndex]?.dataTime?.getTime() ?? null)
     : null;
   const replayEews = useMemo(
-    () => buildReplayEewAt(replayPlayer.eew, replayEewTimeMs),
-    [replayPlayer.eew, replayEewTimeMs],
+    () => buildReplayEewsAt(replayPlayer.eews.map((e) => e.data), replayEewTimeMs),
+    [replayPlayer.eews, replayEewTimeMs],
   );
-  const baseEews = replayPlayer.loaded && replayPlayer.eew ? replayEews : eews;
+  const baseEews = replayHasEew ? replayEews : eews;
   const effectiveEews = testEews.length > 0 ? [...testEews, ...baseEews] : baseEews;
 
   // リプレイのEEWが新しく出た時は、ライブの新規EEWと同じく、設定タブ以外ならEEW詳細を自動で開く

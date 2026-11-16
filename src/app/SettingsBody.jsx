@@ -490,8 +490,8 @@ export function SettingsBody({
     };
 
     const handleEewFileChange = (e) => {
-      const file = e.target.files?.[0];
-      if (file) replayPlayer.loadEewFile(file);
+      const files = [...(e.target.files ?? [])];
+      if (files.length > 0) replayPlayer.loadEewFiles(files);
       e.target.value = "";
     };
     const pickerLabelStyle = {
@@ -506,8 +506,7 @@ export function SettingsBody({
     const fileRowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 };
     const fileNameStyle = { fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 };
     const linkButtonStyle = { background: "none", border: "none", cursor: "pointer", fontSize: 13, color: `rgba(${tokens.ink},0.5)`, padding: 0, flex: "none" };
-    const eew = replayPlayer.eew;
-    const eewFinal = eew ? eew.reports[eew.reports.length - 1] : null;
+    const eewEntries = replayPlayer.eews;
 
     return (
       <>
@@ -538,38 +537,47 @@ export function SettingsBody({
             <div style={titleStyle}>緊急地震速報(EEW)ファイル</div>
             <div style={descStyle}>
               JmaEewParserで作成したEEWのファイル(.eew.json)を読み込むと、再生時刻に合わせて緊急地震速報が表示されます。
-              震度のファイルと一緒に読み込むほか、EEWだけでも再生できます。EEWを読み込んでいる間は、リアルタイムの緊急地震速報は表示しません。
+              複数のファイルを読み込めます。震度のファイルと一緒に読み込むと、その再生時間内の地震のEEWが、それぞれの時刻に表示されます(時間外のものは表示されません)。EEWだけでも再生できます。EEWを読み込んでいる間は、リアルタイムの緊急地震速報は表示しません。
             </div>
-            {!eew ? (
-              <label style={pickerLabelStyle}>
-                ファイルを選択
-                <input type="file" accept=".json,application/json" onChange={handleEewFileChange} style={{ display: "none" }}/>
-              </label>
-            ) : (
-              <div>
-                <div style={fileRowStyle}>
-                  <span style={fileNameStyle}>{replayPlayer.eewFileName}</span>
-                  <button onClick={replayPlayer.clearEew} style={linkButtonStyle}>外す</button>
-                </div>
-                <div style={{ marginTop: 6, fontSize: 12, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.5 }}>
-                  {eew.hypocenterName || "震源地不明"}{eewFinal.hypocenter.magnitude != null ? ` M${eewFinal.hypocenter.magnitude}` : ""}{eewFinal.isCancel ? "(キャンセル報で終了)" : ""}
-                  {" ・ "}{eew.reports.length}報(第{eewFinal.serial}報まで)
-                </div>
-                {!replayPlayer.hasBin && (
+            {eewEntries.map((entry) => {
+              const eew = entry.data;
+              const eewFinal = eew.reports[eew.reports.length - 1];
+              return (
+                <div key={entry.id} style={{ marginBottom: 12 }}>
+                  <div style={fileRowStyle}>
+                    <span style={fileNameStyle}>{entry.fileName}</span>
+                    <button onClick={() => replayPlayer.removeEew(entry.id)} style={linkButtonStyle}>外す</button>
+                  </div>
                   <div style={{ marginTop: 6, fontSize: 12, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.5 }}>
-                    震度のファイルが無いため、EEWだけを再生します(観測点の揺れは表示されません)。
+                    {eew.hypocenterName || "震源地不明"}{eewFinal.hypocenter.magnitude != null ? ` M${eewFinal.hypocenter.magnitude}` : ""}{eewFinal.isCancel ? "(キャンセル報で終了)" : ""}
+                    {" ・ "}{eew.reports.length}報(第{eewFinal.serial}報まで)
+                    {" ・ "}{new Date(eew.originTimeMs).toLocaleString("ja-JP", { hour12: false, timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}頃
                   </div>
-                )}
-                {replayPlayer.eewNote && (
-                  <div style={{ marginTop: 6, fontSize: 12, color: "#FF9F0A", lineHeight: 1.5 }}>{replayPlayer.eewNote}</div>
-                )}
-                {eew.warnings.length > 0 && (
-                  <div style={{ marginTop: 6, fontSize: 12, color: "#FF9F0A", lineHeight: 1.5 }}>
-                    ファイル作成時の注意: {eew.warnings.join(" / ")}
-                  </div>
-                )}
+                  {entry.note && (
+                    <div style={{ marginTop: 6, fontSize: 12, color: "#FF9F0A", lineHeight: 1.5 }}>{entry.note}</div>
+                  )}
+                  {eew.warnings.length > 0 && (
+                    <div style={{ marginTop: 6, fontSize: 12, color: "#FF9F0A", lineHeight: 1.5 }}>
+                      ファイル作成時の注意: {eew.warnings.join(" / ")}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {eewEntries.length > 0 && !replayPlayer.hasBin && (
+              <div style={{ marginBottom: 12, fontSize: 12, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.5 }}>
+                震度のファイルが無いため、EEWだけを再生します(観測点の揺れは表示されません)。
               </div>
             )}
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <label style={pickerLabelStyle}>
+                {eewEntries.length === 0 ? "ファイルを選択(複数可)" : "EEWを追加"}
+                <input type="file" multiple accept=".json,application/json" onChange={handleEewFileChange} style={{ display: "none" }}/>
+              </label>
+              {eewEntries.length > 1 && (
+                <button onClick={replayPlayer.clearEew} style={linkButtonStyle}>すべて外す</button>
+              )}
+            </div>
           </div>
         </SettingsCard>
 
@@ -623,7 +631,7 @@ export function SettingsBody({
         )}
 
         {replayPlayer.error && (
-          <div style={{ padding: "0 16px 8px", fontSize: 12, color: "#FF453A", lineHeight: 1.5 }}>{replayPlayer.error}</div>
+          <div style={{ padding: "0 16px 8px", fontSize: 12, color: "#FF453A", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{replayPlayer.error}</div>
         )}
 
         {/* 観測点の色を気象庁震度階級に換算して表示する設定。震度ファイル(.bin)を
