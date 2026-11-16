@@ -76,13 +76,14 @@ test("レベル法 → 通常方式: レベル法の報を、通常方式の続�
 test("1観測点だけの結果による報は、予測震度を載せない(気象庁)。2観測点以上なら載せる", () => {
   const mk = (stationCount: number) => evaluateReport(null, {
     raw: { lat: 35, lon: 139, depthKm: 20, magnitude: 5.0 }, stationCount, inland: true,
-    forecast: buildForecast({ areaValues: new Map([["A地域", 4.0]]) }, new Map()),
+    forecast: buildForecast({ areaValues: new Map([["A地域", 4.6]]) }, new Map()),
   })!;
   const one = mk(1);
   assert.deepEqual(one.display.areas, []);
   assert.equal(one.display.maxKey, "?");
   assert.equal(one.display.intensityHidden, true);
   const two = mk(2);
+  // 警報になった報には、警報の対象地域(震度4以上の地域)を載せる
   assert.equal(two.display.areas.length, 1);
   assert.equal(two.display.intensityHidden, false);
   const card = buildSimEewCard({ eventId: "e", est: { lat: 35, lon: 139, depthKm: 20, magnitude: 5, originTime: T0 }, evaluated: one, place: "X", simTestId: "t1", nowMs: T0 });

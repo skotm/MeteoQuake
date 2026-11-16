@@ -193,3 +193,29 @@ test("M1.0・深さ10kmの報はPLUM法として扱う", () => {
   assert.equal(normal.isPlum, false);
   assert.equal(normal.areas.some((a: any) => a.isPlum), false);
 });
+
+test("警報の対象地域: 予報の段階は対象地域なし。警報になる報で震度4以上の地域がまとめて入る", () => {
+  const j = JSON.parse(sampleJson());
+  const area = (name: string, k: string) => ({ name, minIntensityKey: k, maxIntensityKey: k, openEnded: false });
+  j.normalized.reports = [
+    { serial: 1, issuedAtMs: ORIGIN + 10_000, maxIntensityKey: "1", maxIntensityOpenEnded: true, areas: [] },
+    { serial: 2, issuedAtMs: ORIGIN + 20_000, maxIntensityKey: "4", areas: [area("A", "4"), area("B", "3")] },
+    { serial: 3, issuedAtMs: ORIGIN + 30_000, maxIntensityKey: "5-", areas: [area("A", "4"), area("C", "5-"), area("D", "4"), area("B", "3")] },
+    // 震度4の地域だけが増える続報: 対象地域は増えない
+    { serial: 4, issuedAtMs: ORIGIN + 40_000, maxIntensityKey: "5-", areas: [area("A", "4"), area("C", "5-"), area("E", "4")] },
+    // 新たに震度5弱以上の地域が出る続報: その時点の震度4の地域(E, F)もまとめて加わる
+    { serial: 5, issuedAtMs: ORIGIN + 50_000, maxIntensityKey: "5+", areas: [area("C", "5-"), area("G", "5+"), area("E", "4"), area("F", "4")] },
+  ];
+  const d = parseReplayEewJson(JSON.stringify(j));
+  const at = (sec: number) => buildReplayEewAt(d, ORIGIN + sec * 1000)[0];
+  const names = (c: any) => c.areas.map((a: any) => a.name).sort();
+  assert.equal(at(10).isWarnLevel, false);
+  assert.deepEqual(at(10).areas, []);
+  assert.equal(at(10).maxIntensityKey, "1");
+  assert.equal(at(20).isWarnLevel, false);
+  assert.deepEqual(at(20).areas, []);
+  assert.equal(at(30).isWarnLevel, true);
+  assert.deepEqual(names(at(30)), ["A", "C", "D"]); // Bは震度3なので入らない
+  assert.deepEqual(names(at(40)), ["A", "C", "D"]); // Eは震度4だけの増加なので入らない
+  assert.deepEqual(names(at(50)), ["A", "C", "D", "E", "F", "G"]);
+});
