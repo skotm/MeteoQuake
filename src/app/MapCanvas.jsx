@@ -1754,7 +1754,13 @@ export function MapCanvas({
       ? new Set()
       : buildDetectedStationIdSet(lastShakeEventsRef.current);
     const features = realtimeStations
-      .filter((s) => realtimeValues.has(s.id) && realtimeValues.get(s.id) >= realtimeIntensityThreshold)
+      .filter((s) => {
+        if (!realtimeValues.has(s.id)) return false;
+        const v = realtimeValues.get(s.id);
+        // 震度階級換算表示では、計測震度0.0未満(震度0よりさらに小さい揺れ)の観測点は表示しない。
+        if (replayJmaColorEnabled && v < 0) return false;
+        return v >= realtimeIntensityThreshold;
+      })
       .map((s) => {
         const value = realtimeValues.get(s.id);
         const useIcon = replayJmaColorEnabled && !realtimeRisingEnabled && value >= 0.5;
