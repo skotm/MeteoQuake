@@ -219,3 +219,71 @@ test("警報の対象地域: 予報の段階は対象地域なし。警報にな
   assert.deepEqual(names(at(40)), ["A", "C", "D"]); // Eは震度4だけの増加なので入らない
   assert.deepEqual(names(at(50)), ["A", "C", "D", "E", "F", "G"]);
 });
+
+test("発生時刻が分単位の履歴は、検知時刻の少し前と推定する", async () => {
+  const { ORIGIN_BEFORE_DETECTION_MS } = await import("../src/replayEew.ts");
+  const minuteStart = Date.UTC(2026, 10, 6, 10, 39, 0);
+  const detection = minuteStart + 37_900;
+  const j = JSON.parse(sampleJson());
+  j.normalized.event.originTimeMs = minuteStart;
+  j.normalized.event.originTimePrecision = "minute";
+  j.normalized.event.detectionTimeMs = detection;
+  j.normalized.reports = [{ serial: 1, issuedAtMs: detection + 4700, maxIntensityKey: "2", maxIntensityOpenEnded: true, areas: [] }];
+  const d = parseReplayEewJson(JSON.stringify(j));
+  assert.equal(d.originTimeMs, detection - ORIGIN_BEFORE_DETECTION_MS);
+  assert.equal(replayStartMs0(d), detection - ORIGIN_BEFORE_DETECTION_MS);
+  assert.ok(d.warnings.some((w) => /推定/.test(w)));
+  // 検知が分の先頭に近い時は、分の先頭より前にしない
+  j.normalized.event.detectionTimeMs = minuteStart + 3000;
+  const d2 = parseReplayEewJson(JSON.stringify(j));
+  assert.equal(d2.originTimeMs, minuteStart);
+  // 秒まである発生時刻は、そのまま使う
+  j.normalized.event.originTimePrecision = "second";
+  j.normalized.event.originTimeMs = minuteStart + 12_300;
+  assert.equal(parseReplayEewJson(JSON.stringify(j)).originTimeMs, minuteStart + 12_300);
+});
+import { replayStartMs as replayStartMs0 } from "../src/replayEew.ts";
+
+test("複数のEEW: 同時に出し、新しい地震を先頭に。震度ファイルと重なるものだけ範囲を延ばす", async () => {
+  const { buildReplayEewsAt, extendFramesForEews, replayStartForList, eewListRange, buildEewOnlyFramesFor, eewOverlapsRange } = await import("../src/replayEew.ts");
+  const mk = (id: string, origin: number, name: string) => {
+    const j = JSON.parse(sampleJson());
+    j.normalized.event.eventId = id;
+    j.normalized.event.originTimeMs = origin;
+    j.normalized.event.hypocenterName = name;
+    j.normalized.reports = [
+      { serial: 1, issuedAtMs: origin + 5_000, maxIntensityKey: "5-", areas: [{ name: "A", minIntensityKey: "5-", maxIntensityKey: "5-", openEnded: false }] },
+      { serial: 2, issuedAtMs: origin + 12_000, maxIntensityKey: "5-", areas: [{ name: "A", minIntensityKey: "5-", maxIntensityKey: "5-", openEnded: false }] },
+    ];
+    return parseReplayEewJson(JSON.stringify(j));
+  };
+  const a = mk("a", ORIGIN, "地震A");
+  const b = mk("b", ORIGIN + 20_000, "地震B"); // Aの最終報の後(90秒は表示が残る)に始まる
+  // 同時に出ている間は、新しい地震が先頭
+  const both = buildReplayEewsAt([a, b], ORIGIN + 30_000);
+  assert.deepEqual(both.map((c: any) => c.place), ["地震B", "地震A"]);
+  assert.equal(both[0].eventId, "replay_b");
+  // Aが消えた後はBだけ
+  assert.deepEqual(buildReplayEewsAt([a, b], ORIGIN + 12_000 + REPLAY_EEW_KEEP_MS + 1).map((c: any) => c.place), ["地震B"]);
+  assert.deepEqual(buildReplayEewsAt([], ORIGIN), []);
+  // 始まりは、範囲内で最も早い発生時刻
+  assert.equal(replayStartForList([a, b], ORIGIN - 1000, ORIGIN + 1_000_000), ORIGIN);
+  assert.equal(replayStartForList([a, b], ORIGIN + 10_000, ORIGIN + 1_000_000), ORIGIN + 20_000);
+  assert.equal(replayStartForList([a, b], ORIGIN + 500_000, ORIGIN + 1_000_000), null);
+  // 震度ファイル(発生の30秒後から10分間)と重なるのはBだけ、のような時、重なるものの範囲まで延ばす
+  const frameAt = (ms: number) => ({ dataTime: new Date(ms), entries: [] });
+  const bin = [frameAt(ORIGIN + 20_000), frameAt(ORIGIN + 600_000)];
+  assert.equal(eewOverlapsRange(a, bin[0].dataTime.getTime(), bin[1].dataTime.getTime()), false);
+  assert.equal(eewOverlapsRange(b, bin[0].dataTime.getTime(), bin[1].dataTime.getTime()), true);
+  const ext = extendFramesForEews(bin, [a, b]);
+  assert.ok(ext[0].dataTime.getTime() <= ORIGIN + 20_000 - 1000 || ext[0].dataTime.getTime() === ORIGIN + 20_000);
+  // Aだけなら範囲外なのでそのまま
+  assert.equal(extendFramesForEews(bin, [a]), bin);
+  // EEWだけの再生: 全ファイルの範囲を1つの時計で
+  const r = eewListRange([a, b]);
+  assert.equal(r.startMs, a.startMs);
+  assert.equal(r.endMs, b.endMs);
+  const frames = buildEewOnlyFramesFor([a, b]);
+  assert.equal(frames[0].dataTime.getTime(), Math.floor(a.startMs / 1000) * 1000);
+  assert.ok(frames[frames.length - 1].dataTime.getTime() >= b.endMs);
+});
