@@ -3613,8 +3613,6 @@ export default function App() {
                   onChangeShakeDetectionEnabled={handleChangeShakeDetectionEnabled}
                   weakArrayDetectionEnabled={weakArrayDetectionEnabled}
                   onChangeWeakArrayDetectionEnabled={handleChangeWeakArrayDetectionEnabled}
-              shakeEventCardsEnabled={shakeEventCardsEnabled}
-              onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
                   shakeEventCardsEnabled={shakeEventCardsEnabled}
                   onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
                   cameraSettings={cameraSettings}
@@ -3774,6 +3772,8 @@ export default function App() {
               onChangeShakeDetectionEnabled={handleChangeShakeDetectionEnabled}
               weakArrayDetectionEnabled={weakArrayDetectionEnabled}
               onChangeWeakArrayDetectionEnabled={handleChangeWeakArrayDetectionEnabled}
+              shakeEventCardsEnabled={shakeEventCardsEnabled}
+              onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
               cameraSettings={cameraSettings}
               onChangeCameraSettings={handleChangeCameraSettings}
               epicenterEstimationEnabled={epicenterEstimationEnabled}
