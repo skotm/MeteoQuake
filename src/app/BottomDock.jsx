@@ -2458,7 +2458,12 @@ export function BottomDock({
       {(() => {
         const GlassOrPlain = isWide ? "div" : Glass;
         const glassProps = isWide
-          ? { ref: wideContentRef, "data-floating-panel": "dock", style: { width: "clamp(240px, 30vw, 380px)", height: "100%", overflow: "hidden", position: "relative" } }
+          ? { ref: wideContentRef, "data-floating-panel": "dock", style: {
+            width: "clamp(240px, 30vw, 380px)", height: "100%", overflow: "hidden", position: "relative",
+            // 外側のガラス(App.jsxのGlass radius=28)の右側の角丸に合わせて中身も切り抜く。
+            // これが無いと、スクロールする中身(行の背景など)が右下・右上の角で外枠からはみ出して見える。
+            borderRadius: "0 28px 28px 0",
+          } }
           : {
               "data-floating-panel": "dock", // 視点移動(mapFocus.js)が、フローティングに隠れる範囲を実測するための目印
               filterSize: settled ? "normal" : "none",
