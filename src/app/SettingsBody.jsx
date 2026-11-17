@@ -651,7 +651,7 @@ export function SettingsBody({
           <SettingsCard>
             <SettingsToggleRow
               label="リプレイ時刻の地震情報を再現"
-              description="地震タブの一覧を、リプレイ時刻にMeteoQuakeを開いていた場合の並びにします。リプレイ開始の7日前〜終了の地震を取得し(P2P地震情報、無ければ気象庁 震度データベース)、リプレイ時間内の地震は発生の1分30秒後に震度速報、その1分後に震源情報、さらに1分後に詳細を出します(震度2以下は3分30秒後に詳細のみ)。"
+              description="地震タブの一覧を、リプレイ時刻にMeteoQuakeを開いていた場合の並びにします。リプレイ開始の7日前〜終了の地震を取得し(P2P地震情報、無ければ気象庁 震度データベース)、リプレイ時間内の地震は、震度に関わらず発生の3分30秒後に詳細の地震情報だけを出します。"
               checked={replayPastQuakesEnabled}
               onChange={() => onChangeReplayPastQuakesEnabled(!replayPastQuakesEnabled)}
             />
