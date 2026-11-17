@@ -90,6 +90,7 @@ export function BottomDock({
   shakeDetectionEnabled, onChangeShakeDetectionEnabled,
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
   shakeEventCardsEnabled = true, onChangeShakeEventCardsEnabled,
+  displayInsets, onOpenDisplayAreaEditor,
   cameraSettings, onChangeCameraSettings,
   epicenterEstimationEnabled, onChangeEpicenterEstimationEnabled,
   gridDetectionEnabled, onChangeGridDetectionEnabled, gridCellsVisible, onChangeGridCellsVisible, detectedOutlineEnabled, onChangeDetectedOutlineEnabled,
@@ -2807,6 +2808,8 @@ export function BottomDock({
                   onChangeShakeDetectionEnabled={onChangeShakeDetectionEnabled}
                   weakArrayDetectionEnabled={weakArrayDetectionEnabled}
                   onChangeWeakArrayDetectionEnabled={onChangeWeakArrayDetectionEnabled}
+                  displayInsets={displayInsets}
+                  onOpenDisplayAreaEditor={onOpenDisplayAreaEditor}
                   shakeEventCardsEnabled={shakeEventCardsEnabled}
                   onChangeShakeEventCardsEnabled={onChangeShakeEventCardsEnabled}
                   cameraSettings={cameraSettings}

@@ -56,6 +56,7 @@ export function SettingsBody({
   shakeDetectionEnabled, onChangeShakeDetectionEnabled,
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
   shakeEventCardsEnabled, onChangeShakeEventCardsEnabled,
+  displayInsets, onOpenDisplayAreaEditor,
   epicenterEstimationEnabled, onChangeEpicenterEstimationEnabled,
   gridDetectionEnabled = false, onChangeGridDetectionEnabled = () => {}, gridCellsVisible = true, onChangeGridCellsVisible = () => {}, detectedOutlineEnabled = false, onChangeDetectedOutlineEnabled = () => {}, cmtFetchSources = { jma: true, usgs: true }, onChangeCmtFetchSources = () => {},
   showLowConfidenceEstimates, onChangeShowLowConfidenceEstimates,
@@ -710,6 +711,21 @@ export function SettingsBody({
             onChange={() => onChangeGlassOpaqueOverride(glassOpaqueEnabled ? "off" : "on")}
             disabled={glassOpaqueSuspectedBroken}
           />
+        </SettingsCard>
+        <SettingsCard>
+          <div style={{ padding: "12px 16px" }}>
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>表示領域</div>
+            <div style={{ fontSize: 12.5, lineHeight: 1.6, opacity: 0.7, marginBottom: 10 }}>
+              デバイスの画面内にアプリを表示する領域を、ピンチ操作で変えられます(初期設定は全画面)。
+              {displayInsets && (displayInsets.top || displayInsets.right || displayInsets.bottom || displayInsets.left)
+                ? ` 現在の余白: 上${displayInsets.top} 下${displayInsets.bottom} 左${displayInsets.left} 右${displayInsets.right}`
+                : " 現在: 全画面"}
+            </div>
+            <button
+              onClick={onOpenDisplayAreaEditor}
+              style={{ font: "inherit", fontSize: 14, fontWeight: 600, padding: "9px 16px", borderRadius: 10, border: "none", background: "#0A84FF", color: "#fff", cursor: "pointer" }}
+            >表示領域を調整</button>
+          </div>
         </SettingsCard>
       </>
     );
