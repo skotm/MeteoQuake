@@ -3363,7 +3363,9 @@ export default function App() {
           <div style={isWide ? {
             position: "absolute",
             right: 16,
-            bottom: "calc(16px + env(safe-area-inset-bottom))",
+            // 横画面の左のフローティング(パネル・時刻バッジ)は bottom:16 固定なので、下端を揃えるため
+            // ここにも安全領域(env)を足さない。
+            bottom: 16,
             zIndex: 30,
             display: "flex",
             flexDirection: "column",
