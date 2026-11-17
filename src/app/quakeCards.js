@@ -323,7 +323,9 @@ export function dedupeQuakeList(list) {
 //   「これ以上遡れない」とみなして打ち切る。
 const P2PQUAKE_API_PAGE_SIZE = 100;
 
-export async function fetchRecentQuakes(limit = QUAKE_FETCH_LIMIT_DEFAULT) {
+// stopOlderThanMs: 指定すると、そのページの最も古い地震がこの時刻(UTCミリ秒)より古くなった時点で
+// それ以上ページを遡らない(リプレイ用に必要な期間だけを取る時に、無駄なリクエストを減らすため)。
+export async function fetchRecentQuakes(limit = QUAKE_FETCH_LIMIT_DEFAULT, stopOlderThanMs = null) {
   const target = clampQuakeFetchLimit(limit);
   const results = [];
   const seenIds = new Set();
@@ -345,6 +347,13 @@ export async function fetchRecentQuakes(limit = QUAKE_FETCH_LIMIT_DEFAULT) {
 
     // 返ってきた件数がリクエストしたページサイズより少なければ、これ以上古い情報は無い
     if (page.length < pageSize) break;
+
+    if (stopOlderThanMs != null) {
+      const oldestInPage = Math.min(...page
+        .map(item => new Date(item?.earthquake?.time).getTime())
+        .filter(Number.isFinite));
+      if (Number.isFinite(oldestInPage) && oldestInPage < stopOlderThanMs) break;
+    }
   }
 
   // 以前は「震源(hypocenter.name)が無いレコード」を丸ごと除外していたが、

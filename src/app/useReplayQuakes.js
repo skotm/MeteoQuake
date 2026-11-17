@@ -11,8 +11,12 @@ import { parseQuakeTimeMs, replayQuakeFetchRange, toJstDateAndTime } from "../re
    段階表示(震度速報→震源情報→詳細)への加工は replayQuakes.ts の replayQuakesAt が行う。
    ───────────────────────────────────────────────────── */
 const P2P_FETCH_LIMIT = 1000;
+const P2P_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const EQDB_DETAIL_CONCURRENCY = 3;
 const EQDB_MAX_ITEMS = 300;
+// 詳細(震源座標・震度分布)を取得する件数の上限。リプレイ時間内の地震を先頭にして、残りは新しい順。
+const EQDB_MAX_DETAILS = 120;
+const DETAIL_FLUSH_MS = 400;
 
 export function useReplayQuakes({ enabled, startMs, endMs, stations, areasGeoJSON }) {
   const [source, setSource] = useState(null); // "p2p" | "eqdb" | null
@@ -31,8 +35,11 @@ export function useReplayQuakes({ enabled, startMs, endMs, stations, areasGeoJSO
 
     (async () => {
       // 1) P2P地震情報。取得できた最も古い地震が、リプレイ開始より前なら期間を覆えているとみなす。
+      // リプレイが現在から7日より前なら、P2P地震情報の保持期間外なので最初からeqdbだけを使う。
+      const p2pAvailable = Date.now() - startMs <= P2P_RETENTION_MS;
       try {
-        const list = await fetchRecentQuakes(P2P_FETCH_LIMIT);
+        if (!p2pAvailable) throw new Error("リプレイが7日より前のためP2P地震情報は使わない");
+        const list = await fetchRecentQuakes(P2P_FETCH_LIMIT, fromMs);
         const times = list.map(q => parseQuakeTimeMs(q.time)).filter(t => t != null);
         const oldest = times.length ? Math.min(...times) : null;
         if (oldest != null && oldest <= startMs) {
@@ -44,7 +51,7 @@ export function useReplayQuakes({ enabled, startMs, endMs, stations, areasGeoJSO
           return;
         }
       } catch (err) {
-        console.warn("[replay-quakes] P2P地震情報の取得に失敗。eqdbにフォールバックします:", err);
+        if (p2pAvailable) console.warn("[replay-quakes] P2P地震情報の取得に失敗。eqdbにフォールバックします:", err);
       }
       if (cancelled) return;
 
@@ -59,17 +66,34 @@ export function useReplayQuakes({ enabled, startMs, endMs, stations, areasGeoJSO
         const items = errMsg || !Array.isArray(list) ? [] : list.slice(0, EQDB_MAX_ITEMS);
         setEqdbList(items); setSource("eqdb"); setStatus(items.length ? "ready" : "empty");
         // 観測点別の詳細(震源座標・震度分布)は、少しずつバックグラウンドで取得する。
+        // リプレイ時間内の地震を先にして、残りは新しい順。件数にも上限を設ける。
+        const inWindow = (it) => {
+          const t = parseQuakeTimeMs(`${it.id.slice(0, 4)}/${it.id.slice(4, 6)}/${it.id.slice(6, 8)} ${it.id.slice(8, 10)}:${it.id.slice(10, 12)}:${it.id.slice(12, 14)}`);
+          return t != null && t >= startMs && t <= endMs;
+        };
+        const queue = [...items.filter(inWindow), ...items.filter(it => !inWindow(it))].slice(0, EQDB_MAX_DETAILS);
+        // 到着のたびにsetStateすると、その都度一覧全体を作り直して重くなるため、まとめて反映する。
+        let pending = new Map();
+        let timer = null;
+        const flush = () => {
+          timer = null;
+          if (cancelled || pending.size === 0) return;
+          const batch = pending; pending = new Map();
+          setDetails(prev => { const m = new Map(prev); for (const [k, v] of batch) m.set(k, v); return m; });
+        };
         let next = 0;
         const worker = async () => {
-          while (!cancelled && next < items.length) {
-            const item = items[next++];
+          while (!cancelled && next < queue.length) {
+            const item = queue[next++];
             try {
               const detail = await fetchEqdbEventCached(item.id);
-              if (detail && !cancelled) setDetails(prev => new Map(prev).set(item.id, detail));
+              if (detail) { pending.set(item.id, detail); if (!timer) timer = setTimeout(flush, DETAIL_FLUSH_MS); }
             } catch { /* 1件の失敗は無視(一覧のプレビューのまま) */ }
           }
         };
         await Promise.all(Array.from({ length: EQDB_DETAIL_CONCURRENCY }, worker));
+        if (timer) clearTimeout(timer);
+        flush();
       } catch (err) {
         console.warn("[replay-quakes] eqdbの取得に失敗。地震一覧は空のままリプレイします:", err);
         if (!cancelled) setStatus("empty");
@@ -78,9 +102,19 @@ export function useReplayQuakes({ enabled, startMs, endMs, stations, areasGeoJSO
     return () => { cancelled = true; };
   }, [rangeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 詳細から作った地震カードは、idごとにキャッシュする。buildEqdbQuakeCardは観測点の名前解決を
+  // 行うため重く、詳細が届くたびに全件を作り直すと読み込み中にカクつくので、新しい分だけ作る。
+  const builtRef = useRef(new Map());
+  useEffect(() => { builtRef.current = new Map(); }, [rangeKey, stations, areasGeoJSON]);
   const eqdbCards = useMemo(() => eqdbList.map(item => {
+    const cached = builtRef.current.get(item.id);
+    if (cached) return cached;
     const detail = details.get(item.id);
-    if (detail && stations && areasGeoJSON) return buildEqdbQuakeCard(detail, item, stations, areasGeoJSON);
+    if (detail && stations && areasGeoJSON) {
+      const card = buildEqdbQuakeCard(detail, item, stations, areasGeoJSON);
+      builtRef.current.set(item.id, card);
+      return card;
+    }
     // 詳細が届くまでは、一覧の情報だけのプレビュー。idは詳細カードと揃えて、選択が外れないようにする。
     return { ...eqdbListItemToPreview(item), id: `eqdb_${item.id}`, points: [], domesticTsunami: "None" };
   }), [eqdbList, details, stations, areasGeoJSON]);

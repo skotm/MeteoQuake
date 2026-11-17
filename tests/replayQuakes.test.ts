@@ -37,7 +37,7 @@ test("一覧: 段階ごとの中身と、リプレイ開始前の地震は最終
   assert.equal(p[0].latitude, null);
   const d = at(T0 + 160_000)[0];
   assert.equal(d.stage, "destination");
-  assert.equal(d.maxIntensity, "?");
+  assert.equal(d.maxIntensity, "6+"); // 震度速報の最大震度を引き続き表示
   assert.equal(d.latitude, 37);
   assert.deepEqual(d.points, []);
   const f = at(T0 + 220_000)[0];
