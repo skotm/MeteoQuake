@@ -351,9 +351,9 @@ export default function App() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   const areaLayout = useMemo(() => computeAreaLayout(displayInsets, windowSize.w, windowSize.h), [displayInsets, windowSize]);
-  // レイアウト判定(横画面か等)は、縮小後の見かけ上の画面の大きさを使うため、子の描画より先に共有する。
+  // 画面サイズ依存の配置計算(横画面か等)が使う「画面の大きさ」を、領域の大きさに切り替える。子の描画より先に共有する。
   useLayoutEffect(() => {
-    setLogicalViewport(isFullScreen(displayInsets) ? null : { width: areaLayout.logicalWidth, height: areaLayout.logicalHeight, scale: areaLayout.scale });
+    setLogicalViewport(isFullScreen(displayInsets) ? null : { width: areaLayout.width, height: areaLayout.height });
     return () => setLogicalViewport(null);
   }, [displayInsets, areaLayout]);
   function handleApplyDisplayInsets(next) {
@@ -3124,12 +3124,12 @@ export default function App() {
       <div style={isFullScreen(displayInsets)
         ? { height: "100%", position: "relative", overflow: "hidden", background: themeContextValue.tokens.pageBg }
         : {
-            // 表示領域を狭めている間。全画面で見た時と同じ見た目のまま、領域に合わせて比例して縮小する。
-            // transformにより、position:fixedの子要素(フローティング等)もこの領域を基準に配置される。
+            // 表示領域を狭めている間。領域の大きさをそのまま「画面の大きさ」として扱う(拡大縮小はしない)。
+            // 横画面レイアウトへの切り替えなど、元々ある画面サイズ依存の配置計算が、この大きさで働く。
+            // contain:layoutで、position:fixedの子要素(フローティング等)もこの領域を基準に配置される。
             position: "absolute", left: areaLayout.left, top: areaLayout.top,
-            width: areaLayout.logicalWidth, height: areaLayout.logicalHeight,
-            transform: `scale(${areaLayout.scale})`, transformOrigin: "0 0",
-            overflow: "hidden", background: themeContextValue.tokens.pageBg,
+            width: areaLayout.width, height: areaLayout.height,
+            contain: "layout", overflow: "hidden", background: themeContextValue.tokens.pageBg,
           }}>
 
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}

@@ -1388,7 +1388,7 @@ export function BottomDock({
 
 
   // 画面の高さ — 「全画面」スナップの基準になる
-  // (表示領域を狭めている間は、その見かけ上の画面の高さ)
+  // (表示領域を狭めている間は、その領域の高さ)
   const viewportH = useLogicalViewport().height;
 
   const NAV_ROW_HEIGHT  = 66; // ナビ行の固定高さ(58pxボタン + 上下4pxパディング)

@@ -57,22 +57,17 @@ export function sanitizeInsets(raw: unknown): Insets {
 export interface AreaLayout {
   /** 領域の左上(画面上の位置、px) */
   left: number; top: number;
-  /** 領域の実際の大きさ(画面上、px) */
+  /** 領域の大きさ(px)。アプリはこの大きさを「画面の大きさ」として扱い、元々ある画面サイズ依存の
+   *  配置計算(横画面レイアウトへの切り替え・画面の高さに応じた縮小・全画面スナップの高さなど)を
+   *  この大きさで行う。CSSでの拡大縮小はしない。 */
   width: number; height: number;
-  /** UIの縮小率。1のとき全画面と同じ大きさ。 */
-  scale: number;
-  /** UIが「見かけ上」使う画面の大きさ(= 領域の大きさ ÷ scale)。レイアウト判定に使う。 */
-  logicalWidth: number; logicalHeight: number;
 }
 
-/**
- * 表示領域に合わせたUIの縮小。領域が全画面より小さいとき、全画面で見た時と同じ見た目(文字・余白・
- * フローティングの大きさ)のまま比例して小さくする。縮小率は縦横のうち厳しい方に合わせ、
- * 領域の縦横比に合わせてレイアウト上の画面の大きさ(logical)を決める。
- */
 export function computeAreaLayout(i: Insets, vw: number, vh: number): AreaLayout {
-  const width = Math.max(vw - i.left - i.right, 1);
-  const height = Math.max(vh - i.top - i.bottom, 1);
-  const scale = Math.min(1, width / vw, height / vh);
-  return { left: i.left, top: i.top, width, height, scale, logicalWidth: width / scale, logicalHeight: height / scale };
+  return {
+    left: i.left,
+    top: i.top,
+    width: Math.max(vw - i.left - i.right, 1),
+    height: Math.max(vh - i.top - i.bottom, 1),
+  };
 }

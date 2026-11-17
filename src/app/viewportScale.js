@@ -1,17 +1,16 @@
 import { useSyncExternalStore } from "react";
 
 /* ─────────────────────────────────────────────────────
-   表示領域を狭めている間の「見かけ上の画面の大きさ」。
-   アプリ全体をCSSのscaleで縮小して表示するため、window.innerWidth/Heightは実際の画面の
-   大きさのままで、UIのレイアウト判定(横画面か・画面の高さに対する縮小率など)には
-   使えない。それらは、ここで持つlogical(=領域の大きさ ÷ 縮小率)を使う。
-   全画面の間(scale=1)は、実際のwindowの大きさと同じになる。
+   表示領域を狭めている間の「画面の大きさ」。アプリはこの領域を画面として扱うため、
+   window.innerWidth/Heightのままでは、画面サイズに応じた配置計算(横画面レイアウトか・
+   画面の高さに応じた縮小・全画面スナップの高さ)が領域の大きさと合わなくなる。
+   それらは、ここで持つ領域の大きさを使う。全画面の間(null)は、実際のwindowの大きさ。
    ───────────────────────────────────────────────────── */
-let state = null; // { width, height, scale } | null(null=window基準)
+let state = null; // { width, height } | null(null=window基準)
 const listeners = new Set();
 
 export function setLogicalViewport(next) {
-  const same = state && next && state.width === next.width && state.height === next.height && state.scale === next.scale;
+  const same = state && next && state.width === next.width && state.height === next.height;
   if (same || (state === null && next === null)) return;
   state = next;
   listeners.forEach(l => l());
