@@ -12,7 +12,7 @@ import { Filters, LAYERS } from "./app/navigation";
 import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layoutHooks";
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
 import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, computeGlareGuard, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
-import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
+import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
 import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
 import { loadEpicenterNamesData, loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
@@ -29,6 +29,8 @@ import {
 } from "./app/simEewRules";
 import { SIM_LOG_MAX, makeSimLogEntry } from "./app/simEewLog";
 import { buildTestQuakeStageCard, calcTestEewAreasByAttenuation, isTestWarnLevel, formatTestQuakeNow, testQuakeTimeFromInput, testQuakeTimeToInput } from "./app/testSimulation";
+import DisplayAreaEditor from "./app/DisplayAreaEditor";
+import { isFullScreen } from "./displayArea";
 import { useReplayQuakes } from "./app/useReplayQuakes";
 import { replayQuakesAt, replayQuakeSignature } from "./replayQuakes";
 import { dedupeQuakeList, fetchRecentQuakes, mergeQuakeCards } from "./app/quakeCards";
@@ -334,6 +336,18 @@ export default function App() {
   function handleChangeShakeEventCardsEnabled(next) {
     setShakeEventCardsEnabledState(next);
     saveShakeEventCardsEnabled(next);
+  }
+
+  // アプリを表示する領域(画面内の余白)。デフォルトは余白0=全画面。設定の「表示領域」で
+  // ピンチ操作の調整画面を開いて変える。
+  const [displayInsets, setDisplayInsetsState] = useState(loadStoredDisplayInsets);
+  const [displayAreaEditing, setDisplayAreaEditing] = useState(false);
+  function handleApplyDisplayInsets(next) {
+    setDisplayInsetsState(next);
+    saveDisplayInsets(next);
+    setDisplayAreaEditing(false);
+    // 地図などが領域の変化に追従して描き直されるよう、リサイズを通知する。
+    setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
   }
 
   // 配列型の微弱検知(ごく弱い揺れの検知)を使うか。リアルタイムタブの設定。デフォルトON。
@@ -3089,7 +3103,17 @@ export default function App() {
         <ConsentGate storedConsent={consent} onAgree={handleAgreeConsent}/>
       )}
 
-      <div style={{ height: "100%", position: "relative", overflow: "hidden", background: themeContextValue.tokens.pageBg }}>
+      {displayAreaEditing && (
+        <DisplayAreaEditor insets={displayInsets} onDone={handleApplyDisplayInsets} onCancel={() => setDisplayAreaEditing(false)}/>
+      )}
+
+      <div style={isFullScreen(displayInsets)
+        ? { height: "100%", position: "relative", overflow: "hidden", background: themeContextValue.tokens.pageBg }
+        : {
+            // 表示領域を狭めている間。contain:layoutで、position:fixedの子要素もこの領域を基準にする。
+            position: "absolute", top: displayInsets.top, right: displayInsets.right, bottom: displayInsets.bottom, left: displayInsets.left,
+            overflow: "hidden", contain: "layout", background: themeContextValue.tokens.pageBg, borderRadius: 4,
+          }}>
 
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
         <MapCanvas
@@ -3613,6 +3637,8 @@ export default function App() {
                   onChangeShakeDetectionEnabled={handleChangeShakeDetectionEnabled}
                   weakArrayDetectionEnabled={weakArrayDetectionEnabled}
                   onChangeWeakArrayDetectionEnabled={handleChangeWeakArrayDetectionEnabled}
+                  displayInsets={displayInsets}
+                  onOpenDisplayAreaEditor={() => setDisplayAreaEditing(true)}
                   shakeEventCardsEnabled={shakeEventCardsEnabled}
                   onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
                   cameraSettings={cameraSettings}
@@ -3772,6 +3798,8 @@ export default function App() {
               onChangeShakeDetectionEnabled={handleChangeShakeDetectionEnabled}
               weakArrayDetectionEnabled={weakArrayDetectionEnabled}
               onChangeWeakArrayDetectionEnabled={handleChangeWeakArrayDetectionEnabled}
+              displayInsets={displayInsets}
+              onOpenDisplayAreaEditor={() => setDisplayAreaEditing(true)}
               shakeEventCardsEnabled={shakeEventCardsEnabled}
               onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
               cameraSettings={cameraSettings}

@@ -1,3 +1,4 @@
+import { sanitizeInsets } from "../displayArea";
 import { MIN_INTENSITY as SHINDO_MIN_INTENSITY, MAX_INTENSITY as SHINDO_MAX_INTENSITY } from "../shindoColorScale";
 import { BOUNDARY_LINE_COLORS } from "./stationIcons";
 import { MAP_COLOR_ITEMS } from "./theme";
@@ -628,5 +629,26 @@ export function saveReplayPastQuakesEnabled(enabled) {
     localStorage.setItem(REPLAY_PAST_QUAKES_ENABLED_STORAGE_KEY, String(enabled));
   } catch (err) {
     console.warn("リプレイの地震一覧再現の設定を保存できませんでした:", err);
+  }
+}
+
+/* アプリを表示する領域の余白(上下左右、px)。デフォルトは全て0(全画面)。 */
+const DISPLAY_INSETS_STORAGE_KEY = "displayInsets";
+
+export function loadStoredDisplayInsets() {
+  try {
+    const raw = localStorage.getItem(DISPLAY_INSETS_STORAGE_KEY);
+    if (raw) return sanitizeInsets(JSON.parse(raw));
+  } catch (err) {
+    console.warn("表示領域の設定を読み込めませんでした:", err);
+  }
+  return { top: 0, right: 0, bottom: 0, left: 0 };
+}
+
+export function saveDisplayInsets(insets) {
+  try {
+    localStorage.setItem(DISPLAY_INSETS_STORAGE_KEY, JSON.stringify(insets));
+  } catch (err) {
+    console.warn("表示領域の設定を保存できませんでした:", err);
   }
 }
