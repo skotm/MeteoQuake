@@ -36,15 +36,7 @@ test("保存値の読み込みは不正な値を0にする", () => {
 });
 
 import { computeAreaLayout } from "../src/displayArea.ts";
-test("領域に合わせたUIの縮小(全画面と同じ見た目のまま比例して小さくする)", () => {
-  const full = computeAreaLayout(ZERO_INSETS, 400, 800);
-  assert.equal(full.scale, 1);
-  assert.equal(full.logicalWidth, 400);
-  const half = computeAreaLayout({ top: 200, right: 100, bottom: 200, left: 100 }, 400, 800); // 200x400
-  assert.equal(half.scale, 0.5);
-  assert.deepEqual([half.logicalWidth, half.logicalHeight], [400, 800]);
-  // 縦長でない領域(横が広い): 厳しい方(縦)に合わせ、横は見かけ上の幅が広がる
-  const wide = computeAreaLayout({ top: 0, right: 0, bottom: 400, left: 0 }, 400, 800); // 400x400
-  assert.equal(wide.scale, 0.5);
-  assert.deepEqual([wide.logicalWidth, wide.logicalHeight], [800, 800]);
+test("表示領域の大きさ = アプリが画面の大きさとして扱う大きさ", () => {
+  assert.deepEqual(computeAreaLayout(ZERO_INSETS, 400, 800), { left: 0, top: 0, width: 400, height: 800 });
+  assert.deepEqual(computeAreaLayout({ top: 200, right: 100, bottom: 100, left: 50 }, 400, 800), { left: 50, top: 200, width: 250, height: 500 });
 });
