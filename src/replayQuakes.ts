@@ -89,11 +89,10 @@ function asPrompt<T extends ReplayQuakeCardLike>(card: T): T {
 }
 
 function asDestination<T extends ReplayQuakeCardLike>(card: T): T {
-  // 震源は判明しているが、震度分布はまだ無い(最大震度は「調査中」)。
+  // 震源は判明しているが、震度分布(観測点別)はまだ無い。最大震度は震度速報で出た値を引き続き表示する。
   return {
     ...card,
     stage: "destination",
-    maxIntensity: "?",
     points: [],
     resolvedPoints: undefined,
     domesticTsunami: "Unknown",
