@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from "react";
 import { useRealtimeStream } from "./useRealtimeStream";
 import { useReplayPlayer } from "./useReplayPlayer";
 import { buildReplayEewsAt } from "./replayEew";
@@ -30,7 +30,8 @@ import {
 import { SIM_LOG_MAX, makeSimLogEntry } from "./app/simEewLog";
 import { buildTestQuakeStageCard, calcTestEewAreasByAttenuation, isTestWarnLevel, formatTestQuakeNow, testQuakeTimeFromInput, testQuakeTimeToInput } from "./app/testSimulation";
 import DisplayAreaEditor from "./app/DisplayAreaEditor";
-import { isFullScreen } from "./displayArea";
+import { computeAreaLayout, isFullScreen } from "./displayArea";
+import { setLogicalViewport } from "./app/viewportScale";
 import { useReplayQuakes } from "./app/useReplayQuakes";
 import { replayQuakesAt, replayQuakeSignature } from "./replayQuakes";
 import { dedupeQuakeList, fetchRecentQuakes, mergeQuakeCards } from "./app/quakeCards";
@@ -342,6 +343,19 @@ export default function App() {
   // ピンチ操作の調整画面を開いて変える。
   const [displayInsets, setDisplayInsetsState] = useState(loadStoredDisplayInsets);
   const [displayAreaEditing, setDisplayAreaEditing] = useState(false);
+  // 実際の画面の大きさ。表示領域に合わせたUIの縮小(areaLayout)の計算に使う。
+  const [windowSize, setWindowSize] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
+  useEffect(() => {
+    const onResize = () => setWindowSize({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const areaLayout = useMemo(() => computeAreaLayout(displayInsets, windowSize.w, windowSize.h), [displayInsets, windowSize]);
+  // レイアウト判定(横画面か等)は、縮小後の見かけ上の画面の大きさを使うため、子の描画より先に共有する。
+  useLayoutEffect(() => {
+    setLogicalViewport(isFullScreen(displayInsets) ? null : { width: areaLayout.logicalWidth, height: areaLayout.logicalHeight, scale: areaLayout.scale });
+    return () => setLogicalViewport(null);
+  }, [displayInsets, areaLayout]);
   function handleApplyDisplayInsets(next) {
     setDisplayInsetsState(next);
     saveDisplayInsets(next);
@@ -3110,9 +3124,12 @@ export default function App() {
       <div style={isFullScreen(displayInsets)
         ? { height: "100%", position: "relative", overflow: "hidden", background: themeContextValue.tokens.pageBg }
         : {
-            // 表示領域を狭めている間。contain:layoutで、position:fixedの子要素もこの領域を基準にする。
-            position: "absolute", top: displayInsets.top, right: displayInsets.right, bottom: displayInsets.bottom, left: displayInsets.left,
-            overflow: "hidden", contain: "layout", background: themeContextValue.tokens.pageBg, borderRadius: 4,
+            // 表示領域を狭めている間。全画面で見た時と同じ見た目のまま、領域に合わせて比例して縮小する。
+            // transformにより、position:fixedの子要素(フローティング等)もこの領域を基準に配置される。
+            position: "absolute", left: areaLayout.left, top: areaLayout.top,
+            width: areaLayout.logicalWidth, height: areaLayout.logicalHeight,
+            transform: `scale(${areaLayout.scale})`, transformOrigin: "0 0",
+            overflow: "hidden", background: themeContextValue.tokens.pageBg,
           }}>
 
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}

@@ -34,3 +34,17 @@ test("保存値の読み込みは不正な値を0にする", () => {
   assert.deepEqual(sanitizeInsets({ top: -5, right: "x", bottom: 12.4, left: NaN }), { top: 0, right: 0, bottom: 12, left: 0 });
   assert.deepEqual(sanitizeInsets(null), ZERO_INSETS);
 });
+
+import { computeAreaLayout } from "../src/displayArea.ts";
+test("領域に合わせたUIの縮小(全画面と同じ見た目のまま比例して小さくする)", () => {
+  const full = computeAreaLayout(ZERO_INSETS, 400, 800);
+  assert.equal(full.scale, 1);
+  assert.equal(full.logicalWidth, 400);
+  const half = computeAreaLayout({ top: 200, right: 100, bottom: 200, left: 100 }, 400, 800); // 200x400
+  assert.equal(half.scale, 0.5);
+  assert.deepEqual([half.logicalWidth, half.logicalHeight], [400, 800]);
+  // 縦長でない領域(横が広い): 厳しい方(縦)に合わせ、横は見かけ上の幅が広がる
+  const wide = computeAreaLayout({ top: 0, right: 0, bottom: 400, left: 0 }, 400, 800); // 400x400
+  assert.equal(wide.scale, 0.5);
+  assert.deepEqual([wide.logicalWidth, wide.logicalHeight], [800, 800]);
+});

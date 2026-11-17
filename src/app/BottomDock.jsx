@@ -1,3 +1,4 @@
+import { useLogicalViewport } from "./viewportScale";
 import { useCallback, useContext, useRef, useState, useEffect, useLayoutEffect, useMemo, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { EMPTY_EQDB_LIST, buildEqdbQuakeCard, fetchEqdbEventCached, fetchEqdbSearch, shouldShowNearbyQuakeButton } from "./eqdb";
@@ -1387,14 +1388,8 @@ export function BottomDock({
 
 
   // 画面の高さ — 「全画面」スナップの基準になる
-  const [viewportH, setViewportH] = useState(() =>
-    typeof window !== "undefined" ? window.innerHeight : 800
-  );
-  useEffect(() => {
-    function onResize() { setViewportH(window.innerHeight); }
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+  // (表示領域を狭めている間は、その見かけ上の画面の高さ)
+  const viewportH = useLogicalViewport().height;
 
   const NAV_ROW_HEIGHT  = 66; // ナビ行の固定高さ(58pxボタン + 上下4pxパディング)
   const BOTTOM_OFFSET   = 32; // 親側の bottom:16px+safeArea の概算
