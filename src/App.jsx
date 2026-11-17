@@ -12,7 +12,7 @@ import { Filters, LAYERS } from "./app/navigation";
 import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layoutHooks";
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
 import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, computeGlareGuard, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
-import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
+import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
 import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
 import { loadEpicenterNamesData, loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
@@ -29,6 +29,8 @@ import {
 } from "./app/simEewRules";
 import { SIM_LOG_MAX, makeSimLogEntry } from "./app/simEewLog";
 import { buildTestQuakeStageCard, calcTestEewAreasByAttenuation, isTestWarnLevel, formatTestQuakeNow, testQuakeTimeFromInput, testQuakeTimeToInput } from "./app/testSimulation";
+import { useReplayQuakes } from "./app/useReplayQuakes";
+import { replayQuakesAt, replayQuakeSignature } from "./replayQuakes";
 import { dedupeQuakeList, fetchRecentQuakes, mergeQuakeCards } from "./app/quakeCards";
 import { TSUNAMI_FETCH_LIMIT, TSUNAMI_HISTORY_PAGE_SIZE, dedupeTsunamiList, fetchJmaTsunamiHistory, fetchRecentTsunamis, fetchTsunamiHistoryPage, mergeTsunamiSources, tsunamiGradeInfo, tsunamiHeightBandColor } from "./app/tsunamiData";
 import { TEST_TSUNAMI_GRADE_OPTIONS } from "./app/testPanels";
@@ -294,6 +296,13 @@ export default function App() {
   // リプレイ再生中のみ選択できる、観測点の色を気象庁震度階級に換算して
   // 表示する設定のON/OFF。localStorageに永続化する。
   const [replayJmaColorEnabled, setReplayJmaColorEnabledState] = useState(loadStoredReplayJmaColorEnabled);
+
+  // リプレイ時刻の地震一覧の再現(既定ON)。
+  const [replayPastQuakesEnabled, setReplayPastQuakesEnabledState] = useState(loadStoredReplayPastQuakesEnabled);
+  function handleChangeReplayPastQuakesEnabled(next) {
+    setReplayPastQuakesEnabledState(next);
+    saveReplayPastQuakesEnabled(next);
+  }
 
   function handleChangeReplayJmaColorEnabled(next) {
     setReplayJmaColorEnabledState(next);
@@ -1526,9 +1535,6 @@ export default function App() {
   // App側の判定(一覧・選択中の地震・地図表示)は、以降すべてこちらを使う。
   // テスト地震は発生日時を自由に変えられるため、テスト配信中だけ発生日時の新しい順に並べ直して
   // 実データと混ぜる(Array.sortは安定ソートなので、同時刻の実データ同士の順序は変わらない)。
-  const effectiveQuakes = testQuakes.length > 0
-    ? [...testQuakes.map(g => g.card), ...quakes].sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0))
-    : quakes;
 
   /* ─────────────────────────────────────────────────────
      実験的機能: 津波警報テスト配信
@@ -1802,6 +1808,46 @@ export default function App() {
   // loadGeoData()はモジュール内でPromiseをキャッシュしているため、地図側で
   // 既に読み込み済みであれば実質即座に解決する。
   const [areasGeoJSON, setAreasGeoJSON] = useState(null);
+
+  // リプレイ時刻での地震タブの並び(「その時刻にMeteoQuakeが動いていたら」の再現)。
+  // 設定がONで、リプレイ(震度ファイル)を読み込んでいる間だけ、実際の一覧の代わりに使う。
+  // 元データは、リプレイ開始の7日前〜終了の地震(P2P地震情報、無ければeqdb)。
+  // リプレイ時間内に発生した地震は、震度速報→震源情報→詳細の順に擬似的な段階を踏んで出す。
+  const replayQuakesActive = replayPlayer.loaded && replayPlayer.hasBin && replayPastQuakesEnabled;
+  const replayRangeMs = useMemo(() => {
+    if (!replayPlayer.loaded || replayPlayer.frames.length === 0) return null;
+    const first = replayPlayer.frames[0]?.dataTime?.getTime();
+    const last = replayPlayer.frames[replayPlayer.frames.length - 1]?.dataTime?.getTime();
+    return first != null && last != null ? { startMs: first, endMs: last } : null;
+  }, [replayPlayer.loaded, replayPlayer.frames]);
+  const replayQuakeSource = useReplayQuakes({
+    enabled: replayQuakesActive && replayRangeMs != null,
+    startMs: replayRangeMs?.startMs ?? null,
+    endMs: replayRangeMs?.endMs ?? null,
+    stations,
+    areasGeoJSON,
+  });
+  const replayQuakeNowMs = replayPlayer.loaded
+    ? (replayPlayer.clockMs ?? replayPlayer.frames[replayPlayer.currentIndex]?.dataTime?.getTime() ?? null)
+    : null;
+  const replayQuakeListRef = useRef([]);
+  const replayQuakeList = (() => {
+    if (!replayQuakesActive || !replayRangeMs || replayQuakeNowMs == null) return null;
+    const next = replayQuakesAt(replayQuakeSource.cards, replayQuakeNowMs, replayRangeMs);
+    // 再生時計は頻繁に進むが、一覧の中身(idと段階)が同じなら、前回の配列をそのまま使い、無駄な再描画を避ける。
+    if (replayQuakeSignature(next) === replayQuakeSignature(replayQuakeListRef.current)) return replayQuakeListRef.current;
+    replayQuakeListRef.current = next;
+    return next;
+  })();
+  const baseQuakes = replayQuakeList ?? quakes;
+
+  // テスト配信中は、実際の一覧の先頭にテストデータを合成する。地震タブに関するApp側の判定
+  // (一覧・選択中の地震・地図表示)は、以降すべてこちらを使う。
+  // テスト地震は発生日時を自由に変えられるため、テスト配信中だけ発生日時の新しい順に並べ直して
+  // 実データと混ぜる(Array.sortは安定ソートなので、同時刻の実データ同士の順序は変わらない)。
+  const effectiveQuakes = testQuakes.length > 0
+    ? [...testQuakes.map(g => g.card), ...baseQuakes].sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0))
+    : baseQuakes;
   useEffect(() => {
     let cancelled = false;
     loadGeoData()
@@ -3554,6 +3600,8 @@ export default function App() {
                   onChangeRealtimeRisingEnabled={handleChangeRealtimeRisingEnabled}
                   replayJmaColorEnabled={replayJmaColorEnabled}
                   onChangeReplayJmaColorEnabled={handleChangeReplayJmaColorEnabled}
+                  replayPastQuakesEnabled={replayPastQuakesEnabled}
+                  onChangeReplayPastQuakesEnabled={handleChangeReplayPastQuakesEnabled}
                   shakeDetectionEnabled={shakeDetectionEnabled}
                   onChangeShakeDetectionEnabled={handleChangeShakeDetectionEnabled}
                   weakArrayDetectionEnabled={weakArrayDetectionEnabled}
@@ -3709,6 +3757,8 @@ export default function App() {
               onChangeRealtimeRisingEnabled={handleChangeRealtimeRisingEnabled}
               replayJmaColorEnabled={replayJmaColorEnabled}
               onChangeReplayJmaColorEnabled={handleChangeReplayJmaColorEnabled}
+              replayPastQuakesEnabled={replayPastQuakesEnabled}
+              onChangeReplayPastQuakesEnabled={handleChangeReplayPastQuakesEnabled}
               shakeDetectionEnabled={shakeDetectionEnabled}
               onChangeShakeDetectionEnabled={handleChangeShakeDetectionEnabled}
               weakArrayDetectionEnabled={weakArrayDetectionEnabled}

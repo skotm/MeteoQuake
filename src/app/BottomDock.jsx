@@ -86,6 +86,7 @@ export function BottomDock({
   replayPlayer,
   realtimeRisingEnabled, onChangeRealtimeRisingEnabled,
   replayJmaColorEnabled, onChangeReplayJmaColorEnabled,
+  replayPastQuakesEnabled, onChangeReplayPastQuakesEnabled,
   shakeDetectionEnabled, onChangeShakeDetectionEnabled,
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
   cameraSettings, onChangeCameraSettings,
@@ -2799,6 +2800,8 @@ export function BottomDock({
                   onChangeRealtimeRisingEnabled={onChangeRealtimeRisingEnabled}
                   replayJmaColorEnabled={replayJmaColorEnabled}
                   onChangeReplayJmaColorEnabled={onChangeReplayJmaColorEnabled}
+                  replayPastQuakesEnabled={replayPastQuakesEnabled}
+                  onChangeReplayPastQuakesEnabled={onChangeReplayPastQuakesEnabled}
                   shakeDetectionEnabled={shakeDetectionEnabled}
                   onChangeShakeDetectionEnabled={onChangeShakeDetectionEnabled}
                   weakArrayDetectionEnabled={weakArrayDetectionEnabled}

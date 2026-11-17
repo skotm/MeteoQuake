@@ -52,6 +52,7 @@ export function SettingsBody({
   replayPlayer,
   realtimeRisingEnabled, onChangeRealtimeRisingEnabled,
   replayJmaColorEnabled, onChangeReplayJmaColorEnabled,
+  replayPastQuakesEnabled, onChangeReplayPastQuakesEnabled,
   shakeDetectionEnabled, onChangeShakeDetectionEnabled,
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
   epicenterEstimationEnabled, onChangeEpicenterEstimationEnabled,
@@ -643,6 +644,16 @@ export function SettingsBody({
               description="観測点の色を、強震モニタ本来の連続配色ではなく気象庁の震度階級に換算して表示します。震度1以上は地震情報の観測点マーカーと同じアイコン(設定中の震度配色に対応)、震度0(計測震度-1.0〜0.4)は透明→薄いグレー→グレーの段階で表示し、震度0の中での揺れの強さの違いも見えるようにしています。計測震度-1.0未満の観測点は表示しません。"
               checked={replayJmaColorEnabled}
               onChange={() => onChangeReplayJmaColorEnabled(!replayJmaColorEnabled)}
+            />
+          </SettingsCard>
+        )}
+        {replayPlayer.hasBin && (
+          <SettingsCard>
+            <SettingsToggleRow
+              label="リプレイ時刻の地震情報を再現"
+              description="地震タブの一覧を、リプレイ時刻にMeteoQuakeを開いていた場合の並びにします。リプレイ開始の7日前〜終了の地震を取得し(P2P地震情報、無ければ気象庁 震度データベース)、リプレイ時間内の地震は発生の1分30秒後に震度速報、その1分後に震源情報、さらに1分後に詳細を出します(震度2以下は3分30秒後に詳細のみ)。"
+              checked={replayPastQuakesEnabled}
+              onChange={() => onChangeReplayPastQuakesEnabled(!replayPastQuakesEnabled)}
             />
           </SettingsCard>
         )}

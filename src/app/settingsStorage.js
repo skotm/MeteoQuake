@@ -588,3 +588,25 @@ export function loadStoredDetectedOutlineEnabled() {
 export function saveDetectedOutlineEnabled(enabled) {
   saveStoredBool(DETECTED_OUTLINE_STORAGE_KEY, enabled, "検知観測点の黒縁の強調");
 }
+
+/* リプレイ時刻の地震一覧の再現(既定ON)。 */
+const REPLAY_PAST_QUAKES_ENABLED_STORAGE_KEY = "replayPastQuakesEnabled";
+
+export function loadStoredReplayPastQuakesEnabled() {
+  try {
+    const saved = localStorage.getItem(REPLAY_PAST_QUAKES_ENABLED_STORAGE_KEY);
+    if (saved === "true") return true;
+    if (saved === "false") return false;
+  } catch (err) {
+    console.warn("リプレイの地震一覧再現の設定を読み込めませんでした:", err);
+  }
+  return true;
+}
+
+export function saveReplayPastQuakesEnabled(enabled) {
+  try {
+    localStorage.setItem(REPLAY_PAST_QUAKES_ENABLED_STORAGE_KEY, String(enabled));
+  } catch (err) {
+    console.warn("リプレイの地震一覧再現の設定を保存できませんでした:", err);
+  }
+}
