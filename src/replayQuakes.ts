@@ -4,8 +4,7 @@
  * 取得済みの地震(最終形の地震カード)を元に、リプレイ時刻 T での見え方を作る。
  *   - リプレイ時間より前に発生した地震 … 最終形のまま表示する。
  *   - リプレイ時間内に発生した地震 … 擬似的に段階を踏んで表示する。
- *       最大震度3以上: 発生+1分30秒 震度速報 → +1分 震源情報 → +1分 詳細(確定)
- *       最大震度2以下: 発生+3分30秒 に詳細(確定)のみ
+ *発生+3分30秒に詳細(確定)のみ。震度速報・震源情報は出さない(段階の処理は残してある)
  *     それより前の時刻には一覧に出さない。
  * カードの形は app/quakeCards.js の toQuakeCard / eqdb.js の buildEqdbQuakeCard と同じ。
  */
@@ -53,12 +52,8 @@ export interface QuakeStageTimes {
   detailMs: number;
 }
 
-export function quakeStageTimes(t0: number, maxIntensity: string | undefined): QuakeStageTimes {
-  if (isShindo3OrMore(maxIntensity)) {
-    const promptMs = t0 + PROMPT_DELAY_MS;
-    const destinationMs = promptMs + DESTINATION_DELAY_MS;
-    return { promptMs, destinationMs, detailMs: destinationMs + DETAIL_DELAY_MS };
-  }
+export function quakeStageTimes(t0: number, _maxIntensity?: string): QuakeStageTimes {
+  // 震度の大小に関わらず、詳細の地震情報だけを発生の3分30秒後に出す(震度速報・震源情報は出さない)。
   return { promptMs: null, destinationMs: null, detailMs: t0 + SMALL_QUAKE_DETAIL_DELAY_MS };
 }
 
