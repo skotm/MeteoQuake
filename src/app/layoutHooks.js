@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { getLogicalViewportSize, subscribeLogicalViewport } from "./viewportScale";
 
 
 /* ─────────────────────────────────────────────────────
@@ -12,20 +13,14 @@ import { useState, useEffect } from "react";
 const WIDE_LAYOUT_MIN_WIDTH = 720; // これ未満は常にスマホ縦持ち相当の下部タブバーを使う
 
 export function useIsWideLayout() {
+  // 表示領域を狭めている間は、その見かけ上の画面の大きさ(viewportScale)で判定する。
   const [isWide, setIsWide] = useState(() =>
-    typeof window !== "undefined" && window.innerWidth >= WIDE_LAYOUT_MIN_WIDTH
+    typeof window !== "undefined" && getLogicalViewportSize().width >= WIDE_LAYOUT_MIN_WIDTH
   );
   useEffect(() => {
-    const mq = window.matchMedia(`(min-width: ${WIDE_LAYOUT_MIN_WIDTH}px)`);
-    const update = () => setIsWide(mq.matches);
+    const update = () => setIsWide(getLogicalViewportSize().width >= WIDE_LAYOUT_MIN_WIDTH);
     update();
-    // Safari旧バージョン対応でaddListener/removeListenerもフォールバックしておく
-    if (mq.addEventListener) mq.addEventListener("change", update);
-    else mq.addListener(update);
-    return () => {
-      if (mq.removeEventListener) mq.removeEventListener("change", update);
-      else mq.removeListener(update);
-    };
+    return subscribeLogicalViewport(update);
   }, []);
   return isWide;
 }
@@ -64,12 +59,11 @@ export function useWideUIScale(isWide) {
   useEffect(() => {
     if (!isWide) { setScale(1); return; }
     const update = () => {
-      const h = window.innerHeight;
+      const h = getLogicalViewportSize().height;
       setScale(Math.max(0.7, Math.min(1, h / 700)));
     };
     update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
+    return subscribeLogicalViewport(update);
   }, [isWide]);
   return scale;
 }
