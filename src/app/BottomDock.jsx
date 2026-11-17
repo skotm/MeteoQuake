@@ -89,6 +89,7 @@ export function BottomDock({
   replayPastQuakesEnabled, onChangeReplayPastQuakesEnabled,
   shakeDetectionEnabled, onChangeShakeDetectionEnabled,
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
+  shakeEventCardsEnabled = true, onChangeShakeEventCardsEnabled,
   cameraSettings, onChangeCameraSettings,
   epicenterEstimationEnabled, onChangeEpicenterEstimationEnabled,
   gridDetectionEnabled, onChangeGridDetectionEnabled, gridCellsVisible, onChangeGridCellsVisible, detectedOutlineEnabled, onChangeDetectedOutlineEnabled,
@@ -2806,6 +2807,8 @@ export function BottomDock({
                   onChangeShakeDetectionEnabled={onChangeShakeDetectionEnabled}
                   weakArrayDetectionEnabled={weakArrayDetectionEnabled}
                   onChangeWeakArrayDetectionEnabled={onChangeWeakArrayDetectionEnabled}
+                  shakeEventCardsEnabled={shakeEventCardsEnabled}
+                  onChangeShakeEventCardsEnabled={onChangeShakeEventCardsEnabled}
                   cameraSettings={cameraSettings}
                   onChangeCameraSettings={onChangeCameraSettings}
                   epicenterEstimationEnabled={epicenterEstimationEnabled}
@@ -2950,7 +2953,7 @@ export function BottomDock({
                 {/* 揺れ検知エンジンが検出したイベント(確定分のみ)。緊急地震速報の
                     下・平常時の内容の上に並べる。未確定のものは地図上のみで示し、
                     このリストにはノイズを避けるため出さない。 */}
-                {selectedQuakeId == null && shakeEvents.filter(e => e.confirmed).map(e => (
+                {selectedQuakeId == null && shakeEventCardsEnabled && shakeEvents.filter(e => e.confirmed).map(e => (
                   <ShakeEventCard key={e.id} event={e}/>
                 ))}
                 {selectedQuakeId != null ? (() => {

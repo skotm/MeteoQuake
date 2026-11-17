@@ -194,6 +194,26 @@ export function saveWeakArrayDetectionEnabled(enabled) {
    信頼度が下限未満の震源推定も表示するか。リアルタイムタブの設定。
    デフォルトはOFF(信頼度が低い推定は表示しない)。
    ───────────────────────────────────────────────────── */
+/* 揺れ検知で検出した情報を、フローティングのカードとして表示するか。デフォルトON。 */
+const SHAKE_EVENT_CARDS_STORAGE_KEY = "shakeEventCardsEnabled";
+
+export function loadStoredShakeEventCardsEnabled() {
+  try {
+    return localStorage.getItem(SHAKE_EVENT_CARDS_STORAGE_KEY) !== "false";
+  } catch (err) {
+    console.warn("揺れ検出情報の表示設定を読み込めませんでした:", err);
+  }
+  return true;
+}
+
+export function saveShakeEventCardsEnabled(enabled) {
+  try {
+    localStorage.setItem(SHAKE_EVENT_CARDS_STORAGE_KEY, String(enabled));
+  } catch (err) {
+    console.warn("揺れ検出情報の表示設定を保存できませんでした:", err);
+  }
+}
+
 const SHOW_LOW_CONFIDENCE_ESTIMATES_STORAGE_KEY = "showLowConfidenceEstimates";
 
 export function loadStoredShowLowConfidenceEstimates() {

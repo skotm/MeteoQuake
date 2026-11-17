@@ -55,6 +55,7 @@ export function SettingsBody({
   replayPastQuakesEnabled, onChangeReplayPastQuakesEnabled,
   shakeDetectionEnabled, onChangeShakeDetectionEnabled,
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
+  shakeEventCardsEnabled, onChangeShakeEventCardsEnabled,
   epicenterEstimationEnabled, onChangeEpicenterEstimationEnabled,
   gridDetectionEnabled = false, onChangeGridDetectionEnabled = () => {}, gridCellsVisible = true, onChangeGridCellsVisible = () => {}, detectedOutlineEnabled = false, onChangeDetectedOutlineEnabled = () => {}, cmtFetchSources = { jma: true, usgs: true }, onChangeCmtFetchSources = () => {},
   showLowConfidenceEstimates, onChangeShowLowConfidenceEstimates,
@@ -400,6 +401,12 @@ export function SettingsBody({
                   onChange={() => onChangeGridCellsVisible(!gridCellsVisible)}
                 />
               )}
+              <SettingsToggleRow
+                label="揺れ検出情報をフローティングに表示"
+                description="揺れ検知で検出した地震の情報を、画面下のフローティングにカードとして表示します。オフにしても、地図上の検知表示や検知そのものは止まりません(初期設定はオン)。"
+                checked={shakeEventCardsEnabled}
+                onChange={() => onChangeShakeEventCardsEnabled(!shakeEventCardsEnabled)}
+              />
               <SettingsToggleRow
                 label="微弱な揺れの検知(実験的機能)"
                 description="震度0未満〜0付近の、ごく弱い揺れ(沖合の無感地震など)を、複数の観測点がP波の伝わる順序で上昇したことから検知します。誤検知が気になる場合は、オフにしてください。"
