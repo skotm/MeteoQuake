@@ -319,11 +319,15 @@ export const CORNER_TAB_PAD = 4;     // ガラスの内側余白[px]
 export const CORNER_TAB_STACK_HEIGHT =
   NAV.length * CORNER_TAB_SIZE + (NAV.length - 1) * CORNER_TAB_GAP + CORNER_TAB_PAD * 2;
 
-export function CornerTabButtons({ active, onNav, style }) {
+// 横並び(縦画面用)にした時の高さ。
+export const CORNER_TAB_ROW_HEIGHT = CORNER_TAB_SIZE + CORNER_TAB_PAD * 2;
+
+/** horizontal=trueで横並び(縦画面用)、falseで縦並び(横画面用)。 */
+export function CornerTabButtons({ active, onNav, style, horizontal = false }) {
   const { tokens } = useContext(ThemeContext);
   return (
     <Glass radius={(CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2} style={{ animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both", ...style }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: CORNER_TAB_GAP, padding: CORNER_TAB_PAD }}>
+      <div style={{ display: "flex", flexDirection: horizontal ? "row" : "column", gap: CORNER_TAB_GAP, padding: CORNER_TAB_PAD }}>
         {NAV.map(({ id, label }) => {
           const isActive = id === active;
           return (

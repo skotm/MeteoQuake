@@ -716,7 +716,7 @@ export function SettingsBody({
         <SettingsCard>
           <SettingsToggleRow
             label="タブボタンをフローティングの右上に配置"
-            description="地震・津波・気象・警報・設定のタブを、スライド式のナビの代わりに、フローティングの外側(右上)に縦並びのアイコンボタンとして表示します。オフのときは従来のスライド式です(初期設定はオフ)。"
+            description="地震・津波・気象・警報・設定のタブを、スライド式のナビの代わりに、フローティングの外側(右上)にアイコンボタンとして表示します(横画面は縦並び、縦画面は横並び)。オフのときは従来のスライド式です(初期設定はオフ)。"
             checked={tabPlacement === "corner"}
             onChange={() => onChangeTabPlacement(tabPlacement === "corner" ? "slide" : "corner")}
           />
