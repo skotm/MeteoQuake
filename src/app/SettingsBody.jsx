@@ -57,6 +57,7 @@ export function SettingsBody({
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
   shakeEventCardsEnabled, onChangeShakeEventCardsEnabled,
   displayInsets, onOpenDisplayAreaEditor,
+  tabPlacement, onChangeTabPlacement,
   epicenterEstimationEnabled, onChangeEpicenterEstimationEnabled,
   gridDetectionEnabled = false, onChangeGridDetectionEnabled = () => {}, gridCellsVisible = true, onChangeGridCellsVisible = () => {}, detectedOutlineEnabled = false, onChangeDetectedOutlineEnabled = () => {}, cmtFetchSources = { jma: true, usgs: true }, onChangeCmtFetchSources = () => {},
   showLowConfidenceEstimates, onChangeShowLowConfidenceEstimates,
@@ -710,6 +711,14 @@ export function SettingsBody({
             checked={glassOpaqueEnabled}
             onChange={() => onChangeGlassOpaqueOverride(glassOpaqueEnabled ? "off" : "on")}
             disabled={glassOpaqueSuspectedBroken}
+          />
+        </SettingsCard>
+        <SettingsCard>
+          <SettingsToggleRow
+            label="タブボタンをフローティングの右上に配置"
+            description="地震・津波・気象・警報・設定のタブを、スライド式のナビの代わりに、フローティングの外側(右上)に縦並びのアイコンボタンとして表示します。オフのときは従来のスライド式です(初期設定はオフ)。"
+            checked={tabPlacement === "corner"}
+            onChange={() => onChangeTabPlacement(tabPlacement === "corner" ? "slide" : "corner")}
           />
         </SettingsCard>
         <SettingsCard>

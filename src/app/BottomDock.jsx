@@ -11,7 +11,7 @@ import { loadGeoData } from "./mapDataLoaders";
 import { findCausingQuakeFromP2p } from "./quakeCards";
 import { resolveStationPoints } from "./stations";
 import { NearbyQuakesPanel, QuakeListRow, QuakeListToolbar, QuakeSearchPanel, TSUNAMI_TOOLBAR_ITEMS, defaultEqdbDateRange } from "./quakeSearchUi";
-import { NAV_ICONS, useSnapDrag } from "./navUi";
+import { CORNER_TAB_STACK_HEIGHT, NAV_ICONS, useSnapDrag } from "./navUi";
 import { NAV } from "./navigation";
 import { BackToListButton, RealtimeDataTimeBadge, SearchFabButton, ShakeEventCard, ShakeTestRunningBadge, StationMarkerToggleButton } from "./mapOverlayUi";
 import { EewDetailFloatingCard, EewFabButton } from "./eewUi";
@@ -92,6 +92,7 @@ export function BottomDock({
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
   shakeEventCardsEnabled = true, onChangeShakeEventCardsEnabled,
   displayInsets, onOpenDisplayAreaEditor,
+  tabPlacement = "slide", onChangeTabPlacement,
   cameraSettings, onChangeCameraSettings,
   epicenterEstimationEnabled, onChangeEpicenterEstimationEnabled,
   gridDetectionEnabled, onChangeGridDetectionEnabled, gridCellsVisible, onChangeGridCellsVisible, detectedOutlineEnabled, onChangeDetectedOutlineEnabled,
@@ -1391,7 +1392,9 @@ export function BottomDock({
   // (表示領域を狭めている間は、その領域の高さ)
   const viewportH = useLogicalViewport().height;
 
-  const NAV_ROW_HEIGHT  = 66; // ナビ行の固定高さ(58pxボタン + 上下4pxパディング)
+  // タブボタンを「フローティングの右上」に独立して置く設定の時は、ナビ行(下部バー/左端レール)を出さない。
+  const cornerTabs = tabPlacement === "corner";
+  const NAV_ROW_HEIGHT  = cornerTabs ? 0 : 66; // ナビ行の固定高さ(58pxボタン + 上下4pxパディング)。cornerTabsの時はナビ行なし
   const BOTTOM_OFFSET   = 32; // 親側の bottom:16px+safeArea の概算
   const TOP_GAP         = 56; // 全画面時に画面最上部へ残す余白
 
@@ -1772,7 +1775,7 @@ export function BottomDock({
   // 開くにつれて少しだけ締まった26pxへ滑らかに変化させる
   // — 26〜33はどちらも箱の最小高さ(66, 半分33)を超えない安全な値なので、
   // 補間の途中でも歪みは発生しない(「高」を超えて全画面へ伸びる間もtopRadiusは26で頭打ち)。
-  const BOTTOM_RADIUS = NAV_ROW_HEIGHT / 2; // 33px
+  const BOTTOM_RADIUS = cornerTabs ? 26 : NAV_ROW_HEIGHT / 2; // 33px(ナビ行なしの時は上の角丸と同じ26px)
   // openProgressは「高」の固定高さ(highHeight)を基準にする。
   // 以前はnaturalHeight(タブごとに変わる中身の実測高さ)を分母にしていたため、
   // 同じスナップ高さでもタブによってopenProgressが変わり、地震タブだけ
@@ -1894,7 +1897,11 @@ export function BottomDock({
 
   // 戻るボタンの下端オフセット。パネル本体(currentHeight)+ナビ行(NAV_ROW_HEIGHT)+
   // 少し余白、を常に足し上げているため、ドラッグ中も含めてパネルの高さに追従する。
-  const backButtonBottom = currentHeight + NAV_ROW_HEIGHT + 12;
+  // cornerTabs(縦画面)の時は、パネルの上の右端にタブ群が載るため、その分だけ上にずらす。
+  const cornerTabsOffset = cornerTabs && !isWide ? CORNER_TAB_STACK_HEIGHT + 8 : 0;
+  const backButtonBottom = currentHeight + NAV_ROW_HEIGHT + 12 + cornerTabsOffset;
+  // 横画面でフローティングの右隣に出すボタン類の上端。cornerTabsの時は、右上に載るタブ群の下に置く。
+  const wideBtnTop = wideAnchorRect ? wideAnchorRect.top + 16 + (cornerTabs ? CORNER_TAB_STACK_HEIGHT + 12 : 0) : 0;
 
   // 緊急地震速報のFAB/戻るボタンを出すかどうか(取消済みでないEEWが1件でもあるか)。
   const hasActiveEew = eews.some(e => !e.cancelled);
@@ -1932,7 +1939,7 @@ export function BottomDock({
           <div style={{
             position: "fixed",
             left: (!eewDetailOpen && otherBackSlotOccupied) ? wideAnchorRect.right + 12 + 56 : wideAnchorRect.right + 12,
-            top: wideAnchorRect.top + 16,
+            top: wideBtnTop,
             zIndex: 50,
           }}>
             {eewDetailOpen ? (
@@ -1969,7 +1976,7 @@ export function BottomDock({
           <div style={{
             position: "fixed",
             left: wideAnchorRect.right + 12,
-            top: wideAnchorRect.top + 16,
+            top: wideBtnTop,
             zIndex: 50,
           }}>
             <SearchFabButton onClick={() => { killScrollMomentum(); setQuakeViewMode("search"); }}/>
@@ -1996,7 +2003,7 @@ export function BottomDock({
           <div style={{
             position: "fixed",
             left: wideAnchorRect.right + 12,
-            top: wideAnchorRect.top + 16,
+            top: wideBtnTop,
             zIndex: 50,
           }}>
             <BackToListButton onClick={() => { killScrollMomentum(); setQuakeViewMode("realtime"); }} label="リアルタイムに戻る"/>
@@ -2027,7 +2034,7 @@ export function BottomDock({
           <div style={{
             position: "fixed",
             left: wideAnchorRect.right + 12,
-            top: wideAnchorRect.top + 16,
+            top: wideBtnTop,
             zIndex: 50,
           }}>
             <BackToListButton
@@ -2083,7 +2090,7 @@ export function BottomDock({
           <div style={{
             position: "fixed",
             left: wideAnchorRect.right + 12,
-            top: wideAnchorRect.top + 16,
+            top: wideBtnTop,
             zIndex: 50,
           }}>
             {(selectedTsunamiId != null || selectedTideStationCode != null) && (
@@ -2141,7 +2148,7 @@ export function BottomDock({
           <div style={{
             position: "fixed",
             left: wideAnchorRect.right + 12,
-            top: wideAnchorRect.top + 16,
+            top: wideBtnTop,
             zIndex: 50,
             // 緊急地震速報の!ボタンは、気象・警報タブではこの枠の中に並べる
             // (メニューが開いて広がっても重ならないように)。
@@ -2239,7 +2246,7 @@ export function BottomDock({
           <div style={{
             position: "fixed",
             left: wideAnchorRect.right + 12,
-            top: wideAnchorRect.top + 16,
+            top: wideBtnTop,
             zIndex: 50,
             // 緊急地震速報の!ボタンは、気象・警報タブではこの枠の中に並べる
             // (メニューが開いて広がっても重ならないように)。
@@ -2364,7 +2371,7 @@ export function BottomDock({
           <div style={{
             position: "fixed",
             left: wideAnchorRect.right + 12,
-            top: wideAnchorRect.top + 16,
+            top: wideBtnTop,
             zIndex: 50,
           }}>
             <BackToListButton
@@ -2460,9 +2467,10 @@ export function BottomDock({
         const glassProps = isWide
           ? { ref: wideContentRef, "data-floating-panel": "dock", style: {
             width: "clamp(240px, 30vw, 380px)", height: "100%", overflow: "hidden", position: "relative",
-            // 外側のガラス(App.jsxのGlass radius=28)の右側の角丸に合わせて中身も切り抜く。
-            // これが無いと、スクロールする中身(行の背景など)が右下・右上の角で外枠からはみ出して見える。
-            borderRadius: "0 28px 28px 0",
+            // 外側のガラス(App.jsxのGlass radius=28)の角丸に合わせて中身も切り抜く。
+            // これが無いと、スクロールする中身(行の背景など)が角で外枠からはみ出して見える。
+            // 左端にレールが並ぶ時は右側だけ。タブをフローティングの右上に出す設定の時はレールが無いので四隅。
+            borderRadius: cornerTabs ? 28 : "0 28px 28px 0",
           } }
           : {
               "data-floating-panel": "dock", // 視点移動(mapFocus.js)が、フローティングに隠れる範囲を実測するための目印
@@ -2475,6 +2483,8 @@ export function BottomDock({
                 borderRadius: `${topRadius}px ${topRadius}px ${bottomRadius}px ${bottomRadius}px`,
                 transition: isDragging ? "none" : "border-radius 0.4s cubic-bezier(.22,1,.36,1)",
                 overflow: "hidden",
+                // タブをフローティングの右上に出す設定では、パネルを閉じている間は箱ごと見えなくする。
+                visibility: cornerTabs && currentHeight <= 0 && !isDragging ? "hidden" : "visible",
                 animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both",
               },
             };
@@ -2726,7 +2736,7 @@ export function BottomDock({
                 })()}
 
                 {/* フローティング部分(地震検索/詳細)とボタン類(ナビ行)の境界線 */}
-                <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
+                {!cornerTabs && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>}
               </>
             ) : active === "tsunami" ? (
               <>
@@ -2760,7 +2770,7 @@ export function BottomDock({
                 />
 
                 {/* フローティング部分(津波情報一覧)とボタン類(ナビ行)の境界線 */}
-                <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
+                {!cornerTabs && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>}
               </>
             ) : active === "settings" ? (
               <>
@@ -2810,6 +2820,8 @@ export function BottomDock({
                   onChangeWeakArrayDetectionEnabled={onChangeWeakArrayDetectionEnabled}
                   displayInsets={displayInsets}
                   onOpenDisplayAreaEditor={onOpenDisplayAreaEditor}
+                  tabPlacement={tabPlacement}
+                  onChangeTabPlacement={onChangeTabPlacement}
                   shakeEventCardsEnabled={shakeEventCardsEnabled}
                   onChangeShakeEventCardsEnabled={onChangeShakeEventCardsEnabled}
                   cameraSettings={cameraSettings}
@@ -2858,7 +2870,7 @@ export function BottomDock({
                 />
 
                 {/* フローティング部分(設定メニュー)とボタン類(ナビ行)の境界線 */}
-                <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
+                {!cornerTabs && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>}
               </>
             ) : active === "alert" ? (
               <>
@@ -2879,7 +2891,7 @@ export function BottomDock({
                 )}
 
                 {/* フローティング部分(警報)とボタン類(ナビ行)の境界線 */}
-                <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
+                {!cornerTabs && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>}
               </>
             ) : active === "weather" ? (
               <>
@@ -2932,7 +2944,7 @@ export function BottomDock({
                 )}
 
                 {/* フローティング部分(気象)とボタン類(ナビ行)の境界線 */}
-                <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
+                {!cornerTabs && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>}
               </>
             ) : (
               <>
@@ -3093,7 +3105,7 @@ export function BottomDock({
                 )}
 
                 {/* フローティング部分(地震リスト/詳細)とボタン類(ナビ行)の境界線 */}
-                <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
+                {!cornerTabs && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>}
               </>
             )}
           </div>
@@ -3103,8 +3115,9 @@ export function BottomDock({
       {/* ナビ行 — 常に表示される、ガラスの“足元”。
           Liquid Glassのハイライトが指の位置に連続追従し、なぞるだけで
           タブを選べる。タップのみの操作もそのまま機能する。
-          広い画面(isWide)では、代わりに左端のSideNavRailを使うのでここでは出さない。 */}
-      {!isWide && (
+          広い画面(isWide)では、代わりに左端のSideNavRailを使うのでここでは出さない。
+          タブボタンを「フローティングの右上」に出す設定(cornerTabs)の時も、ここでは出さない。 */}
+      {!isWide && !cornerTabs && (
       <div
         ref={navRowRef}
         onPointerDown={handleNavPointerDown}

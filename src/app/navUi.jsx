@@ -1,6 +1,6 @@
 import { useContext, useRef, useState, useEffect } from "react";
 import { ThemeContext, touchGlassBackdropFilter } from "./theme";
-import { GlassOpaqueContext } from "./glass";
+import { Glass, GlassOpaqueContext } from "./glass";
 import { NAV } from "./navigation";
 
 
@@ -302,6 +302,56 @@ export function SideNavRail({ active, onNav, uiScale = 1 }) {
             })}
           </div>
         </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   CORNER TAB BUTTONS
+   表示設定「タブボタンの配置: フローティングの右上」用の、アイコンのみの縦並びタブ。
+   スライド式のナビ(縦画面の下部バー/横画面の左端レール)の代わりに、フローティングパネルの
+   外側(右上)へ独立して浮かべる。ドラッグ操作は無く、タップだけでタブを切り替える。
+   位置決めは呼び出し側(App.jsx)が行う。
+   ───────────────────────────────────────────────────── */
+export const CORNER_TAB_SIZE = 40;   // ボタン1つの大きさ[px]
+export const CORNER_TAB_GAP = 4;     // ボタン間の隙間[px]
+export const CORNER_TAB_PAD = 4;     // ガラスの内側余白[px]
+// タブ群全体の高さ(ボタン+隙間+上下の余白)。他のフローティングボタンをずらす量の計算に使う。
+export const CORNER_TAB_STACK_HEIGHT =
+  NAV.length * CORNER_TAB_SIZE + (NAV.length - 1) * CORNER_TAB_GAP + CORNER_TAB_PAD * 2;
+
+export function CornerTabButtons({ active, onNav, style }) {
+  const { tokens } = useContext(ThemeContext);
+  return (
+    <Glass radius={(CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2} style={{ animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both", ...style }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: CORNER_TAB_GAP, padding: CORNER_TAB_PAD }}>
+        {NAV.map(({ id, label }) => {
+          const isActive = id === active;
+          return (
+            <button
+              key={id}
+              type="button"
+              aria-label={label}
+              aria-current={isActive ? "page" : undefined}
+              onClick={() => onNav(id)}
+              style={{
+                width: CORNER_TAB_SIZE, height: CORNER_TAB_SIZE, padding: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                borderRadius: 999, border: "none", cursor: "pointer",
+                background: isActive ? tokens.navPillBg : "transparent",
+                boxShadow: isActive ? tokens.navPillShadow : "none",
+                color: isActive ? tokens.text : `rgba(${tokens.ink},0.6)`,
+                transition: "color 0.15s, background 0.2s",
+                touchAction: "manipulation",
+                userSelect: "none", WebkitUserSelect: "none",
+                WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent",
+              }}
+            >
+              <span style={{ display: "flex", transform: "scale(0.85)" }}>{NAV_ICONS[id]}</span>
+            </button>
+          );
+        })}
+      </div>
+    </Glass>
   );
 }
 

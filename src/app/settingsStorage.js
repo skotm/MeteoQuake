@@ -652,3 +652,23 @@ export function saveDisplayInsets(insets) {
     console.warn("表示領域の設定を保存できませんでした:", err);
   }
 }
+
+/* タブボタンの配置。"slide"=スライド式のナビ(デフォルト) / "corner"=フローティングの右上に独立して配置。 */
+const TAB_PLACEMENT_STORAGE_KEY = "tabPlacement";
+
+export function loadStoredTabPlacement() {
+  try {
+    return localStorage.getItem(TAB_PLACEMENT_STORAGE_KEY) === "corner" ? "corner" : "slide";
+  } catch (err) {
+    console.warn("タブボタンの配置の設定を読み込めませんでした:", err);
+  }
+  return "slide";
+}
+
+export function saveTabPlacement(value) {
+  try {
+    localStorage.setItem(TAB_PLACEMENT_STORAGE_KEY, value === "corner" ? "corner" : "slide");
+  } catch (err) {
+    console.warn("タブボタンの配置の設定を保存できませんでした:", err);
+  }
+}
