@@ -204,10 +204,6 @@ export function RealtimeIntensityThresholdBar({ threshold, onChangeThreshold }) 
           {/* カラースケール本体(ドラッグでしきい値を変更) */}
           <div
             ref={trackRef}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
             style={{
               position: "relative",
               height: 10,
@@ -246,6 +242,23 @@ export function RealtimeIntensityThresholdBar({ threshold, onChangeThreshold }) 
               pointerEvents: "none",
             }}/>
           </div>
+
+          {/* 操作の当たり判定 — バーが細いので、見た目より一回り広い透明な領域(バー・目盛り・
+              ガラスの余白、さらに上下へ少し張り出した範囲)で、ドラッグ/タップを受け付ける。
+              値の計算は引き続きバー本体(trackRef)の幅を基準にしている。 */}
+          <div
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            style={{
+              position: "absolute",
+              top: -14, bottom: -10, left: 0, right: 0,
+              touchAction: "none",
+              cursor: "pointer",
+              zIndex: 2,
+            }}
+          />
 
           {/* 目盛りラベル */}
           <div style={{ position: "relative", height: 10, marginTop: 1 }}>
