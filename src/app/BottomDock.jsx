@@ -2478,7 +2478,7 @@ export function BottomDock({
                 radius={tabsAttached ? CORNER_TAB_ATTACHED_RADIUS_PORTRAIT : undefined}
                 rimClip={tabsAttached ? CORNER_TAB_RIM_CLIP_PORTRAIT : undefined}
               />
-              {tabsAttached && <CornerTabFillet hole="0 0" style={{ position: "absolute", right: "100%", bottom: -1 }}/>}
+              {tabsAttached && <CornerTabFillet hole="0 0" style={{ position: "absolute", right: "100%", bottom: 0 }}/>}
             </div>
           </div>
         </div>

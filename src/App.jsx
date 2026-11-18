@@ -3745,7 +3745,7 @@ export default function App() {
                     style={{ position: "absolute", left: "100%", top: 0 }}
                   />
                   {/* 接合部の内側の角を、なめらかにつなぐ。 */}
-                  <CornerTabFillet style={{ position: "absolute", left: "100%", top: CORNER_TAB_STACK_HEIGHT - 1 }}/>
+                  <CornerTabFillet style={{ position: "absolute", left: "100%", top: CORNER_TAB_STACK_HEIGHT }}/>
                 </>
               )}
               </div>
