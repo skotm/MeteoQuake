@@ -11,7 +11,7 @@ import { loadGeoData } from "./mapDataLoaders";
 import { findCausingQuakeFromP2p } from "./quakeCards";
 import { resolveStationPoints } from "./stations";
 import { NearbyQuakesPanel, QuakeListRow, QuakeListToolbar, QuakeSearchPanel, TSUNAMI_TOOLBAR_ITEMS, defaultEqdbDateRange } from "./quakeSearchUi";
-import { CORNER_TAB_ROW_HEIGHT, CORNER_TAB_STACK_HEIGHT, NAV_ICONS, useSnapDrag } from "./navUi";
+import { CORNER_TAB_ATTACHED_RADIUS_PORTRAIT, CORNER_TAB_FILLET, CORNER_TAB_RIM_CLIP_PORTRAIT, CORNER_TAB_ROW_HEIGHT, CORNER_TAB_STACK_HEIGHT, CornerTabButtons, CornerTabFillet, NAV_ICONS, WIDE_PANEL_RADIUS_ATTACHED, portraitPanelRimClip, useSnapDrag } from "./navUi";
 import { NAV } from "./navigation";
 import { BackToListButton, RealtimeDataTimeBadge, SearchFabButton, ShakeEventCard, ShakeTestRunningBadge, StationMarkerToggleButton } from "./mapOverlayUi";
 import { EewDetailFloatingCard, EewFabButton } from "./eewUi";
@@ -1898,10 +1898,12 @@ export function BottomDock({
   // 戻るボタンの下端オフセット。パネル本体(currentHeight)+ナビ行(NAV_ROW_HEIGHT)+
   // 少し余白、を常に足し上げているため、ドラッグ中も含めてパネルの高さに追従する。
   // cornerTabs(縦画面)の時は、パネルの上の右端にタブ群(横並び1行)が載るため、その分だけ上にずらす。
-  const cornerTabsOffset = cornerTabs && !isWide ? CORNER_TAB_ROW_HEIGHT + 8 : 0;
+  const cornerTabsOffset = cornerTabs && !isWide ? CORNER_TAB_ROW_HEIGHT : 0;
   const backButtonBottom = currentHeight + NAV_ROW_HEIGHT + 12 + cornerTabsOffset;
   // 横画面でフローティングの右隣に出すボタン類の上端。cornerTabsの時は、右上に載るタブ群の下に置く。
-  const wideBtnTop = wideAnchorRect ? wideAnchorRect.top + 16 + (cornerTabs ? CORNER_TAB_STACK_HEIGHT + 12 : 0) : 0;
+  // 縦画面で、パネルが開いていて、タブ群がパネルの上辺につながっている状態か。
+  const tabsAttached = cornerTabs && !isWide && currentHeight > 0;
+  const wideBtnTop = wideAnchorRect ? wideAnchorRect.top + 16 + (cornerTabs ? CORNER_TAB_STACK_HEIGHT + CORNER_TAB_FILLET + 12 : 0) : 0;
 
   // 緊急地震速報のFAB/戻るボタンを出すかどうか(取消済みでないEEWが1件でもあるか)。
   const hasActiveEew = eews.some(e => !e.cancelled);
@@ -2462,6 +2464,26 @@ export function BottomDock({
         )
       )}
 
+      {/* タブボタンを「フローティングの右上」に出す設定(縦画面): パネルの上辺の右端につなげて横並びで置く。
+          この箱の下端(bottom:100%)がパネルの上端なので、パネルの高さに追従する。パネルと同じ
+          幅の枠(maxWidth 480、中央寄せ)の右端に揃える。パネルが閉じている間は、独立した丸ピルになる。 */}
+      {cornerTabs && !isWide && (
+        <div style={{ position: "absolute", left: 16, right: 16, bottom: "100%", display: "flex", justifyContent: "center", pointerEvents: "none", zIndex: 10 }}>
+          <div style={{ width: "100%", maxWidth: 480, minWidth: 240, display: "flex", justifyContent: "flex-end" }}>
+            <div style={{ position: "relative", pointerEvents: "auto", marginBottom: tabsAttached ? 0 : 8 }}>
+              <CornerTabButtons
+                active={navActive}
+                onNav={onNav}
+                horizontal
+                radius={tabsAttached ? CORNER_TAB_ATTACHED_RADIUS_PORTRAIT : undefined}
+                rimClip={tabsAttached ? CORNER_TAB_RIM_CLIP_PORTRAIT : undefined}
+              />
+              {tabsAttached && <CornerTabFillet hole="0 0" style={{ position: "absolute", right: "100%", bottom: -1 }}/>}
+            </div>
+          </div>
+        </div>
+      )}
+
       {(() => {
         const GlassOrPlain = isWide ? "div" : Glass;
         const glassProps = isWide
@@ -2469,18 +2491,20 @@ export function BottomDock({
             width: "clamp(240px, 30vw, 380px)", height: "100%", overflow: "hidden", position: "relative",
             // 外側のガラス(App.jsxのGlass radius=28)の角丸に合わせて中身も切り抜く。
             // これが無いと、スクロールする中身(行の背景など)が角で外枠からはみ出して見える。
-            // 左端にレールが並ぶ時は右側だけ。タブをフローティングの右上に出す設定の時はレールが無いので四隅。
-            borderRadius: cornerTabs ? 28 : "0 28px 28px 0",
+            // 左端にレールが並ぶ時は右側だけ。タブをフローティングの右上につなぐ設定の時は、レールが無く、右上だけ角丸なし(タブ群とつながる)。
+            borderRadius: cornerTabs ? WIDE_PANEL_RADIUS_ATTACHED : "0 28px 28px 0",
           } }
           : {
               "data-floating-panel": "dock", // 視点移動(mapFocus.js)が、フローティングに隠れる範囲を実測するための目印
               filterSize: settled ? "normal" : "none",
               blur: settled ? 14 : 8,
+              rimClip: tabsAttached ? portraitPanelRimClip(CORNER_TAB_STACK_HEIGHT) : undefined,
               style: {
                 width: "100%",
                 maxWidth: 480,
                 minWidth: 240,
-                borderRadius: `${topRadius}px ${topRadius}px ${bottomRadius}px ${bottomRadius}px`,
+                // タブをフローティングの右上につなぐ設定で、パネルが開いている間は、右上の角だけ角丸なし(タブ群と一体になる)。
+                borderRadius: `${topRadius}px ${tabsAttached ? 0 : topRadius}px ${bottomRadius}px ${bottomRadius}px`,
                 transition: isDragging ? "none" : "border-radius 0.4s cubic-bezier(.22,1,.36,1)",
                 overflow: "hidden",
                 // タブをフローティングの右上に出す設定では、パネルを閉じている間は箱ごと見えなくする。
