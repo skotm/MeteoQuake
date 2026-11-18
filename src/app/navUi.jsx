@@ -371,7 +371,7 @@ export const CORNER_TAB_ROW_HEIGHT = CORNER_TAB_SIZE + CORNER_TAB_PAD * 2;
 export function CornerTabButtons({ active, onNav, style, horizontal = false, radius, rimClip }) {
   const { tokens } = useContext(ThemeContext);
   return (
-    <Glass radius={radius ?? (CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2} rimClip={rimClip} style={{ animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both", ...style }}>
+    <Glass radius={radius ?? (CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2} rimClip={rimClip} style={style}>
       <div style={{ display: "flex", flexDirection: horizontal ? "row" : "column", gap: CORNER_TAB_GAP, padding: CORNER_TAB_PAD }}>
         {NAV.map(({ id, label }) => {
           const isActive = id === active;
