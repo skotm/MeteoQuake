@@ -11,7 +11,7 @@ import { loadGeoData } from "./mapDataLoaders";
 import { findCausingQuakeFromP2p } from "./quakeCards";
 import { resolveStationPoints } from "./stations";
 import { NearbyQuakesPanel, QuakeListRow, QuakeListToolbar, QuakeSearchPanel, TSUNAMI_TOOLBAR_ITEMS, defaultEqdbDateRange } from "./quakeSearchUi";
-import { CORNER_TAB_STACK_HEIGHT, NAV_ICONS, useSnapDrag } from "./navUi";
+import { CORNER_TAB_ROW_HEIGHT, CORNER_TAB_STACK_HEIGHT, NAV_ICONS, useSnapDrag } from "./navUi";
 import { NAV } from "./navigation";
 import { BackToListButton, RealtimeDataTimeBadge, SearchFabButton, ShakeEventCard, ShakeTestRunningBadge, StationMarkerToggleButton } from "./mapOverlayUi";
 import { EewDetailFloatingCard, EewFabButton } from "./eewUi";
@@ -1897,8 +1897,8 @@ export function BottomDock({
 
   // 戻るボタンの下端オフセット。パネル本体(currentHeight)+ナビ行(NAV_ROW_HEIGHT)+
   // 少し余白、を常に足し上げているため、ドラッグ中も含めてパネルの高さに追従する。
-  // cornerTabs(縦画面)の時は、パネルの上の右端にタブ群が載るため、その分だけ上にずらす。
-  const cornerTabsOffset = cornerTabs && !isWide ? CORNER_TAB_STACK_HEIGHT + 8 : 0;
+  // cornerTabs(縦画面)の時は、パネルの上の右端にタブ群(横並び1行)が載るため、その分だけ上にずらす。
+  const cornerTabsOffset = cornerTabs && !isWide ? CORNER_TAB_ROW_HEIGHT + 8 : 0;
   const backButtonBottom = currentHeight + NAV_ROW_HEIGHT + 12 + cornerTabsOffset;
   // 横画面でフローティングの右隣に出すボタン類の上端。cornerTabsの時は、右上に載るタブ群の下に置く。
   const wideBtnTop = wideAnchorRect ? wideAnchorRect.top + 16 + (cornerTabs ? CORNER_TAB_STACK_HEIGHT + 12 : 0) : 0;

@@ -3903,12 +3903,13 @@ export default function App() {
               onEpicenterLoadingChange={setEpicenterLoading}
               mapSelectSignal={mapSelectSignal}
             />
-            {/* タブボタンを「フローティングの右上」に出す設定: パネルの上の右端に縦並びで浮かべる
+            {/* タブボタンを「フローティングの右上」に出す設定: パネルの上の右端に横並びで浮かべる
                 (この箱の高さ=パネルの高さなので、bottom:100%でパネルのすぐ上に載る)。 */}
             {tabPlacement === "corner" && (
               <CornerTabButtons
                 active={activeNav}
                 onNav={handleNavTap}
+                horizontal
                 style={{ position: "absolute", right: 16, bottom: "calc(100% + 8px)" }}
               />
             )}
