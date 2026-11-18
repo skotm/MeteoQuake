@@ -335,18 +335,23 @@ export function CornerTabFillet({ style, hole = "100% 100%" }) {
   );
 }
 
-// ── つなぎ目の線(縁の光)を消すためのclip-path。つなぐ2つのガラスの、接する辺の縁だけを隠す。
-const SEAM = 2; // 隠す幅[px]
-// 横画面: タブ群の左辺の縁を隠す。
-export const CORNER_TAB_RIM_CLIP_WIDE = `inset(0 0 0 ${SEAM}px)`;
-// 横画面: パネルの右辺の縁のうち、タブ群と接している範囲(上からタブ群の高さ分)だけ隠す。
+// ── つなぎ目の線(縁の光)を消すためのclip-path。つなぐ2つのガラスの縁のうち、つなぎ目の内側に
+//    あたる部分だけを隠す。外側の輪郭の線(右端など)は、途切れないよう残す。
+//    つなぎ目の小さなガラス片(CORNER_TAB_FILLET)が接する範囲も、内側なので隠す。
+const SEAM = 2; // 隠す縁の幅[px]
+const F = CORNER_TAB_FILLET;
+// 横画面: タブ群。左辺の縁と、下辺の縁のうちパネル寄りのF分を隠す。
+export const CORNER_TAB_RIM_CLIP_WIDE =
+  `polygon(${SEAM}px 0, 100% 0, 100% 100%, ${F}px 100%, ${F}px calc(100% - ${SEAM}px), ${SEAM}px calc(100% - ${SEAM}px))`;
+// 横画面: パネル。右辺の縁のうち、タブ群(高さh)とつなぎ目の範囲を隠す。
 export const widePanelRimClip = (h) =>
-  `polygon(0 0, calc(100% - ${SEAM}px) 0, calc(100% - ${SEAM}px) ${h}px, 100% ${h}px, 100% 100%, 0 100%)`;
-// 縦画面: タブ群の下辺の縁を隠す。
-export const CORNER_TAB_RIM_CLIP_PORTRAIT = `inset(0 0 ${SEAM}px 0)`;
-// 縦画面: パネルの上辺の縁のうち、タブ群と接している範囲(右端からタブ群の幅分)だけ隠す。
+  `polygon(0 0, calc(100% - ${SEAM}px) 0, calc(100% - ${SEAM}px) ${h + F}px, 100% ${h + F}px, 100% 100%, 0 100%)`;
+// 縦画面: タブ群。下辺の縁(右端の外周は残す)と、左辺の縁のうちつなぎ目の範囲(下からF)を隠す。
+export const CORNER_TAB_RIM_CLIP_PORTRAIT =
+  `polygon(0 0, 100% 0, 100% 100%, calc(100% - ${SEAM}px) 100%, calc(100% - ${SEAM}px) calc(100% - ${SEAM}px), ${SEAM}px calc(100% - ${SEAM}px), ${SEAM}px calc(100% - ${F}px), 0 calc(100% - ${F}px))`;
+// 縦画面: パネル。上辺の縁のうち、タブ群(幅w)とつなぎ目の範囲を隠す(右端の外周は残す)。
 export const portraitPanelRimClip = (w) =>
-  `polygon(0 0, calc(100% - ${w}px) 0, calc(100% - ${w}px) ${SEAM}px, 100% ${SEAM}px, 100% 100%, 0 100%)`;
+  `polygon(0 0, calc(100% - ${w + F}px) 0, calc(100% - ${w + F}px) 1px, 100% 1px, 100% 100%, 0 100%)`;
 // 縦画面: パネルにつなげた時のタブ群の角丸(下の2隅は角なし)。
 export const CORNER_TAB_ATTACHED_RADIUS_PORTRAIT = `${(CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2}px ${(CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2}px 0 0`;
 
