@@ -1905,6 +1905,8 @@ export function BottomDock({
   const tabsAttached = cornerTabs && !isWide && currentHeight > 0;
   // cornerTabs(横画面)の時は、パネルの右にタブ群(縦並び)が付くので、ボタン類はその右に出す(縦位置は変えない。下に置くと、背の高いメニューが画面下で見切れる)。
   const wideBtnLeftExtra = cornerTabs ? CORNER_TAB_SIZE + CORNER_TAB_PAD * 2 : 0;
+  // 戻るボタン・観測点のオン/オフボタンは、従来どおりタブ群の下に置く(小さいので収まる)。
+  const wideSmallBtnTop = wideAnchorRect ? wideAnchorRect.top + 16 + (cornerTabs ? CORNER_TAB_STACK_HEIGHT + CORNER_TAB_FILLET + 12 : 0) : 0;
   const wideBtnTop = wideAnchorRect ? wideAnchorRect.top + 16 : 0;
 
   // 緊急地震速報のFAB/戻るボタンを出すかどうか(取消済みでないEEWが1件でもあるか)。
@@ -1942,8 +1944,8 @@ export function BottomDock({
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",
-            left: (!eewDetailOpen && otherBackSlotOccupied) ? wideAnchorRect.right + wideBtnLeftExtra + 12 + 56 : wideAnchorRect.right + wideBtnLeftExtra + 12,
-            top: wideBtnTop,
+            left: (!eewDetailOpen && otherBackSlotOccupied) ? wideAnchorRect.right + 12 + 56 : wideAnchorRect.right + 12,
+            top: wideSmallBtnTop,
             zIndex: 50,
           }}>
             {eewDetailOpen ? (
@@ -1979,8 +1981,8 @@ export function BottomDock({
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",
-            left: wideAnchorRect.right + wideBtnLeftExtra + 12,
-            top: wideBtnTop,
+            left: wideAnchorRect.right + 12,
+            top: wideSmallBtnTop,
             zIndex: 50,
           }}>
             <SearchFabButton onClick={() => { killScrollMomentum(); setQuakeViewMode("search"); }}/>
@@ -2006,8 +2008,8 @@ export function BottomDock({
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",
-            left: wideAnchorRect.right + wideBtnLeftExtra + 12,
-            top: wideBtnTop,
+            left: wideAnchorRect.right + 12,
+            top: wideSmallBtnTop,
             zIndex: 50,
           }}>
             <BackToListButton onClick={() => { killScrollMomentum(); setQuakeViewMode("realtime"); }} label="リアルタイムに戻る"/>
@@ -2037,8 +2039,8 @@ export function BottomDock({
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",
-            left: wideAnchorRect.right + wideBtnLeftExtra + 12,
-            top: wideBtnTop,
+            left: wideAnchorRect.right + 12,
+            top: wideSmallBtnTop,
             zIndex: 50,
           }}>
             <BackToListButton
@@ -2093,8 +2095,8 @@ export function BottomDock({
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",
-            left: wideAnchorRect.right + wideBtnLeftExtra + 12,
-            top: wideBtnTop,
+            left: wideAnchorRect.right + 12,
+            top: wideSmallBtnTop,
             zIndex: 50,
           }}>
             {(selectedTsunamiId != null || selectedTideStationCode != null) && (
@@ -2151,8 +2153,8 @@ export function BottomDock({
           <>
           <div style={{
             position: "fixed",
-            left: wideAnchorRect.right + wideBtnLeftExtra + 12,
-            top: wideBtnTop,
+            left: wideAnchorRect.right + ((selectedWarningArea != null || selectedRiverStation != null) ? 0 : wideBtnLeftExtra) + 12,
+            top: (selectedWarningArea != null || selectedRiverStation != null) ? wideSmallBtnTop : wideBtnTop,
             zIndex: 50,
             // 緊急地震速報の!ボタンは、気象・警報タブではこの枠の中に並べる
             // (メニューが開いて広がっても重ならないように)。
@@ -2249,8 +2251,8 @@ export function BottomDock({
           <>
           <div style={{
             position: "fixed",
-            left: wideAnchorRect.right + wideBtnLeftExtra + 12,
-            top: wideBtnTop,
+            left: wideAnchorRect.right + ((selectedTyphoonInfo) ? 0 : wideBtnLeftExtra) + 12,
+            top: (selectedTyphoonInfo) ? wideSmallBtnTop : wideBtnTop,
             zIndex: 50,
             // 緊急地震速報の!ボタンは、気象・警報タブではこの枠の中に並べる
             // (メニューが開いて広がっても重ならないように)。
@@ -2374,8 +2376,8 @@ export function BottomDock({
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",
-            left: wideAnchorRect.right + wideBtnLeftExtra + 12,
-            top: wideBtnTop,
+            left: wideAnchorRect.right + 12,
+            top: wideSmallBtnTop,
             zIndex: 50,
           }}>
             <BackToListButton
