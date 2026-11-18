@@ -45,7 +45,7 @@ import { GlobalStyles } from "./app/globalStyles";
 import { ConsentGate } from "./app/ConsentGate";
 import { MapCanvas } from "./app/MapCanvas";
 import { QuakeIntensityLegend, RealtimeIntensityThresholdBar, TsunamiGradeLegend } from "./app/mapOverlayUi";
-import { CornerTabButtons, SideNavRail, WIDE_RAIL_WIDTH } from "./app/navUi";
+import { CORNER_TAB_ATTACHED_RADIUS, CORNER_TAB_RIM_CLIP_WIDE, CORNER_TAB_STACK_HEIGHT, CornerTabButtons, CornerTabFillet, SideNavRail, WIDE_PANEL_RADIUS_ATTACHED, WIDE_RAIL_WIDTH, widePanelRimClip } from "./app/navUi";
 import { NowcastColorSchemeContext, loadStoredNowcastColorScheme, saveNowcastColorScheme } from "./app/weather/nowcast";
 import { NowcastLegend, PrecipLegend, RiskLegend, RiverLegend, WarningLegend, WdistLegend } from "./app/weatherLegends";
 import { fetchWarningLevelMap_combined, loadWarningAreaNameIndex } from "./app/warnings";
@@ -3561,7 +3561,7 @@ export default function App() {
         }}>
           {isWide ? (
               <div style={{ height: "100%", animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both" }}>
-                <Glass radius={28} style={{ height: "100%" }}>
+                <Glass radius={tabPlacement === "corner" ? WIDE_PANEL_RADIUS_ATTACHED : 28} rimClip={tabPlacement === "corner" ? widePanelRimClip(CORNER_TAB_STACK_HEIGHT) : undefined} style={{ height: "100%" }}>
                   <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
                     {tabPlacement !== "corner" && (
                       <>
@@ -3733,17 +3733,23 @@ export default function App() {
                 />
               </div>
             </Glass>
-              {/* タブボタンを「フローティングの右上」に出す設定: パネルの外側(右上)に縦並びで浮かべる。 */}
+              {/* タブボタンを「フローティングの右上」に出す設定: パネルの右辺につなげて(右上に)縦並びで置く。 */}
               {tabPlacement === "corner" && (
-                <CornerTabButtons
-                  active={activeNav}
-                  onNav={handleNavTap}
-                  style={{ position: "absolute", left: "calc(100% + 12px)", top: 0 }}
-                />
+                <>
+                  {/* パネルの右辺にぴったりつなげる(上端も揃え、パネルの右上の角はタブ群と一体になる)。 */}
+                  <CornerTabButtons
+                    active={activeNav}
+                    onNav={handleNavTap}
+                    radius={CORNER_TAB_ATTACHED_RADIUS}
+                    rimClip={CORNER_TAB_RIM_CLIP_WIDE}
+                    style={{ position: "absolute", left: "100%", top: 0 }}
+                  />
+                  {/* 接合部の内側の角を、なめらかにつなぐ。 */}
+                  <CornerTabFillet style={{ position: "absolute", left: "100%", top: CORNER_TAB_STACK_HEIGHT - 1 }}/>
+                </>
               )}
               </div>
           ) : (
-            <>
             <BottomDock
               active={effectiveNav}
               navActive={activeNav}
@@ -3903,17 +3909,6 @@ export default function App() {
               onEpicenterLoadingChange={setEpicenterLoading}
               mapSelectSignal={mapSelectSignal}
             />
-            {/* タブボタンを「フローティングの右上」に出す設定: パネルの上の右端に横並びで浮かべる
-                (この箱の高さ=パネルの高さなので、bottom:100%でパネルのすぐ上に載る)。 */}
-            {tabPlacement === "corner" && (
-              <CornerTabButtons
-                active={activeNav}
-                onNav={handleNavTap}
-                horizontal
-                style={{ position: "absolute", right: 16, bottom: "calc(100% + 8px)" }}
-              />
-            )}
-            </>
           )}
         </div>
 

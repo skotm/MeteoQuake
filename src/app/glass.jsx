@@ -76,6 +76,8 @@ export const Glass = forwardRef(function Glass({
   style,
   filterSize = "normal",  // "normal" | "sm" | "none"
   blur = 14,               // backdrop blur量(px)。アニメーション中だけ軽くしたい場合に上書きする
+  rim = true,              // falseなら縁の光(rim light)を描かない(他の要素とつなげる時に境目の線を出さないため)
+  rimClip,                 // 縁の光だけに掛けるclip-path(つなぎ目の一部だけ縁を消したい時)
   tintColor,               // 状態色(警報/予報など)を付けたい時だけ渡す、6桁hexの基準色(例:"#FF453A")
   ...rest
 }, ref) {
@@ -165,6 +167,7 @@ export const Glass = forwardRef(function Glass({
         />
       )}
       {/* 縁のrim light: シャープな1pxの白線、歪みなし */}
+      {rim && (
       <div
         aria-hidden
         style={{
@@ -179,8 +182,10 @@ export const Glass = forwardRef(function Glass({
           zIndex: 1,
           // 明るい地図色の時は縁光(白い縁)も弱める(補正なしの時はopacityを指定しない)。
           ...(guardOn && !glassOpaque ? { opacity: glare.rim } : null),
+          ...(rimClip ? { clipPath: rimClip, WebkitClipPath: rimClip } : null),
         }}
       />
+      )}
       {/* コンテンツ層: 歪みフィルタの影響を一切受けない */}
       <div style={{ position: "relative", zIndex: 2, width: "100%", height: "100%" }}>
         {children}

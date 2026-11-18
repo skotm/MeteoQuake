@@ -319,14 +319,45 @@ export const CORNER_TAB_PAD = 4;     // ガラスの内側余白[px]
 export const CORNER_TAB_STACK_HEIGHT =
   NAV.length * CORNER_TAB_SIZE + (NAV.length - 1) * CORNER_TAB_GAP + CORNER_TAB_PAD * 2;
 
+// フローティングにつなげた時の角丸(横画面): 左上(パネルとの接合部)だけ角を付けず、残りは丸ピル。
+export const CORNER_TAB_ATTACHED_RADIUS = `0 ${(CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2}px ${(CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2}px 0`;
+// パネルとタブ群の接合部(タブ群の下端)に付ける、内側にえぐれた角丸のつなぎ目の大きさ[px]。
+export const CORNER_TAB_FILLET = 16;
+// パネルの右上の角を、タブ群につなぐ側だけ角丸なしにする(横画面)。
+export const WIDE_PANEL_RADIUS_ATTACHED = "28px 0 28px 28px";
+
+/** パネルとタブ群の接合部の内側の角を、なめらかにつなぐ小さなガラス片。
+ *  hole: えぐる円の中心(ガラス片の角)。横画面は"100% 100%"、縦画面は"0 0"。 */
+export function CornerTabFillet({ style, hole = "100% 100%" }) {
+  const mask = `radial-gradient(circle at ${hole}, transparent ${CORNER_TAB_FILLET - 0.5}px, #000 ${CORNER_TAB_FILLET}px)`;
+  return (
+    <Glass radius={0} filterSize="none" rim={false} style={{ width: CORNER_TAB_FILLET, height: CORNER_TAB_FILLET, WebkitMaskImage: mask, maskImage: mask, ...style }}/>
+  );
+}
+
+// ── つなぎ目の線(縁の光)を消すためのclip-path。つなぐ2つのガラスの、接する辺の縁だけを隠す。
+const SEAM = 2; // 隠す幅[px]
+// 横画面: タブ群の左辺の縁を隠す。
+export const CORNER_TAB_RIM_CLIP_WIDE = `inset(0 0 0 ${SEAM}px)`;
+// 横画面: パネルの右辺の縁のうち、タブ群と接している範囲(上からタブ群の高さ分)だけ隠す。
+export const widePanelRimClip = (h) =>
+  `polygon(0 0, calc(100% - ${SEAM}px) 0, calc(100% - ${SEAM}px) ${h}px, 100% ${h}px, 100% 100%, 0 100%)`;
+// 縦画面: タブ群の下辺の縁を隠す。
+export const CORNER_TAB_RIM_CLIP_PORTRAIT = `inset(0 0 ${SEAM}px 0)`;
+// 縦画面: パネルの上辺の縁のうち、タブ群と接している範囲(右端からタブ群の幅分)だけ隠す。
+export const portraitPanelRimClip = (w) =>
+  `polygon(0 0, calc(100% - ${w}px) 0, calc(100% - ${w}px) ${SEAM}px, 100% ${SEAM}px, 100% 100%, 0 100%)`;
+// 縦画面: パネルにつなげた時のタブ群の角丸(下の2隅は角なし)。
+export const CORNER_TAB_ATTACHED_RADIUS_PORTRAIT = `${(CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2}px ${(CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2}px 0 0`;
+
 // 横並び(縦画面用)にした時の高さ。
 export const CORNER_TAB_ROW_HEIGHT = CORNER_TAB_SIZE + CORNER_TAB_PAD * 2;
 
 /** horizontal=trueで横並び(縦画面用)、falseで縦並び(横画面用)。 */
-export function CornerTabButtons({ active, onNav, style, horizontal = false }) {
+export function CornerTabButtons({ active, onNav, style, horizontal = false, radius, rimClip }) {
   const { tokens } = useContext(ThemeContext);
   return (
-    <Glass radius={(CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2} style={{ animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both", ...style }}>
+    <Glass radius={radius ?? (CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2} rimClip={rimClip} style={{ animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both", ...style }}>
       <div style={{ display: "flex", flexDirection: horizontal ? "row" : "column", gap: CORNER_TAB_GAP, padding: CORNER_TAB_PAD }}>
         {NAV.map(({ id, label }) => {
           const isActive = id === active;
