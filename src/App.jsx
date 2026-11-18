@@ -12,7 +12,7 @@ import { Filters, LAYERS } from "./app/navigation";
 import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layoutHooks";
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
 import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, computeGlareGuard, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
-import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
+import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredTabPlacement, saveTabPlacement, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
 import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
 import { loadEpicenterNamesData, loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
@@ -45,7 +45,7 @@ import { GlobalStyles } from "./app/globalStyles";
 import { ConsentGate } from "./app/ConsentGate";
 import { MapCanvas } from "./app/MapCanvas";
 import { QuakeIntensityLegend, RealtimeIntensityThresholdBar, TsunamiGradeLegend } from "./app/mapOverlayUi";
-import { SideNavRail, WIDE_RAIL_WIDTH } from "./app/navUi";
+import { CornerTabButtons, SideNavRail, WIDE_RAIL_WIDTH } from "./app/navUi";
 import { NowcastColorSchemeContext, loadStoredNowcastColorScheme, saveNowcastColorScheme } from "./app/weather/nowcast";
 import { NowcastLegend, PrecipLegend, RiskLegend, RiverLegend, WarningLegend, WdistLegend } from "./app/weatherLegends";
 import { fetchWarningLevelMap_combined, loadWarningAreaNameIndex } from "./app/warnings";
@@ -362,6 +362,13 @@ export default function App() {
     setDisplayAreaEditing(false);
     // 地図などが領域の変化に追従して描き直されるよう、リサイズを通知する。
     setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
+  }
+
+  // タブボタンの配置。"slide"=スライド式のナビ(デフォルト) / "corner"=フローティングの右上に独立して配置。
+  const [tabPlacement, setTabPlacementState] = useState(loadStoredTabPlacement);
+  function handleChangeTabPlacement(next) {
+    setTabPlacementState(next);
+    saveTabPlacement(next);
   }
 
   // 配列型の微弱検知(ごく弱い揺れの検知)を使うか。リアルタイムタブの設定。デフォルトON。
@@ -3556,10 +3563,14 @@ export default function App() {
               <div style={{ height: "100%", animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both" }}>
                 <Glass radius={28} style={{ height: "100%" }}>
                   <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
-                    <div style={{ width: WIDE_RAIL_WIDTH, flexShrink: 0, position: "relative" }}>
-                      <SideNavRail active={activeNav} onNav={handleNavTap} uiScale={wideUIScale}/>
-                    </div>
-                    <div style={{ width: 1, alignSelf: "stretch", background: `rgba(${tokens.ink},0.14)` }}/>
+                    {tabPlacement !== "corner" && (
+                      <>
+                        <div style={{ width: WIDE_RAIL_WIDTH, flexShrink: 0, position: "relative" }}>
+                          <SideNavRail active={activeNav} onNav={handleNavTap} uiScale={wideUIScale}/>
+                        </div>
+                        <div style={{ width: 1, alignSelf: "stretch", background: `rgba(${tokens.ink},0.14)` }}/>
+                      </>
+                    )}
                     <BottomDock
                       active={effectiveNav}
                       navActive={activeNav}
@@ -3658,6 +3669,8 @@ export default function App() {
                   onChangeWeakArrayDetectionEnabled={handleChangeWeakArrayDetectionEnabled}
                   displayInsets={displayInsets}
                   onOpenDisplayAreaEditor={() => setDisplayAreaEditing(true)}
+                  tabPlacement={tabPlacement}
+                  onChangeTabPlacement={handleChangeTabPlacement}
                   shakeEventCardsEnabled={shakeEventCardsEnabled}
                   onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
                   cameraSettings={cameraSettings}
@@ -3720,8 +3733,17 @@ export default function App() {
                 />
               </div>
             </Glass>
+              {/* タブボタンを「フローティングの右上」に出す設定: パネルの外側(右上)に縦並びで浮かべる。 */}
+              {tabPlacement === "corner" && (
+                <CornerTabButtons
+                  active={activeNav}
+                  onNav={handleNavTap}
+                  style={{ position: "absolute", left: "calc(100% + 12px)", top: 0 }}
+                />
+              )}
               </div>
           ) : (
+            <>
             <BottomDock
               active={effectiveNav}
               navActive={activeNav}
@@ -3819,6 +3841,8 @@ export default function App() {
               onChangeWeakArrayDetectionEnabled={handleChangeWeakArrayDetectionEnabled}
               displayInsets={displayInsets}
               onOpenDisplayAreaEditor={() => setDisplayAreaEditing(true)}
+              tabPlacement={tabPlacement}
+              onChangeTabPlacement={handleChangeTabPlacement}
               shakeEventCardsEnabled={shakeEventCardsEnabled}
               onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
               cameraSettings={cameraSettings}
@@ -3879,6 +3903,16 @@ export default function App() {
               onEpicenterLoadingChange={setEpicenterLoading}
               mapSelectSignal={mapSelectSignal}
             />
+            {/* タブボタンを「フローティングの右上」に出す設定: パネルの上の右端に縦並びで浮かべる
+                (この箱の高さ=パネルの高さなので、bottom:100%でパネルのすぐ上に載る)。 */}
+            {tabPlacement === "corner" && (
+              <CornerTabButtons
+                active={activeNav}
+                onNav={handleNavTap}
+                style={{ position: "absolute", right: 16, bottom: "calc(100% + 8px)" }}
+              />
+            )}
+            </>
           )}
         </div>
 
