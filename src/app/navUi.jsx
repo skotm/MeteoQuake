@@ -329,9 +329,18 @@ export const WIDE_PANEL_RADIUS_ATTACHED = "28px 0 28px 28px";
 /** パネルとタブ群の接合部の内側の角を、なめらかにつなぐ小さなガラス片。
  *  hole: えぐる円の中心(ガラス片の角)。横画面は"100% 100%"、縦画面は"0 0"。 */
 export function CornerTabFillet({ style, hole = "100% 100%" }) {
+  const { tokens } = useContext(ThemeContext);
   const mask = `radial-gradient(circle at ${hole}, transparent ${CORNER_TAB_FILLET - 0.5}px, #000 ${CORNER_TAB_FILLET}px)`;
+  const F = CORNER_TAB_FILLET;
+  // 円弧に沿った縁の光(つなぎ目の凹みの輪郭)。ガラス本体はマスクで切るので、縁は別のSVGで描く。
+  const arc = hole === "0 0" ? `M ${F} 0.4 A ${F - 0.4} ${F - 0.4} 0 0 1 0.4 ${F}` : `M 0.4 ${F} A ${F - 0.4} ${F - 0.4} 0 0 1 ${F} 0.4`;
   return (
-    <Glass radius={0} filterSize="none" rim={false} style={{ width: CORNER_TAB_FILLET, height: CORNER_TAB_FILLET, WebkitMaskImage: mask, maskImage: mask, ...style }}/>
+    <div style={{ width: F, height: F, ...style }}>
+      <Glass radius={0} filterSize="none" rim={false} style={{ width: F, height: F, WebkitMaskImage: mask, maskImage: mask }}/>
+      <svg width={F} height={F} style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none", overflow: "visible" }}>
+        <path d={arc} fill="none" stroke={tokens.rimLight} strokeWidth={0.9}/>
+      </svg>
+    </div>
   );
 }
 
@@ -348,10 +357,10 @@ export const widePanelRimClip = (h) =>
   `polygon(0 0, calc(100% - ${SEAM}px) 0, calc(100% - ${SEAM}px) ${h + F}px, 100% ${h + F}px, 100% 100%, 0 100%)`;
 // 縦画面: タブ群。下辺の縁(右端の外周は残す)と、左辺の縁のうちつなぎ目の範囲(下からF)を隠す。
 export const CORNER_TAB_RIM_CLIP_PORTRAIT =
-  `polygon(0 0, 100% 0, 100% 100%, calc(100% - ${SEAM}px) 100%, calc(100% - ${SEAM}px) calc(100% - ${SEAM}px), ${SEAM}px calc(100% - ${SEAM}px), ${SEAM}px calc(100% - ${F}px), 0 calc(100% - ${F}px))`;
+  `polygon(0 0, 100% 0, 100% 100%, calc(100% - 1px) 100%, calc(100% - 1px) calc(100% - ${SEAM}px), ${SEAM}px calc(100% - ${SEAM}px), ${SEAM}px calc(100% - ${F}px), 0 calc(100% - ${F}px))`;
 // 縦画面: パネル。上辺の縁のうち、タブ群(幅w)とつなぎ目の範囲を隠す(右端の外周は残す)。
 export const portraitPanelRimClip = (w) =>
-  `polygon(0 0, calc(100% - ${w + F}px) 0, calc(100% - ${w + F}px) 1px, 100% 1px, 100% 100%, 0 100%)`;
+  `polygon(0 0, calc(100% - ${w + F}px) 0, calc(100% - ${w + F}px) 1px, calc(100% - 1px) 1px, calc(100% - 1px) 0, 100% 0, 100% 100%, 0 100%)`;
 // 縦画面: パネルにつなげた時のタブ群の角丸(下の2隅は角なし)。
 export const CORNER_TAB_ATTACHED_RADIUS_PORTRAIT = `${(CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2}px ${(CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2}px 0 0`;
 
