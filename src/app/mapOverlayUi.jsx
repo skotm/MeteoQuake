@@ -198,8 +198,8 @@ export function RealtimeIntensityThresholdBar({ threshold, onChangeThreshold }) 
   };
 
   return (
-    <Glass radius={14} style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}>
-      <div style={{ padding: "8px 12px", width: 224 }}>
+    <Glass radius={11} style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}>
+      <div style={{ padding: "5px 10px 4px", width: 200 }}>
         <div style={{ position: "relative" }}>
           {/* カラースケール本体(ドラッグでしきい値を変更) */}
           <div
@@ -210,8 +210,8 @@ export function RealtimeIntensityThresholdBar({ threshold, onChangeThreshold }) 
             onPointerCancel={handlePointerUp}
             style={{
               position: "relative",
-              height: 18,
-              borderRadius: 6,
+              height: 10,
+              borderRadius: 4,
               background: SHINDO_GRADIENT_CSS,
               touchAction: "none",
               cursor: "pointer",
@@ -235,8 +235,8 @@ export function RealtimeIntensityThresholdBar({ threshold, onChangeThreshold }) 
             <div style={{
               position: "absolute",
               left: `${pct}%`,
-              top: -4,
-              bottom: -4,
+              top: -3,
+              bottom: -3,
               width: 4,
               transform: "translateX(-50%)",
               borderRadius: 999,
@@ -248,7 +248,7 @@ export function RealtimeIntensityThresholdBar({ threshold, onChangeThreshold }) 
           </div>
 
           {/* 目盛りラベル */}
-          <div style={{ position: "relative", height: 12, marginTop: 0 }}>
+          <div style={{ position: "relative", height: 10, marginTop: 1 }}>
             {SHINDO_THRESHOLD_TICKS.map(v => (
               <span key={v} style={{
                 position: "absolute",
@@ -257,6 +257,7 @@ export function RealtimeIntensityThresholdBar({ threshold, onChangeThreshold }) 
                   ? "translateX(0%)"
                   : v === SHINDO_MAX_INTENSITY ? "translateX(-100%)" : "translateX(-50%)",
                 fontSize: 8,
+                lineHeight: "10px",
                 fontWeight: 700,
                 fontVariantNumeric: "tabular-nums",
                 color: `rgba(${tokens.ink},0.75)`,
