@@ -94,6 +94,10 @@ export function GlobalStyles({ tokens = THEME_TOKENS.dark }) {
         from { opacity:0; transform:translateY(10px) scale(0.97); }
         to   { opacity:1; transform:translateY(0)    scale(1); }
       }
+      @keyframes appearFade {
+        from { opacity:0; }
+        to   { opacity:1; }
+      }
       @keyframes eewFabPulse {
         0%,100% { box-shadow: 0 0 0 0 rgba(255,69,58,0.5); }
         50%      { box-shadow: 0 0 0 8px rgba(255,69,58,0); }
