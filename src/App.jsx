@@ -12,8 +12,9 @@ import { Filters, LAYERS } from "./app/navigation";
 import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layoutHooks";
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
 import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, computeGlareGuard, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
+import { useJmaLongPeriod } from "./app/useJmaLongPeriod";
 import { useWolfxDetail } from "./app/useWolfxDetail";
-import { attachLongPeriod, buildTestLongPeriodInfo } from "./longPeriod";
+import { attachLongPeriod, buildTestLongPeriodInfo, eventIdMinuteKey } from "./longPeriod";
 const EMPTY_LONG_PERIOD = new Map();
 import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredTabPlacement, saveTabPlacement, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredLongPeriodEnabled, saveLongPeriodEnabled, loadStoredQuakeSource, saveQuakeSource, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
@@ -1961,7 +1962,24 @@ export default function App() {
   // 長周期地震動階級(Wolfx)を、地震カードに重ねる。リプレイ中は、再生時刻より後に出た観測情報は出さない。
   // 長周期の表示と、地震情報のWolfx取得は同じ通信(jma_earthquake_detail)から作る。
   const wolfxDetail = useWolfxDetail(longPeriodEnabled || quakeSource === "wolfx");
-  const longPeriodEvents = longPeriodEnabled ? wolfxDetail.longPeriod : EMPTY_LONG_PERIOD;
+  // Wolfxの直近100件に無い過去の地震は、気象庁の「長周期地震動に関する観測情報(過去の地震)」から補う。
+  // Wolfxの取得が終わってから(Wolfxにある地震は取りに行かない)。取得元がP2PでもWolfxでも同じ。
+  const wolfxMinuteKeys = useMemo(
+    () => new Set([...wolfxDetail.longPeriod.keys()].map(eventIdMinuteKey).filter(Boolean)),
+    [wolfxDetail.longPeriod],
+  );
+  const jmaLongPeriod = useJmaLongPeriod(
+    replayQuakeList ?? quakes,
+    longPeriodEnabled && (wolfxDetail.status === "ready" || wolfxDetail.status === "error"),
+    wolfxMinuteKeys,
+  );
+  const longPeriodEvents = useMemo(() => {
+    if (!longPeriodEnabled) return EMPTY_LONG_PERIOD;
+    if (jmaLongPeriod.size === 0) return wolfxDetail.longPeriod;
+    const m = new Map(jmaLongPeriod);
+    for (const [k, v] of wolfxDetail.longPeriod) m.set(k, v);
+    return m;
+  }, [longPeriodEnabled, wolfxDetail.longPeriod, jmaLongPeriod]);
   const baseQuakes = useMemo(
     () => attachLongPeriod(replayQuakeList ?? quakes, longPeriodEvents, replayQuakeList ? replayQuakeNowMs : null),
     [replayQuakeList, quakes, longPeriodEvents, replayQuakeNowMs],
@@ -3375,7 +3393,7 @@ export default function App() {
             zIndex: 30,
           }}>
             {lpViewActive
-              ? <LongPeriodLegend/>
+              ? <LongPeriodLegend maxLg={Math.max(...selectedQuake.longPeriodInfo.areas.map(a => a.lg))}/>
               : <QuakeIntensityLegend maxIntensity={selectedQuake.maxIntensity} legacyIntensityScale={selectedQuake.legacyIntensityScale}/>}
           </div>
         )}

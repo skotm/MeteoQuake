@@ -16,13 +16,13 @@ import { TSUNAMI_GRADE_INFO, tsunamiGradeInfo, tsunamiHeightBandGrade } from "./
 const INTENSITY_LEGEND_ORDER = ["1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
 
 // 長周期地震動階級の地図表示中の凡例。階級1〜4を、大きい階級ほど右になる横並びの角丸の四角で示す。
-export function LongPeriodLegend() {
+export function LongPeriodLegend({ maxLg = 4 }) {
   const schemeId = useContext(QuakeColorSchemeContext);
   const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
   return (
     <Glass radius={16} style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}>
       <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 5, padding: 6 }}>
-        {[1, 2, 3, 4].map(g => {
+        {[1, 2, 3, 4].filter(g => g <= Math.max(1, maxLg)).map(g => {
           const st = getLongPeriodStyleFromScheme(scheme, g);
           return (
             <div key={g} style={{
