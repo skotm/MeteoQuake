@@ -153,6 +153,9 @@ const LONG_PERIOD_PHRASE = { 1: "やや大きな揺れ", 2: "大きな揺れ", 3
    階級の高い順に、その階級を観測した市区町村を並べる。
    市区町村の階級は、観測点(コード先頭5桁が市区町村)の最大階級。観測点のある市区町村のみ。
    ───────────────────────────────────────────────────── */
+// 観測点名の末尾などに付く「＊」(気象庁以外の震度観測点)は表示しない。
+function stripStationMark(t) { return typeof t === "string" ? t.replace(/[*＊]/g, "").trim() : t; }
+
 export function LongPeriodCard({ quake }) {
   const { tokens } = useContext(ThemeContext);
   const schemeId = useContext(QuakeColorSchemeContext);
@@ -161,7 +164,8 @@ export function LongPeriodCard({ quake }) {
   const groups = useMemo(() => {
     if (!info) return [];
     const m = new Map();
-    for (const c of info.cities) { if (!m.has(c.lg)) m.set(c.lg, []); m.get(c.lg).push(c.name); }
+    const rows = info.cities.length > 0 ? info.cities : (info.areas || []);
+    for (const c of rows) { if (!m.has(c.lg)) m.set(c.lg, []); m.get(c.lg).push(c.name); }
     return [...m.entries()].sort((a, b) => b[0] - a[0]);
   }, [info]);
   if (!info || !(info.maxLg >= 1)) return null;
@@ -191,9 +195,6 @@ export function LongPeriodCard({ quake }) {
             <span style={{ fontSize: 13, color: `rgba(${tokens.ink},0.9)` }}>{names.join("、")}</span>
           </div>
         ))}
-        <div style={{ fontSize: 10.5, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.4 }}>
-          観測点のある市区町村のみ。気象庁の長周期地震動に関する観測情報(Wolfx Open API経由)。
-        </div>
       </div>
     </div>
   );
@@ -462,7 +463,7 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
         prefEntry.cityIndexOf.set(cityKey, prefEntry.cities.length);
         prefEntry.cities.push({ city: p.city, addrs: [] });
       }
-      prefEntry.cities[prefEntry.cityIndexOf.get(cityKey)].addrs.push(p.addr);
+      prefEntry.cities[prefEntry.cityIndexOf.get(cityKey)].addrs.push(stripStationMark(p.addr));
     }
 
     return (
@@ -634,7 +635,7 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
                     flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: tokens.text,
                     whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                   }}>
-                    {p.addr}
+                    {stripStationMark(p.addr)}
                   </span>
                 </div>
               </div>

@@ -105,7 +105,7 @@ export function BottomDock({
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
   eewTestForm, eewEpicenterPickActive,
-  testQuakes, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeTestAutoPlaying,
+  testQuakes, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeLpPickActive, quakeTestAutoPlaying,
   shakeTests, onShakeTestAction, shakeTestForm, shakeTestEpicenterPickActive, shakeTestEewLink,
   epicenterEstimates,
   eews = EMPTY_EQDB_LIST, eewIssued = false, eewDetailOpen, eewOpenSignal, onOpenEewDetail, onCloseEewDetail,
@@ -1727,6 +1727,20 @@ export function BottomDock({
     lastTsunamiAreaPickActive.current = tsunamiAreaPickActive;
   }, [tsunamiAreaPickActive]);
 
+  // 長周期階級の地図タップ選択中も、津波ピックと同様にパネルをたたんで地図を全面タップ可能にする。
+  const preLpPickSnapIndexRef = useRef(snapIndex);
+  const lastLpPickActive = useRef(!!quakeLpPickActive);
+  useEffect(() => {
+    const now = !!quakeLpPickActive;
+    if (!lastLpPickActive.current && now) {
+      preLpPickSnapIndexRef.current = snapIndex;
+      setSnapIndex(0);
+    } else if (lastLpPickActive.current && !now) {
+      setSnapIndex(preLpPickSnapIndexRef.current);
+    }
+    lastLpPickActive.current = now;
+  }, [quakeLpPickActive]);
+
   function handleSnap(newIndex) {
     setSnapIndex(newIndex);
     const shouldOpen = newIndex > 0;
@@ -2909,6 +2923,7 @@ export function BottomDock({
                   onTestQuakeAction={onTestQuakeAction}
                   quakeTestForm={quakeTestForm}
                   quakeEpicenterPickActive={quakeEpicenterPickActive}
+                  quakeLpPickActive={quakeLpPickActive}
                   quakeTestAutoPlaying={quakeTestAutoPlaying}
                   shakeTests={shakeTests}
                   onShakeTestAction={onShakeTestAction}

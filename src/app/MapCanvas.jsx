@@ -11,7 +11,7 @@ import { pickEewsToFocus } from "../eewCameraFocus";
 import { focusMapOnPoints } from "./mapFocus";
 import { ShakeCameraFollower, SHAKE_RESUME_MS } from "./shakeCameraFollow";
 import { DEFAULT_CAMERA_SETTINGS } from "./settingsStorage";
-import { EMPTY_REALTIME_VALUES, QUAKE_COLOR_SCHEMES, QuakeColorSchemeContext, intensityValueToKey, replayJmaSubthresholdColor } from "./colorSchemes";
+import { EMPTY_REALTIME_VALUES, QUAKE_COLOR_SCHEMES, QuakeColorSchemeContext, getLongPeriodStyleFromScheme, intensityValueToKey, replayJmaSubthresholdColor } from "./colorSchemes";
 import { ThemeContext } from "./theme";
 import { buildMapStyle, loadEpicenterNamesData, loadFaultsData, loadGeoData, loadMapLibre, loadPlateBoundariesData, loadTsunamiAreasData } from "./mapDataLoaders";
 import { BOUNDARY_LINE_COLORS, EEW_FILL_LEGEND_ORDER, INTENSITY_LABEL, STATION_ICON_BASE_RADIUS, STATION_ICON_KEYS, getBoundaryHaloColor, registerAreaIcons, registerStationIcons } from "./stationIcons";
@@ -19,7 +19,7 @@ import { EST_INTENSITY_MIN_INTENSITY_KEYS, QUAKE_INTENSITY_RANK, buildEpicenterC
 import { EPICENTER_LABEL_CANVAS_SCALE, buildDetectedStationIdSet, buildEpicenterEstimateFeatures, buildTrueEpicenterFeatures, drawEpicenterLabelCanvas, updateEpicenterEstimateLabels } from "./shakeMapLayers";
 import { filterEstimatesNearEew } from "./eewEstimateFilter";
 import { filterEstimatesByConfidence, logEstimateConfidenceChanges } from "../engines/epicenterConfidence";
-import { findAreaCodesByName, findEpicenterNameByPoint, findNearestTsunamiAreaWithDistance } from "./geo";
+import { findAreaByPoint, findAreaCodesByName, findEpicenterNameByPoint, findNearestTsunamiAreaWithDistance } from "./geo";
 import { EEW_P_WAVE_SPEED_KM_S, EEW_S_WAVE_SPEED_KM_S, eewCirclePolygon, eewWaveSurfaceRadiusKm } from "./liveFeeds";
 import { aggregateByArea, loadJmaTravelTimeTable } from "./stations";
 import { buildTsunamiAreaColorExpr } from "./tsunamiData";
@@ -47,6 +47,7 @@ export function MapCanvas({
   eews = [],
   eewEpicenterPickActive = false, onPickEewEpicenter,
   quakeEpicenterPickActive = false, onPickQuakeEpicenter,
+  quakeLongPeriodPickActive = false, onPickQuakeLongPeriodArea, quakeLongPeriodPickAreas = [],
   shakeTestEpicenterPickActive = false, onPickShakeTestEpicenter,
   eewDetailOpen = false,
   currentLocationPoint = null, // { lat, lon } | null。気象タブ「地点」モード中のGPS現在地(iOS風の青丸)
@@ -196,6 +197,10 @@ export function MapCanvas({
   // 同時にONにはならない)。
   const quakeEpicenterPickActiveRef = useRef(quakeEpicenterPickActive);
   quakeEpicenterPickActiveRef.current = quakeEpicenterPickActive;
+  const quakeLpPickActiveRef = useRef(quakeLongPeriodPickActive);
+  quakeLpPickActiveRef.current = quakeLongPeriodPickActive;
+  const onPickQuakeLpAreaRef = useRef(onPickQuakeLongPeriodArea);
+  onPickQuakeLpAreaRef.current = onPickQuakeLongPeriodArea;
   const onPickQuakeEpicenterRef = useRef(onPickQuakeEpicenter);
   onPickQuakeEpicenterRef.current = onPickQuakeEpicenter;
   const shakeTestEpicenterPickActiveRef = useRef(shakeTestEpicenterPickActive);
@@ -1206,6 +1211,17 @@ export function MapCanvas({
             }
           });
 
+          // 地震情報テスト「長周期地震動階級を割り当てる地域を地図で選ぶ」モード用。
+          // タップ地点を含む細分区域を求めて、親(App)に渡す。
+          map.on("click", (e) => {
+            if (!quakeLpPickActiveRef.current) return;
+            const { lat, lng } = e.lngLat;
+            loadGeoData().then(({ areas: areasGeoJSON }) => {
+              const hit = findAreaByPoint(areasGeoJSON, lat, lng);
+              if (hit) onPickQuakeLpAreaRef.current?.(hit.name, hit.code);
+            }).catch((err) => console.error("細分区域データの読み込みに失敗しました:", err));
+          });
+
           // 地震検知テスト(実験的機能)「地図をタップして震源を指定」モード用。
           // EEW・地震情報の震源ピックと全く同じ処理を、行き先だけ変えて共有する。
           map.on("click", (e) => {
@@ -2154,6 +2170,28 @@ export function MapCanvas({
     return () => { cancelled = true; };
   }, [eews, status, colorScheme]);
 
+  // 地震情報テスト: 長周期地震動階級を割り当てた地域の塗り(選択中だけ。最優先で上書きする)。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    let cancelled = false;
+    if (!quakeLongPeriodPickActive || quakeLongPeriodPickAreas.length === 0) {
+      areaFillRef.current.setPickFill(new Map());
+      return undefined;
+    }
+    loadGeoData().then(({ areas: areasGeoJSON }) => {
+      if (cancelled) return;
+      const colors = new Map();
+      for (const a of quakeLongPeriodPickAreas) {
+        const color = getLongPeriodStyleFromScheme(colorScheme, a.grade)?.bg;
+        if (!color) continue;
+        for (const code of findAreaCodesByName(areasGeoJSON, a.name)) colors.set(code, color);
+      }
+      areaFillRef.current.setPickFill(colors);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [quakeLongPeriodPickActive, quakeLongPeriodPickAreas, status, colorScheme]);
+
   // 配色スキームが切り替わったら、観測点アイコン(丸+白フチ+数字)を焼き直す。
   // symbolレイヤー側は同じicon-image名を参照し続けるので、updateImageするだけで
   // 表示中のマーカーにも即座に反映される。
@@ -2277,7 +2315,7 @@ export function MapCanvas({
     const map = mapRef.current;
     if (!map || status !== "ready") return;
 
-    map.getCanvas().style.cursor = (tsunamiAreaPickActive || eewEpicenterPickActive || quakeEpicenterPickActive || shakeTestEpicenterPickActive) ? "crosshair" : "";
+    map.getCanvas().style.cursor = (tsunamiAreaPickActive || eewEpicenterPickActive || quakeEpicenterPickActive || quakeLongPeriodPickActive || shakeTestEpicenterPickActive) ? "crosshair" : "";
 
     if ((eewEpicenterPickActive || quakeEpicenterPickActive || shakeTestEpicenterPickActive) && !epicenterNamesLoadedRef.current) {
       epicenterNamesLoadedRef.current = true;
@@ -2288,7 +2326,7 @@ export function MapCanvas({
           epicenterNamesLoadedRef.current = false; // 失敗時は次回ONで再試行できるようにする
         });
     }
-  }, [eewEpicenterPickActive, quakeEpicenterPickActive, shakeTestEpicenterPickActive, tsunamiAreaPickActive, status]);
+  }, [eewEpicenterPickActive, quakeEpicenterPickActive, quakeLongPeriodPickActive, shakeTestEpicenterPickActive, tsunamiAreaPickActive, status]);
 
   // ピックモードで選ばれている予報区(pickedTsunamiAreas、複数・グレード別可)を、
   // それぞれの実際の配色で強調レイヤーに反映する。buildTsunamiAreaColorExprは

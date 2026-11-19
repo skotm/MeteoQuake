@@ -210,7 +210,7 @@ function StationListDisplayModePreview({ mode }) {
                     flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: tokens.text,
                     whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                   }}>
-                    {p.addr}
+                    {typeof p.addr === "string" ? p.addr.replace(/[*＊]/g, "").trim() : p.addr}
                   </span>
                 </div>
               </div>

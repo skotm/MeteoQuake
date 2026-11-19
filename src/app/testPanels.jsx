@@ -247,7 +247,7 @@ const QUAKE_TEST_TSUNAMI_OPTIONS = [
   { value: "MajorWarning", label: "大津波警報等" },
 ];
 
-export function QuakeTestBroadcastPanel({ testQuakes = [], onAction, quakeTestForm, quakeEpicenterPickActive, quakeTestAutoPlaying }) {
+export function QuakeTestBroadcastPanel({ testQuakes = [], onAction, quakeTestForm, quakeEpicenterPickActive, quakeLpPickActive, quakeTestAutoPlaying }) {
   const { tokens, mode } = useContext(ThemeContext);
   const f = quakeTestForm;
 
@@ -392,14 +392,25 @@ export function QuakeTestBroadcastPanel({ testQuakes = [], onAction, quakeTestFo
           </div>
           <div>
             <label style={labelStyle}>長周期地震動階級(④で使用)</label>
-            <select
-              value={f.longPeriod ?? 2}
-              onChange={e => patchForm({ longPeriod: parseInt(e.target.value, 10) })}
+            <PressableButton
+              type="button"
+              onClick={() => onAction?.(quakeLpPickActive ? "finishLpPick" : "startLpPick")}
               disabled={disabled}
-              style={inputStyle}
+              style={{
+                width: "100%", padding: "10px 12px", borderRadius: 8, border: "none", cursor: disabled ? "default" : "pointer",
+                textAlign: "left",
+                background: quakeLpPickActive ? "rgba(10,132,255,0.18)" : `rgba(${tokens.ink},0.08)`,
+                color: quakeLpPickActive ? "#0A84FF" : tokens.text,
+                opacity: disabled ? 0.5 : 1,
+              }}
             >
-              {[1, 2, 3, 4].map(g => (<option key={g} value={g}>階級{g}</option>))}
-            </select>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>
+                {quakeLpPickActive ? "地図をタップして地域を選択中…" : (f.longPeriodAreas?.length ? `${f.longPeriodAreas.length}地域を割り当て済み` : "(未割り当て:観測点から自動生成)")}
+              </div>
+              <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, marginTop: 2 }}>
+                タップして地図で地域ごとに階級を割り当て
+              </div>
+            </PressableButton>
           </div>
           <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.6 }}>
             ①②は津波「調査中」で固定配信されます(実際の電文と同じ挙動)。③でここの判定に切り替わります。
@@ -446,7 +457,7 @@ export function QuakeTestBroadcastPanel({ testQuakes = [], onAction, quakeTestFo
             disabled={disabled || !targetGroup}
             style={{ ...stageBtnStyle("#FF3B30", disabled || !targetGroup), flex: "none", width: "100%" }}
           >
-            ④ 長周期地震動の観測情報(階級{f.longPeriod ?? 2})
+            ④ 長周期地震動の観測情報
           </PressableButton>
           <PressableButton
             type="button"

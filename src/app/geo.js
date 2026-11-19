@@ -177,6 +177,19 @@ export function findEpicenterNameByPoint(epicenterNamesGeoJSON, lat, lon) {
   return null;
 }
 
+// 細分区域.json(areas)のポリゴンを走査し、点(lat,lon)を含む細分区域のname・codeを返す。
+// 地震情報テストで、長周期地震動階級を割り当てる地域を地図タップで選ぶのに使う。無ければnull。
+export function findAreaByPoint(areasGeoJSON, lat, lon) {
+  if (!areasGeoJSON || !Array.isArray(areasGeoJSON.features) || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  for (const feature of areasGeoJSON.features) {
+    if (isPointInPolygonGeometry(lat, lon, feature.geometry)) {
+      const name = feature.properties?.name;
+      return name ? { name, code: feature.properties?.code ?? null } : null;
+    }
+  }
+  return null;
+}
+
 // 都道府県 → 地方(8地方区分+北海道・沖縄)。揺れ検知カードの場所表示で、
 // 震央地名の区域・都道府県で1つに絞れない時に、地方名まで広げるために使う。
 const REGION_OF_PREFECTURE = {
