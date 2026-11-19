@@ -2724,9 +2724,14 @@ export function BottomDock({
                           <QuakeDetailCard quake={selected}/>
                         </PanelDragHandoffCard>
                         {selected.longPeriodInfo && <LongPeriodCard quake={selected}/>}
-                        {!selected.isEqdb && <QuakeMessageCard quake={selected}/>}
+                        {!selected.isEqdb && <QuakeMessageCard quake={selected} part="top"/>}
+                        {stationPoints.length > 0 && (
+                          <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
+                            openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>
+                        )}
+                        {!selected.isEqdb && <QuakeMessageCard quake={selected} part="bottom"/>}
                         {shouldShowNearbyQuakeButton(selected) && (
-                          <div style={{ margin: "2px 14px 8px" }}>
+                          <div style={{ margin: "8px 14px 4px" }}>
                             <PressableButton
                               type="button"
                               onClick={() => {
@@ -2747,10 +2752,6 @@ export function BottomDock({
                               この震源の近傍で発生した地震
                             </PressableButton>
                           </div>
-                        )}
-                        {stationPoints.length > 0 && (
-                          <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
-                            openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>
                         )}
                         {/* 震央地名が陸域なら初動解の対象なのでMに関わらず出し、海域・その他は
                             CMT解/USGSの対象になるM4.5以上のときだけ出す(cmt.jsのshouldShowMechanismButton)。 */}
@@ -3086,9 +3087,14 @@ export function BottomDock({
                         <QuakeDetailCard quake={selected}/>
                       </PanelDragHandoffCard>
                       {selected.longPeriodInfo && <LongPeriodCard quake={selected}/>}
-                        {!selected.isEqdb && <QuakeMessageCard quake={selected}/>}
+                        {!selected.isEqdb && <QuakeMessageCard quake={selected} part="top"/>}
+                      {stationPoints.length > 0 && (
+                        <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
+                          openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>
+                      )}
+                      {!selected.isEqdb && <QuakeMessageCard quake={selected} part="bottom"/>}
                       {shouldShowNearbyQuakeButton(selected) && (
-                        <div style={{ margin: "2px 14px 8px" }}>
+                        <div style={{ margin: "8px 14px 4px" }}>
                           <PressableButton
                             type="button"
                             onClick={() => {
@@ -3109,10 +3115,6 @@ export function BottomDock({
                             この震源の近傍で発生した地震
                           </PressableButton>
                         </div>
-                      )}
-                      {stationPoints.length > 0 && (
-                        <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
-                          openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>
                       )}
                       {/* 震央地名が陸域なら初動解の対象なのでMに関わらず出し、海域・その他は
                           CMT解/USGSの対象になるM4.5以上のときだけ出す(cmt.jsのshouldShowMechanismButton)。 */}
