@@ -2175,7 +2175,7 @@ export function MapCanvas({
     const map = mapRef.current;
     if (!map || status !== "ready") return;
     let cancelled = false;
-    if (!(quakeLongPeriodPickActive || quakeLongPeriodFillActive) || quakeLongPeriodPickAreas.length === 0) {
+    if (!quakeLongPeriodPickActive || quakeLongPeriodPickAreas.length === 0) {
       areaFillRef.current.setPickFill(new Map());
       return undefined;
     }
@@ -2190,7 +2190,7 @@ export function MapCanvas({
       areaFillRef.current.setPickFill(colors);
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, [quakeLongPeriodPickActive, quakeLongPeriodFillActive, quakeLongPeriodPickAreas, status, colorScheme]);
+  }, [quakeLongPeriodPickActive, quakeLongPeriodPickAreas, status, colorScheme]);
 
   // 配色スキームが切り替わったら、観測点アイコン(丸+白フチ+数字)を焼き直す。
   // symbolレイヤー側は同じicon-image名を参照し続けるので、updateImageするだけで

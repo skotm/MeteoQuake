@@ -105,7 +105,7 @@ export function BottomDock({
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
   eewTestForm, eewEpicenterPickActive,
-  testQuakes, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeLpPickActive, lpMapView, onToggleLpMapView, quakeTestAutoPlaying,
+  testQuakes, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeLpPickActive, quakeTestAutoPlaying,
   shakeTests, onShakeTestAction, shakeTestForm, shakeTestEpicenterPickActive, shakeTestEewLink,
   epicenterEstimates,
   eews = EMPTY_EQDB_LIST, eewIssued = false, eewDetailOpen, eewOpenSignal, onOpenEewDetail, onCloseEewDetail,
@@ -2723,7 +2723,7 @@ export function BottomDock({
                         <PanelDragHandoffCard onHandoffToPanelDrag={handlePointerDown}>
                           <QuakeDetailCard quake={selected}/>
                         </PanelDragHandoffCard>
-                        {selected.longPeriodInfo && <LongPeriodCard quake={selected} mapView={!!lpMapView} onToggleMapView={onToggleLpMapView}/>}
+                        {selected.longPeriodInfo && <LongPeriodCard quake={selected}/>}
                         {!selected.isEqdb && <QuakeMessageCard quake={selected} part="top"/>}
                         {stationPoints.length > 0 && (
                           <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
@@ -3086,7 +3086,7 @@ export function BottomDock({
                       <PanelDragHandoffCard onHandoffToPanelDrag={handlePointerDown}>
                         <QuakeDetailCard quake={selected}/>
                       </PanelDragHandoffCard>
-                      {selected.longPeriodInfo && <LongPeriodCard quake={selected} mapView={!!lpMapView} onToggleMapView={onToggleLpMapView}/>}
+                      {selected.longPeriodInfo && <LongPeriodCard quake={selected}/>}
                         {!selected.isEqdb && <QuakeMessageCard quake={selected} part="top"/>}
                       {stationPoints.length > 0 && (
                         <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}

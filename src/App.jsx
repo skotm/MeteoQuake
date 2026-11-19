@@ -950,8 +950,6 @@ export default function App() {
   const [quakeEpicenterPickActive, setQuakeEpicenterPickActive] = useState(false);
   // 長周期地震動階級を割り当てる地域を地図で選ぶモード(階級はフォームのlongPeriod、割り当てはフォームのlongPeriodAreas)
   const [quakeLpPickActive, setQuakeLpPickActive] = useState(false);
-  // 長周期地震動階級を細分区域の塗りで見る表示(観測点・推計震度分布は隠す)
-  const [lpMapView, setLpMapView] = useState(false);
   const [quakeTestAutoPlaying, setQuakeTestAutoPlaying] = useState(false);
 
   /**
@@ -2311,14 +2309,6 @@ export default function App() {
   const selectedQuake = effectiveQuakes.find(q => q.id === quakeSelectionRelevantToCurrentView)
     || (searchQuake && searchQuake.id === quakeSelectionRelevantToCurrentView ? searchQuake : null);
 
-  // 長周期階級の塗り表示。選択中の地震が変わる/階級情報が無くなったら通常表示に戻す。
-  const lpViewActive = lpMapView && !!selectedQuake?.longPeriodInfo && (selectedQuake.longPeriodInfo.areas || []).length > 0;
-  useEffect(() => { setLpMapView(false); }, [selectedQuake?.id]);
-  const lpViewAreas = useMemo(
-    () => lpViewActive ? selectedQuake.longPeriodInfo.areas.map(a => ({ name: a.name, grade: a.lg })) : [],
-    [lpViewActive, selectedQuake?.longPeriodInfo]
-  );
-
   // 観測点データが多い地震(震度データベース検索由来ではない、通常の地震一覧からの選択)は、
   // 観測点マスタとの突き合わせ(resolveStationPoints)が重くなり、選択直後に一瞬固まって
   // 見えることがある。selectedQuakeが変わった直後にまずローディング表示を出し、
@@ -3288,7 +3278,7 @@ export default function App() {
           riverStations={riverStations}
           selectedRiverStation={selectedRiverStation}
           onSelectRiverStation={handleSelectRiverStation}
-          stationPoints={showQuakeMapLayers && !lpViewActive ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
+          stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
           tideStationPoints={
             showTideGaugeLayer ? tideStationsForMap
@@ -3312,7 +3302,7 @@ export default function App() {
           isWide={isWide}
           quakeTimeStr={causingQuakeCard ? causingQuakeCard.time : selectedQuake?.time}
           maxIntensityKey={causingQuakeCard ? causingQuakeCard.maxIntensity : selectedQuake?.maxIntensity}
-          estIntensityEnabled={showQuakeMapLayers && estIntensityEnabled && !lpViewActive}
+          estIntensityEnabled={showQuakeMapLayers && estIntensityEnabled}
           areaFillEnabled={showQuakeMapLayers && areaFillEnabled}
           faultsEnabled={showFaultPlateLayers && faultsEnabled}
           plateBoundariesEnabled={showFaultPlateLayers && plateBoundariesEnabled}
@@ -3333,8 +3323,7 @@ export default function App() {
           onPickQuakeEpicenter={handlePickQuakeEpicenter}
           quakeLongPeriodPickActive={quakeLpPickActive}
           onPickQuakeLongPeriodArea={handlePickQuakeLpArea}
-          quakeLongPeriodFillActive={lpViewActive && !quakeLpPickActive}
-          quakeLongPeriodPickAreas={quakeLpPickActive ? quakeTestForm.longPeriodAreas : lpViewAreas}
+          quakeLongPeriodPickAreas={quakeTestForm.longPeriodAreas}
           shakeTestEpicenterPickActive={shakeTestEpicenterPickActive}
           onPickShakeTestEpicenter={handlePickShakeTestEpicenter}
           eewDetailOpen={eewMapLegendVisible}
@@ -3893,7 +3882,6 @@ export default function App() {
                   quakeTestForm={quakeTestForm}
                   quakeEpicenterPickActive={quakeEpicenterPickActive}
                   quakeLpPickActive={quakeLpPickActive}
-                  lpMapView={lpViewActive} onToggleLpMapView={() => setLpMapView(v => !v)}
                   quakeTestAutoPlaying={quakeTestAutoPlaying}
                   shakeTests={shakeTests}
                   onShakeTestAction={handleShakeTestAction}
@@ -4077,7 +4065,6 @@ export default function App() {
               quakeTestForm={quakeTestForm}
               quakeEpicenterPickActive={quakeEpicenterPickActive}
               quakeLpPickActive={quakeLpPickActive}
-              lpMapView={lpViewActive} onToggleLpMapView={() => setLpMapView(v => !v)}
               quakeTestAutoPlaying={quakeTestAutoPlaying}
               shakeTests={shakeTests}
               onShakeTestAction={handleShakeTestAction}

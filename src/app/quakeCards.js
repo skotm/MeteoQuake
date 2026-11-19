@@ -200,9 +200,7 @@ const TSUNAMI_TEXT = {
 export function isTsunamiNoWorryConfirmed(quake) {
   // 「確定」の判定は発表段階ではなく、観測点(市町村単位)の詳細な震度が出ているかで行う。
   const hasStationDetail = Array.isArray(quake?.points) && quake.points.some(p => p.isArea === false);
-  // テスト配信は簡易的に細分区域単位の点しか持たないため、③確定段階まで進んでいれば詳細ありとみなす。
-  const testDetail = !!quake?.isTest && quake?.stage === "detail";
-  return (hasStationDetail || testDetail) && quake?.domesticTsunami === "None";
+  return hasStationDetail && quake?.domesticTsunami === "None";
 }
 
 // 観測点名の「＊」表示をやめたため、それを説明する定型の付加文も出さない。

@@ -156,7 +156,7 @@ const LONG_PERIOD_PHRASE = { 1: "やや大きな揺れ", 2: "大きな揺れ", 3
 // 観測点名の末尾などに付く「＊」(気象庁以外の震度観測点)は表示しない。
 function stripStationMark(t) { return typeof t === "string" ? t.replace(/[*＊]/g, "").trim() : t; }
 
-export function LongPeriodCard({ quake, mapView = false, onToggleMapView }) {
+export function LongPeriodCard({ quake }) {
   const { tokens } = useContext(ThemeContext);
   const schemeId = useContext(QuakeColorSchemeContext);
   const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
@@ -180,20 +180,6 @@ export function LongPeriodCard({ quake, mapView = false, onToggleMapView }) {
           <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.6)` }}>
             最大 {info.maxLg}（{LONG_PERIOD_PHRASE[info.maxLg]}）
           </span>
-          {onToggleMapView && (info.areas || []).length > 0 && (
-            <button
-              type="button"
-              onClick={onToggleMapView}
-              style={{
-                marginLeft: "auto", flexShrink: 0, padding: "4px 10px", borderRadius: 999, border: "none", cursor: "pointer",
-                fontSize: 12, fontWeight: 700,
-                background: mapView ? "#0A84FF" : `rgba(${tokens.ink},0.08)`,
-                color: mapView ? "#fff" : tokens.text,
-              }}
-            >
-              {mapView ? "震度に戻す" : "地図で見る"}
-            </button>
-          )}
         </div>
         {groups.length === 0 ? (
           <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.6)`, lineHeight: 1.5 }}>
