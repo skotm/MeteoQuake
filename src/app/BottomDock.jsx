@@ -1736,6 +1736,8 @@ export function BottomDock({
 
   const { height: currentHeight, isDragging, handlePointerDown } =
     useSnapDrag({ heights: SNAP_HEIGHTS, index: snapIndex, onSnap: handleSnap });
+  const tabRowMovedRef = useRef(false);
+  const tabRowStartYRef = useRef(0);
 
   // 開閉トランジション・ドラッグ中だけ軽量モードにする:
   // border-radius / height のような「レイアウトに影響するプロパティ」を
@@ -2474,7 +2476,12 @@ export function BottomDock({
       {cornerTabs && !isWide && (
         <div style={{ position: "absolute", left: 16, right: 16, bottom: "100%", display: "flex", justifyContent: "center", pointerEvents: "none", zIndex: 10, animation: "appearFade 0.4s ease-out 0.1s both" }}>
           <div style={{ width: "100%", maxWidth: 480, minWidth: 240, display: "flex", justifyContent: "flex-end" }}>
-            <div style={{ position: "relative", pointerEvents: "auto", marginBottom: tabsAttached ? 0 : 8 }}>
+            <div
+              onPointerDown={(e) => { tabRowMovedRef.current = false; tabRowStartYRef.current = e.clientY; handlePointerDown(e); }}
+              onPointerMoveCapture={(e) => { if (Math.abs(e.clientY - tabRowStartYRef.current) > 6) tabRowMovedRef.current = true; }}
+              // ドラッグ(フローティングを上下に動かした)後の指離しで、下にあるタブボタンが押されたことにならないようにする。
+              onClickCapture={(e) => { if (tabRowMovedRef.current) { e.stopPropagation(); e.preventDefault(); tabRowMovedRef.current = false; } }}
+              style={{ position: "relative", pointerEvents: "auto", marginBottom: tabsAttached ? 0 : 8, touchAction: "none", userSelect: "none", WebkitUserSelect: "none", cursor: "grab" }}>
               <CornerTabButtons
                 active={navActive}
                 onNav={onNav}
@@ -2549,7 +2556,7 @@ export function BottomDock({
         style={{
           position: "relative",
           height: isWide ? "100%" : currentHeight,
-          paddingTop: isWide ? 14 : 0, // ハンドルが無い分、上に少し余白を持たせる
+          paddingTop: isWide ? 14 : (cornerTabs ? 4 : 0), // ハンドルが無い分(縦画面でタブを右上に置く時もハンドルは出さない。タブ行を掴んで動かす)、上に少し余白を持たせる
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",
@@ -2563,7 +2570,7 @@ export function BottomDock({
             重ね合わせが原因と思われる表示崩れが発生したため、
             ハンドル行自体の高さを広げてタップ範囲とするシンプルな
             構成に戻した(見た目のバー位置は中央のまま変わらない)。 */}
-        {!isWide && (
+        {!isWide && !cornerTabs && (
         <div
           onPointerDown={handlePointerDown}
           style={{
