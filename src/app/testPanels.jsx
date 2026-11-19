@@ -390,6 +390,17 @@ export function QuakeTestBroadcastPanel({ testQuakes = [], onAction, quakeTestFo
               ))}
             </select>
           </div>
+          <div>
+            <label style={labelStyle}>長周期地震動階級(④で使用)</label>
+            <select
+              value={f.longPeriod ?? 2}
+              onChange={e => patchForm({ longPeriod: parseInt(e.target.value, 10) })}
+              disabled={disabled}
+              style={inputStyle}
+            >
+              {[1, 2, 3, 4].map(g => (<option key={g} value={g}>階級{g}</option>))}
+            </select>
+          </div>
           <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.6 }}>
             ①②は津波「調査中」で固定配信されます(実際の電文と同じ挙動)。③でここの判定に切り替わります。
           </div>
@@ -431,6 +442,14 @@ export function QuakeTestBroadcastPanel({ testQuakes = [], onAction, quakeTestFo
           </div>
           <PressableButton
             type="button"
+            onClick={() => onAction?.("broadcastLongPeriod")}
+            disabled={disabled || !targetGroup}
+            style={{ ...stageBtnStyle("#FF3B30", disabled || !targetGroup), flex: "none", width: "100%" }}
+          >
+            ④ 長周期地震動の観測情報(階級{f.longPeriod ?? 2})
+          </PressableButton>
+          <PressableButton
+            type="button"
             onClick={() => onAction?.("autoPlaySequence")}
             disabled={disabled}
             style={{
@@ -444,7 +463,7 @@ export function QuakeTestBroadcastPanel({ testQuakes = [], onAction, quakeTestFo
             {quakeTestAutoPlaying ? "自動配信中…(①→②→③を3秒間隔で配信しています)" : "①→②→③を自動配信(新しい地震として追加)"}
           </PressableButton>
           <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.6 }}>
-            ①②③は好きな順番・組み合わせで押せます(実際の電文の届く順序が前後することがあるため)。
+            ④は、配信先の地震(①〜③のどれかを配信済みのもの)へ、長周期地震動階級を追加します。①②③は好きな順番・組み合わせで押せます(実際の電文の届く順序が前後することがあるため)。
             配信先の地震への続報として、これまでの配信内容と自動的に統合されます
             (震源は分かっている方を、震度分布はより詳しい方を優先)。別の地震を追加するには
             「新しい地震にする」を押してから配信してください。

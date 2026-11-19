@@ -253,6 +253,56 @@ export function useIntensityStyle(intensityKey) {
   return getIntensityStyleFromScheme(scheme, intensityKey);
 }
 
+/* ─────────────────────────────────────────────────────
+   長周期地震動階級の配色
+   階級ごとに「震度のどの色を使うか」を指定する(複数指定した場合は、その中間色)。
+   震度の配色(QUAKE_COLOR_SCHEMES)に追従するので、配色を切り替えると長周期の色も変わる。
+   仮の割り当て: 階級1=震度3 / 階級2=震度4と5弱の中間 / 階級3=5強 / 階級4=6強と7の中間。
+   ここを書き換えるだけで割り当てを変えられる。
+   ───────────────────────────────────────────────────── */
+export const LONG_PERIOD_COLOR_RULES = {
+  1: ["3"],
+  2: ["4", "5-"],
+  3: ["5+"],
+  4: ["6+", "7"],
+};
+
+function hexToRgb(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ""));
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+// 文字色: 背景が明るければ黒、暗ければ白(混ぜた色は元のfgが使えないため)
+function readableFg(rgb) {
+  const [r, g, b] = rgb.map(v => v / 255);
+  const lin = v => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+  const lum = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return lum > 0.4 ? "#0B0B0C" : "#fff";
+}
+
+export function getLongPeriodStyleFromScheme(scheme, grade) {
+  const keys = LONG_PERIOD_COLOR_RULES[grade];
+  if (!keys) return null;
+  if (keys.length === 1) {
+    const c = scheme.colors[keys[0]] || scheme.colors["0"];
+    return { bg: c.bg, fg: c.fg };
+  }
+  const rgbs = keys.map(k => hexToRgb((scheme.colors[k] || scheme.colors["0"]).bg)).filter(Boolean);
+  if (rgbs.length === 0) return { bg: "#FF3B30", fg: "#fff" };
+  const mix = [0, 1, 2].map(i => Math.round(rgbs.reduce((sum, c) => sum + c[i], 0) / rgbs.length));
+  const bg = "#" + mix.map(v => v.toString(16).padStart(2, "0")).join("");
+  return { bg, fg: readableFg(mix) };
+}
+
+// 現在選択中の震度配色に沿った、長周期地震動階級の{ bg, fg }。階級が1〜4以外ならnull。
+export function useLongPeriodStyle(grade) {
+  const schemeId = useContext(QuakeColorSchemeContext);
+  const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
+  return getLongPeriodStyleFromScheme(scheme, grade);
+}
+
 // 表示用ラベルを「数字」と「弱/強」に分割する(バッジ内で2段組みにするため)
 export function splitIntensityLabel(label) {
   const m = /^([0-7])(弱|強)?$/.exec(label);
