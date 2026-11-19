@@ -170,19 +170,18 @@ export function LongPeriodMapToggle({ mapView, onChange }) {
       onPointerLeave={() => setPressed(null)}
       onPointerCancel={() => setPressed(null)}
       style={{
-        flex: 1, padding: "7px 10px", border: "none", cursor: "pointer", borderRadius: 6,
-        fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
-        background: active ? "#0A84FF" : "transparent",
-        color: active ? "#fff" : `rgba(${tokens.ink},0.7)`,
-        filter: pressed === id ? "brightness(0.78)" : "none",
-        transition: "filter 0.08s",
+        flex: 1, padding: "4px 10px", border: "none", cursor: "pointer", borderRadius: 9,
+        fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
+        color: active ? tokens.text : `rgba(${tokens.ink},0.55)`,
+        background: pressed === id ? `rgba(${tokens.ink},0.26)` : (active ? `rgba(${tokens.ink},0.16)` : "transparent"),
+        transition: "background 0.08s",
       }}
     >{label}</button>
   );
   return (
     <div style={{ margin: "4px 14px 2px", display: "flex", alignItems: "center", gap: 8 }}>
       <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0 }}>地図の表示</span>
-      <div style={{ flex: 1, display: "flex", padding: 2, borderRadius: 8, background: `rgba(${tokens.ink},0.08)` }}>
+      <div style={{ flex: 1, display: "flex", padding: 2, borderRadius: 11, background: `rgba(${tokens.ink},0.08)` }}>
         {seg("a", !mapView, "各地の震度", () => onChange(false))}
         {seg("b", mapView, "長周期地震動階級", () => onChange(true))}
       </div>
