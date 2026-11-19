@@ -57,6 +57,7 @@ export function SettingsBody({
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
   shakeEventCardsEnabled, onChangeShakeEventCardsEnabled,
   longPeriodEnabled, onChangeLongPeriodEnabled,
+  quakeSource = "p2p", onChangeQuakeSource = () => {},
   displayInsets, onOpenDisplayAreaEditor,
   tabPlacement, onChangeTabPlacement,
   epicenterEstimationEnabled, onChangeEpicenterEstimationEnabled,
@@ -226,6 +227,33 @@ export function SettingsBody({
     );
   }
 
+  // 地震情報の取得元(地震カテゴリの項目)の中身。緊急地震速報の取得元は、この設定とは別。
+  if (category === "quake" && leaf === "quakeSource") {
+    return (
+      <>
+        <SettingsHeader title="地震情報の取得元"/>
+        <SettingsCard>
+          <SettingsCheckRow
+            label="P2P地震情報"
+            description="標準の取得元です。起動時に一覧を取得し、新着はWebSocketで受け取ります。"
+            checked={quakeSource === "p2p"}
+            onChange={() => onChangeQuakeSource("p2p")}
+          />
+          <SettingsCardDivider/>
+          <SettingsCheckRow
+            label="Wolfx Open API"
+            description="地震情報を、Wolfxから取得します。長周期地震動階級の表示と同じ通信を使うため、通信を1本にまとめられます。一覧は直近100件までです(取得件数の設定は使いません)。"
+            checked={quakeSource === "wolfx"}
+            onChange={() => onChangeQuakeSource("wolfx")}
+          />
+        </SettingsCard>
+        <div style={{ padding: "0 16px 8px", fontSize: 11.5, lineHeight: 1.6, color: "#8E8E93" }}>
+          緊急地震速報と津波情報は、この設定に関わらず従来どおりです。
+        </div>
+      </>
+    );
+  }
+
   // 取得件数(地震カテゴリの項目)の中身
   if (category === "quake" && leaf === "fetchLimit") {
     return (
@@ -357,6 +385,8 @@ export function SettingsBody({
       <>
         <SettingsHeader title="地震"/>
         <SettingsCard>
+          <SettingsMenuRow label="地震情報の取得元" onClick={() => onNavigate([...path, "quakeSource"])}/>
+          <SettingsCardDivider/>
           <SettingsMenuRow label="取得件数" onClick={() => onNavigate([...path, "fetchLimit"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="発震機構解(CMT解)の取得先" onClick={() => onNavigate([...path, "cmtFetchSources"])}/>

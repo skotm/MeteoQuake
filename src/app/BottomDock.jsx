@@ -92,6 +92,7 @@ export function BottomDock({
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
   shakeEventCardsEnabled = true, onChangeShakeEventCardsEnabled,
   longPeriodEnabled = true, onChangeLongPeriodEnabled,
+  quakeSource = "p2p", onChangeQuakeSource,
   displayInsets, onOpenDisplayAreaEditor,
   tabPlacement = "slide", onChangeTabPlacement,
   cameraSettings, onChangeCameraSettings,
@@ -2879,6 +2880,8 @@ export function BottomDock({
                   shakeEventCardsEnabled={shakeEventCardsEnabled}
                   onChangeShakeEventCardsEnabled={onChangeShakeEventCardsEnabled}
                   longPeriodEnabled={longPeriodEnabled}
+                  quakeSource={quakeSource}
+                  onChangeQuakeSource={onChangeQuakeSource}
                   onChangeLongPeriodEnabled={onChangeLongPeriodEnabled}
                   cameraSettings={cameraSettings}
                   onChangeCameraSettings={onChangeCameraSettings}

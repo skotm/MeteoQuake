@@ -692,3 +692,23 @@ export function saveLongPeriodEnabled(enabled) {
     console.warn("長周期地震動階級の表示設定を保存できませんでした:", err);
   }
 }
+
+/* 地震情報(緊急地震速報を除く)の取得元。"p2p"(P2P地震情報、既定) または "wolfx"(Wolfx Open API)。 */
+const QUAKE_SOURCE_STORAGE_KEY = "quakeSource";
+
+export function loadStoredQuakeSource() {
+  try {
+    return localStorage.getItem(QUAKE_SOURCE_STORAGE_KEY) === "wolfx" ? "wolfx" : "p2p";
+  } catch (err) {
+    console.warn("地震情報の取得元の設定を読み込めませんでした:", err);
+  }
+  return "p2p";
+}
+
+export function saveQuakeSource(source) {
+  try {
+    localStorage.setItem(QUAKE_SOURCE_STORAGE_KEY, source === "wolfx" ? "wolfx" : "p2p");
+  } catch (err) {
+    console.warn("地震情報の取得元の設定を保存できませんでした:", err);
+  }
+}
