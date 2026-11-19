@@ -414,7 +414,7 @@ export function QuakeMessageCard({ quake, part = "all" }) {
    観測点マスタに見つからず地図に表示されていない件数(unmappedCount)は、
    要約画面の最下部にまとめて表示する(詳細画面では表示しない)。
    ───────────────────────────────────────────────────── */
-export function StationPointsList({ points, displayMode = "list", openKey, onOpenKeyChange }) {
+export function StationPointsList({ points, displayMode = "list", openKey, onOpenKeyChange, showHeader = false }) {
   const { tokens } = useContext(ThemeContext);
 
   const [expanded, setExpanded] = useState(false); // 一覧表示(list)用の「すべて表示」
@@ -590,7 +590,14 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
 
   return (
     <div style={{ margin: "2px 14px 8px" }}>
-      <div style={{ height: 4 }}/>
+      {showHeader ? (
+        <div style={{
+          padding: "6px 2px",
+          fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`,
+        }}>
+          各地の震度
+        </div>
+      ) : <div style={{ height: 4 }}/>}
 
       <div style={{
         borderRadius: 12,
