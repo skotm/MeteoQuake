@@ -12,7 +12,7 @@ import { Filters, LAYERS } from "./app/navigation";
 import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layoutHooks";
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
 import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, computeGlareGuard, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
-import { useJmaLongPeriod } from "./app/useJmaLongPeriod";
+import { LongPeriodContext, useJmaLongPeriod } from "./app/useJmaLongPeriod";
 import { useWolfxDetail } from "./app/useWolfxDetail";
 import { attachLongPeriod, buildTestLongPeriodInfo, eventIdMinuteKey } from "./longPeriod";
 const EMPTY_LONG_PERIOD = new Map();
@@ -850,6 +850,13 @@ export default function App() {
     }));
     setEewEpicenterPickActive(false);
   }
+
+  const longPeriodCtxValue = useMemo(() => ({
+    enabled: longPeriodEnabled,
+    ready: wolfxDetail.status === "ready" || wolfxDetail.status === "error",
+    events: longPeriodEvents,
+    wolfxMinuteKeys,
+  }), [longPeriodEnabled, wolfxDetail.status, longPeriodEvents, wolfxMinuteKeys]);
 
   // テスト配信中は、実際の一覧の先頭にテストデータを合成する。地図・パネルとも、
   // 以降のEEW関連の判定はこちら(effectiveEews)を使う。
@@ -3259,6 +3266,7 @@ export default function App() {
     <ThemeContext.Provider value={themeContextValue}>
     <GlassOpaqueContext.Provider value={glassOpaqueContextValue}>
     <QuakeColorSchemeContext.Provider value={quakeColorScheme}>
+    <LongPeriodContext.Provider value={longPeriodCtxValue}>
     <NowcastColorSchemeContext.Provider value={nowcastColorScheme}>
       <GlobalStyles tokens={themeContextValue.tokens}/>
       <Filters/>
@@ -4138,6 +4146,7 @@ export default function App() {
       </div>
 
     </NowcastColorSchemeContext.Provider>
+    </LongPeriodContext.Provider>
     </QuakeColorSchemeContext.Provider>
     </GlassOpaqueContext.Provider>
     </ThemeContext.Provider>

@@ -5,6 +5,7 @@ import { getIntensityStyleFromScheme } from "./colorSchemes";
 import { GlassOpaqueContext, PressableButton } from "./glass";
 import { QUAKE_STAGE_LABEL } from "./quakeCards";
 import { LongPeriodBadge } from "./quakeDetailUi";
+import { useAttachLongPeriod } from "./useJmaLongPeriod";
 import { EMPTY_EQDB_LIST, EQDB_EPICENTER_NAME_OPTIONS_DEFAULT, EQDB_MAX_INT_OPTIONS, EQDB_MAX_INT_SCALE, EQDB_MIN_MAG_OPTIONS, EQDB_SORT_OPTIONS, buildEqdbQuakeCard, eqdbIntensityStringToScale, eqdbIntensityThresholdScale, eqdbListItemToPreview, fetchEqdbEventCached, fetchEqdbSearch, useEqdbEpicenterPoints } from "./eqdb";
 import { loadEpicenterNamesData, loadGeoData } from "./mapDataLoaders";
 import { HistoryClockIcon, ListViewIcon, RealtimeWaveIcon, SearchGlassIcon, TideGaugeIcon } from "./mapOverlayUi";
@@ -14,6 +15,12 @@ import { HistoryClockIcon, ListViewIcon, RealtimeWaveIcon, SearchGlassIcon, Tide
    QUAKE LIST ROW
    地震一覧の1行分。「直近の一覧」と「検索結果一覧」の両方から共通で使う。
    ───────────────────────────────────────────────────── */
+// 検索結果(eqdb)の行用: プレビューに長周期の階級を付ける。結果が変わらない限り同じ配列を使う。
+function useEqdbPreviewsWithLongPeriod(items) {
+  const previews = useMemo(() => items.map(eqdbListItemToPreview), [items]);
+  return useAttachLongPeriod(previews);
+}
+
 export function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect, loading = false, horizontalPadding = 14 }) {
   const { tokens } = useContext(ThemeContext);
 
@@ -440,6 +447,7 @@ export function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, 
     });
     return arr;
   }, [results, sortKey, sortDesc]);
+  const sortedPreviews = useEqdbPreviewsWithLongPeriod(sorted);
 
   function handleSortTap(key) {
     if (sortKey === key) { setSortDesc(d => !d); return; }
@@ -505,7 +513,7 @@ export function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, 
       {status === "done" && sorted.map((eq, i) => (
         <QuakeListRow
           key={eq.id}
-          quake={eqdbListItemToPreview(eq)}
+          quake={sortedPreviews[i]}
           showDivider={i > 0}
           colorScheme={colorScheme}
           onSelect={() => handlePick(eq)}
@@ -550,6 +558,7 @@ export function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelect
     startDate, endDate, minMag, maxInt, sort, epicenterName,
     status, isSearching, hasSearched, results, loadingId,
   } = search;
+  const resultPreviews = useEqdbPreviewsWithLongPeriod(results);
 
   // 震源地名の選択肢(プルダウン)。EEW・地震情報テスト配信の「地図をタップして
   // 震源を指定」で使っているep.json(気象庁の震央地名区域)をそのまま流用し、
@@ -786,7 +795,7 @@ export function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelect
         results.map((eq, i) => (
           <QuakeListRow
             key={eq.id}
-            quake={eqdbListItemToPreview(eq)}
+            quake={resultPreviews[i]}
             showDivider={i > 0}
             colorScheme={colorScheme}
             onSelect={() => handleSelect(eq)}
