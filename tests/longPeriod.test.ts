@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseLongPeriodPayload, cityNameFromStationName, attachLongPeriod, findLongPeriodFor, eventIdMinuteKey } from "../src/longPeriod.ts";
+import { parseLongPeriodPayload, cityNameFromStationName, attachLongPeriod, findLongPeriodFor, eventIdMinuteKey, buildTestLongPeriodInfo } from "../src/longPeriod.ts";
 
 const ev = {
   eventId: "20261119022225", hypocenters: [{ name: "熊本県天草・芦北地方" }],
@@ -44,4 +44,20 @@ test("カードとの対応づけとリプレイでの発表前除外", () => {
   assert.equal((b as any).longPeriod, undefined);
   const [c] = attachLongPeriod([{ time: "2026/11/19 03:00:00", place: "x" }], events);
   assert.equal((c as any).longPeriod, undefined);
+});
+
+test("テスト用の長周期の情報を作る", () => {
+  const pts = [
+    { addr: "八代市平山新町", scale: 45, isArea: false }, { addr: "八代市千丁町", scale: 40, isArea: false },
+    { addr: "芦北町芦北", scale: 30, isArea: false }, { addr: "天草市本渡", scale: 20, isArea: false },
+    { addr: "水俣市牧ノ内", scale: 10, isArea: false }, { addr: "球磨村渡", scale: 10, isArea: false },
+  ];
+  const info = buildTestLongPeriodInfo({ points: pts }, 3);
+  assert.equal(info.maxLg, 3);
+  assert.equal(info.cities[0].lg, 3);
+  assert.ok(info.cities.every((c) => c.lg >= 1 && c.lg <= 3));
+  const lgs = info.cities.map((c) => c.lg);
+  assert.deepEqual([...lgs].sort((a, b) => b - a), lgs);
+  const area = buildTestLongPeriodInfo({ points: [{ addr: "熊本県球磨", scale: 30, isArea: true }] }, 2);
+  assert.deepEqual(area.areas, [{ name: "熊本県球磨", lg: 2 }]);
 });

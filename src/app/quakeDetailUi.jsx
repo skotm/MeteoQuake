@@ -1,6 +1,6 @@
 import { useRef, useState, useLayoutEffect, useContext, useMemo, useEffect } from "react";
 import { ThemeContext } from "./theme";
-import { QUAKE_COLOR_SCHEMES, QuakeColorSchemeContext, getIntensityStyleFromScheme, splitIntensityLabel, useIntensityStyle } from "./colorSchemes";
+import { QUAKE_COLOR_SCHEMES, QuakeColorSchemeContext, getIntensityStyleFromScheme, getLongPeriodStyleFromScheme, splitIntensityLabel, useIntensityStyle, useLongPeriodStyle } from "./colorSchemes";
 import { QUAKE_STAGE_LABEL, buildQuakeMessage, formatQuakeTimeShort } from "./quakeCards";
 import { INTENSITY_ORDER } from "./stationIcons";
 import { Glass, PressableButton } from "./glass";
@@ -125,7 +125,8 @@ export function PanelDragHandoffCard({ onHandoffToPanelDrag, children }) {
    親(震度バッジ)はposition: relativeであること。階級が無い/0なら何も描かない。
    ───────────────────────────────────────────────────── */
 export function LongPeriodBadge({ grade, size = 16, offset = -6 }) {
-  if (!(grade >= 1)) return null;
+  const lp = useLongPeriodStyle(grade);
+  if (!(grade >= 1) || !lp) return null;
   return (
     <span
       aria-label={`長周期地震動階級${grade}`}
@@ -133,7 +134,7 @@ export function LongPeriodBadge({ grade, size = 16, offset = -6 }) {
         position: "absolute", top: offset, right: offset, zIndex: 2,
         minWidth: size, height: size, boxSizing: "border-box", padding: "0 3px",
         borderRadius: size / 2,
-        background: grade >= 4 ? "#B3002D" : "#FF3B30", color: "#fff",
+        background: lp.bg, color: lp.fg,
         boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9), 0 1px 3px rgba(0,0,0,0.3)",
         display: "flex", alignItems: "center", justifyContent: "center",
         fontSize: Math.round(size * 0.62), fontWeight: 800, lineHeight: 1,
@@ -154,6 +155,8 @@ const LONG_PERIOD_PHRASE = { 1: "やや大きな揺れ", 2: "大きな揺れ", 3
    ───────────────────────────────────────────────────── */
 export function LongPeriodCard({ quake }) {
   const { tokens } = useContext(ThemeContext);
+  const schemeId = useContext(QuakeColorSchemeContext);
+  const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
   const info = quake.longPeriodInfo;
   const groups = useMemo(() => {
     if (!info) return [];
@@ -182,7 +185,7 @@ export function LongPeriodCard({ quake }) {
           <div key={lg} style={{ display: "flex", gap: 8, alignItems: "flex-start", lineHeight: 1.5 }}>
             <span style={{
               flexShrink: 0, minWidth: 20, height: 20, borderRadius: 10, padding: "0 5px", boxSizing: "border-box",
-              background: lg >= 4 ? "#B3002D" : "#FF3B30", color: "#fff", fontSize: 12, fontWeight: 800,
+              background: getLongPeriodStyleFromScheme(scheme, lg)?.bg, color: getLongPeriodStyleFromScheme(scheme, lg)?.fg, fontSize: 12, fontWeight: 800,
               display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1,
             }}>{lg}</span>
             <span style={{ fontSize: 13, color: `rgba(${tokens.ink},0.9)` }}>{names.join("、")}</span>

@@ -13,7 +13,7 @@ import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layou
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
 import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, computeGlareGuard, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
 import { useWolfxDetail } from "./app/useWolfxDetail";
-import { attachLongPeriod } from "./longPeriod";
+import { attachLongPeriod, buildTestLongPeriodInfo } from "./longPeriod";
 const EMPTY_LONG_PERIOD = new Map();
 import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredTabPlacement, saveTabPlacement, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredLongPeriodEnabled, saveLongPeriodEnabled, loadStoredQuakeSource, saveQuakeSource, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
@@ -933,6 +933,7 @@ export default function App() {
       depth: 20,
       magnitude: 5.8,
       domesticTsunami: "None", // ③確定報で使う津波判定
+      longPeriod: 2,           // ④長周期地震動に関する観測情報で使う最大階級(1〜4)
     };
   }
   const [quakeTestForm, setQuakeTestForm] = useState(defaultQuakeTestForm);
@@ -1037,13 +1038,30 @@ export default function App() {
         if (prevGroup && selectedQuakeIdRef.current === prevGroup.card.id && merged.id !== prevGroup.card.id) {
           selectQuake(merged.id);
         }
-        const group = { gid, form: snapshot, card: merged };
+        // 長周期地震動階級(④で配信済みのもの)は、後から①②③を配信しても消さない。
+        const lpCard = prevGroup?.card?.longPeriodInfo
+          ? { ...merged, longPeriod: prevGroup.card.longPeriod, longPeriodInfo: prevGroup.card.longPeriodInfo }
+          : merged;
+        const group = { gid, form: snapshot, card: lpCard };
         commitTestQuakes(prevGroup
           ? list.map(g => (g.gid === gid ? group : g))
           : [group, ...list]);
       }).catch(err => {
         console.error("細分区域データの読み込みに失敗しました(地震情報テスト):", err);
       });
+      return;
+    }
+    if (action === "broadcastLongPeriod") {
+      // ④ 長周期地震動に関する観測情報(階級はフォームのlongPeriod)。配信先の地震が無ければ何もしない
+      // (実際にも、観測情報は震度情報の後に出るため)。
+      const form = quakeTestForm;
+      const list = testQuakesRef.current;
+      const prevGroup = list.find(g => g.gid === form.editingId) || null;
+      if (!prevGroup) return;
+      const lg = Math.min(4, Math.max(1, Math.round(Number(form.longPeriod) || 1)));
+      const info = buildTestLongPeriodInfo(prevGroup.card, lg, null);
+      const group = { ...prevGroup, card: { ...prevGroup.card, longPeriod: lg, longPeriodInfo: info } };
+      commitTestQuakes(list.map(g => (g.gid === prevGroup.gid ? group : g)));
       return;
     }
     if (action === "autoPlaySequence") {

@@ -158,3 +158,30 @@ export function attachLongPeriod<T extends LongPeriodCardLike>(
   });
   return changed ? out : cards;
 }
+
+/** 地震情報テスト配信用: 階級maxLgと、地震カードの観測点から、ダミーの長周期の情報を作る。
+ * 市区町村は、観測点名から取り出した名前ごとに、その市区町村の最大震度が大きい順に並べ、
+ * 上位1/3に最大階級、次の1/3に階級-1、その次に階級-2を割り当てる(1未満は出さない)。
+ * 観測点が無ければ(震度速報だけの時など)、細分区域名を階級maxLgのareasにする。 */
+export function buildTestLongPeriodInfo(
+  card: { time?: string; place?: string; points?: Array<{ addr: string; scale: number; isArea?: boolean }> },
+  maxLg: number,
+  issuedAtMs: number | null = null,
+): LongPeriodEvent {
+  const cityMax = new Map<string, number>();
+  const areaMax = new Map<string, number>();
+  for (const p of card.points ?? []) {
+    if (p.isArea) { areaMax.set(p.addr, Math.max(areaMax.get(p.addr) ?? -1, p.scale)); continue; }
+    const name = cityNameFromStationName(p.addr);
+    cityMax.set(name, Math.max(cityMax.get(name) ?? -1, p.scale));
+  }
+  const ranked = [...cityMax.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ja"));
+  const third = Math.max(1, Math.ceil(ranked.length / 3));
+  const cities: LongPeriodCity[] = [];
+  ranked.forEach(([name], i) => {
+    const lg = maxLg - Math.floor(i / third);
+    if (lg >= 1) cities.push({ code: `test${i}`, name, lg });
+  });
+  const areas: LongPeriodArea[] = cities.length > 0 ? [] : [...areaMax.keys()].slice(0, 6).map((name) => ({ name, lg: maxLg }));
+  return { eventId: "test", maxLg, issuedAtMs, cities, areas, hypocenterName: card.place ?? null };
+}
