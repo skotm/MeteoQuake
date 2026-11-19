@@ -47,7 +47,7 @@ import { findEpicenterNameByPoint, findNearestTsunamiArea, findPrefectureNameByP
 import { GlobalStyles } from "./app/globalStyles";
 import { ConsentGate } from "./app/ConsentGate";
 import { MapCanvas } from "./app/MapCanvas";
-import { LongPeriodLegend, QuakeIntensityLegend, RealtimeIntensityThresholdBar, TsunamiGradeLegend } from "./app/mapOverlayUi";
+import { QuakeIntensityLegend, RealtimeIntensityThresholdBar, TsunamiGradeLegend } from "./app/mapOverlayUi";
 import { CORNER_TAB_ATTACHED_RADIUS, CORNER_TAB_RIM_CLIP_WIDE, CORNER_TAB_STACK_HEIGHT, CornerTabButtons, CornerTabFillet, SideNavRail, WIDE_PANEL_RADIUS_ATTACHED, WIDE_RAIL_WIDTH, widePanelRimClip } from "./app/navUi";
 import { NowcastColorSchemeContext, loadStoredNowcastColorScheme, saveNowcastColorScheme } from "./app/weather/nowcast";
 import { NowcastLegend, PrecipLegend, RiskLegend, RiverLegend, WarningLegend, WdistLegend } from "./app/weatherLegends";
@@ -3374,9 +3374,7 @@ export default function App() {
             right: 16,
             zIndex: 30,
           }}>
-            {lpViewActive
-              ? <LongPeriodLegend/>
-              : <QuakeIntensityLegend maxIntensity={selectedQuake.maxIntensity} legacyIntensityScale={selectedQuake.legacyIntensityScale}/>}
+            <QuakeIntensityLegend maxIntensity={selectedQuake.maxIntensity} legacyIntensityScale={selectedQuake.legacyIntensityScale}/>
           </div>
         )}
 

@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { MIN_INTENSITY as SHINDO_MIN_INTENSITY, MAX_INTENSITY as SHINDO_MAX_INTENSITY, intensityToShindoColor } from "../shindoColorScale";
 import { ThemeContext } from "./theme";
-import { QUAKE_COLOR_SCHEMES, QuakeColorSchemeContext, getIntensityStyleFromScheme, getLongPeriodStyleFromScheme } from "./colorSchemes";
+import { QUAKE_COLOR_SCHEMES, QuakeColorSchemeContext, getIntensityStyleFromScheme } from "./colorSchemes";
 import { Glass, PressableButton } from "./glass";
 import { findEpicenterNameByPoint, findSingleEpicenterPlace } from "./geo";
 import { loadEpicenterNamesData, loadGeoData } from "./mapDataLoaders";
@@ -14,28 +14,6 @@ import { TSUNAMI_GRADE_INFO, tsunamiGradeInfo, tsunamiHeightBandGrade } from "./
    最大震度のバッジだけ枠線で強調する。画面左上に浮かべて使う想定。
    ───────────────────────────────────────────────────── */
 const INTENSITY_LEGEND_ORDER = ["1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
-
-// 長周期地震動階級の地図表示中の凡例。階級1〜4を、大きい階級ほど右になる横並びの角丸の四角で示す。
-export function LongPeriodLegend() {
-  const schemeId = useContext(QuakeColorSchemeContext);
-  const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
-  return (
-    <Glass radius={16} style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}>
-      <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 5, padding: 6 }}>
-        {[1, 2, 3, 4].map(g => {
-          const st = getLongPeriodStyleFromScheme(scheme, g);
-          return (
-            <div key={g} style={{
-              width: 30, height: 30, borderRadius: 9, flexShrink: 0,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              background: st.bg, color: st.fg, fontSize: 17, fontWeight: 800,
-            }}>{g}</div>
-          );
-        })}
-      </div>
-    </Glass>
-  );
-}
 
 export function QuakeIntensityLegend({ maxIntensity, legacyIntensityScale }) {
   const { tokens } = useContext(ThemeContext);

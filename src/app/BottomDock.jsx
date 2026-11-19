@@ -2728,7 +2728,6 @@ export function BottomDock({
                         {selected.longPeriodInfo && (selected.longPeriodInfo.areas || []).length > 0 && onSetLpMapView && <LongPeriodMapToggle mapView={!!lpMapView} onChange={onSetLpMapView}/>}
                         {stationPoints.length > 0 && (
                           <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
-                            showHeader={!(selected.longPeriodInfo && (selected.longPeriodInfo.areas || []).length > 0 && onSetLpMapView)}
                             openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>
                         )}
                         {!selected.isEqdb && <QuakeMessageCard quake={selected} part="bottom"/>}
@@ -3093,7 +3092,6 @@ export function BottomDock({
                       {selected.longPeriodInfo && (selected.longPeriodInfo.areas || []).length > 0 && onSetLpMapView && <LongPeriodMapToggle mapView={!!lpMapView} onChange={onSetLpMapView}/>}
                       {stationPoints.length > 0 && (
                         <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
-                            showHeader={!(selected.longPeriodInfo && (selected.longPeriodInfo.areas || []).length > 0 && onSetLpMapView)}
                           openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>
                       )}
                       {!selected.isEqdb && <QuakeMessageCard quake={selected} part="bottom"/>}
