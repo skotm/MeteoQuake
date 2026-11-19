@@ -106,7 +106,6 @@ export function BottomDock({
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
   eewTestForm, eewEpicenterPickActive,
   testQuakes, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeLpPickActive, lpMapView, onSetLpMapView, quakeTestAutoPlaying,
-  testQuakes, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeLpPickActive, quakeTestAutoPlaying,
   shakeTests, onShakeTestAction, shakeTestForm, shakeTestEpicenterPickActive, shakeTestEewLink,
   epicenterEstimates,
   eews = EMPTY_EQDB_LIST, eewIssued = false, eewDetailOpen, eewOpenSignal, onOpenEewDetail, onCloseEewDetail,
