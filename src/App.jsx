@@ -1961,6 +1961,8 @@ export default function App() {
   })();
   // 長周期地震動階級(Wolfx)を、地震カードに重ねる。リプレイ中は、再生時刻より後に出た観測情報は出さない。
   // 長周期の表示と、地震情報のWolfx取得は同じ通信(jma_earthquake_detail)から作る。
+  // 気象庁 震度データベース検索から開いた過去の地震(一覧には入らない)
+  const [searchQuake, setSearchQuake] = useState(null);
   const wolfxDetail = useWolfxDetail(longPeriodEnabled || quakeSource === "wolfx");
   // Wolfxの直近100件に無い過去の地震は、気象庁の「長周期地震動に関する観測情報(過去の地震)」から補う。
   // Wolfxの取得が終わってから(Wolfxにある地震は取りに行かない)。取得元がP2PでもWolfxでも同じ。
@@ -1968,8 +1970,12 @@ export default function App() {
     () => new Set([...wolfxDetail.longPeriod.keys()].map(eventIdMinuteKey).filter(Boolean)),
     [wolfxDetail.longPeriod],
   );
+  const jmaLpCards = useMemo(
+    () => searchQuake ? [...(replayQuakeList ?? quakes), searchQuake] : (replayQuakeList ?? quakes),
+    [replayQuakeList, quakes, searchQuake],
+  );
   const jmaLongPeriod = useJmaLongPeriod(
-    replayQuakeList ?? quakes,
+    jmaLpCards,
     longPeriodEnabled && (wolfxDetail.status === "ready" || wolfxDetail.status === "error"),
     wolfxMinuteKeys,
   );
@@ -2002,7 +2008,6 @@ export default function App() {
 
   // 気象庁 震度データベース(eqdb)検索で開いた地震。直近一覧(quakes)には混ぜず、
   // ここだけで別管理する(P2P地震情報のWebSocket更新・件数上限に巻き込まれないようにするため)。
-  const [searchQuake, setSearchQuake] = useState(null);
 
   // 震央分布(地図上の丸)。今どの一覧(P2P一覧/近傍地震検索/データベース検索)を
   // 表示中かに応じて、BottomDock側で計算した点の配列をそのまま受け取る。
@@ -2326,8 +2331,13 @@ export default function App() {
   // 気象庁 震度データベース検索から開いた地震(searchQuake)は quakes には入っていないため、
   // そちらも見つからなかった場合のフォールバックとして探す。
   // (effectiveQuakesを使うことで、地震情報テスト配信中のダミー地震も選択・表示できる)
+  // 検索から開いた過去の地震にも、長周期地震動階級(Wolfx/気象庁の過去データ)を重ねる。
+  const searchQuakeWithLp = useMemo(
+    () => searchQuake ? attachLongPeriod([searchQuake], longPeriodEvents)[0] : null,
+    [searchQuake, longPeriodEvents],
+  );
   const selectedQuake = effectiveQuakes.find(q => q.id === quakeSelectionRelevantToCurrentView)
-    || (searchQuake && searchQuake.id === quakeSelectionRelevantToCurrentView ? searchQuake : null);
+    || (searchQuakeWithLp && searchQuakeWithLp.id === quakeSelectionRelevantToCurrentView ? searchQuakeWithLp : null);
 
   // 長周期階級の塗り表示。選択中の地震が変わる/階級情報が無くなったら通常表示に戻す。
   const lpViewActive = lpMapView && !!selectedQuake?.longPeriodInfo && (selectedQuake.longPeriodInfo.areas || []).length > 0;
@@ -3932,7 +3942,7 @@ export default function App() {
                   candidateHeightStations={candidateHeightStations}
                   onAddTsunamiHeightPick={addTsunamiHeightPick}
                   stations={stations}
-                  searchQuake={searchQuake}
+                  searchQuake={searchQuakeWithLp}
                   onFoundSearchQuake={setSearchQuake}
                   onEpicenterPointsChange={setEpicenterPoints}
                   onEpicenterLoadingChange={setEpicenterLoading}
@@ -4116,7 +4126,7 @@ export default function App() {
               candidateHeightStations={candidateHeightStations}
               onAddTsunamiHeightPick={addTsunamiHeightPick}
               stations={stations}
-              searchQuake={searchQuake}
+              searchQuake={searchQuakeWithLp}
               onFoundSearchQuake={setSearchQuake}
               onEpicenterPointsChange={setEpicenterPoints}
               onEpicenterLoadingChange={setEpicenterLoading}
