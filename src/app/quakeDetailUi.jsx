@@ -333,10 +333,11 @@ export function QuakeDetailCard({ quake }) {
    QUAKE MESSAGE CARD — 電文(津波情報・付加文)
    選択中の地震について、津波の心配の有無や気象庁の付加コメントを表示する。
    ───────────────────────────────────────────────────── */
-export function QuakeMessageCard({ quake }) {
+export function QuakeMessageCard({ quake, part = "all" }) {
   const { tokens } = useContext(ThemeContext);
 
-  const lines = buildQuakeMessage(quake);
+  const lines = buildQuakeMessage(quake, part);
+  if (lines.length === 0) return null;
 
   return (
     <div style={{ margin: "2px 14px 8px" }}>

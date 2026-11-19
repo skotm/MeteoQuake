@@ -195,14 +195,34 @@ const TSUNAMI_TEXT = {
   MajorWarning: { text: "この地震により、津波警報・注意報等が発表されています。", color: "#FF453A" },
 };
 
-export function buildQuakeMessage(quake) {
+// 観測点の詳細情報が出ていて、かつ津波「心配なし」か。この場合のみ、電文の津波情報行は
+// 「各地の震度」の下に出す(それ以外は注意が要るので従来どおり上に出す)。
+export function isTsunamiNoWorryConfirmed(quake) {
+  // 「確定」の判定は発表段階ではなく、観測点(市町村単位)の詳細な震度が出ているかで行う。
+  const hasStationDetail = Array.isArray(quake?.points) && quake.points.some(p => p.isArea === false);
+  return hasStationDetail && quake?.domesticTsunami === "None";
+}
+
+// 観測点名の「＊」表示をやめたため、それを説明する定型の付加文も出さない。
+function cleanFreeFormComment(text) {
+  if (!text) return "";
+  return String(text).replace(/[＊*]印は気象庁以外の震度観測点についての情報です。?/g, "").trim();
+}
+
+// part: "all"(既定) | "top"(津波情報が確定・心配なしの場合はそれを除く) | "bottom"(その津波情報行のみ)
+export function buildQuakeMessage(quake, part = "all") {
   const { tokens } = useContext(ThemeContext);
 
   const tsunami = TSUNAMI_TEXT[quake.domesticTsunami] || TSUNAMI_TEXT.None;
   // alert: 注意が必要な津波情報(調査中・警報等)。本文も同じ色にして目立たせる。
-  const lines = [{ label: "津波情報", text: tsunami.text, color: tsunami.color || tokens.textSecondary, alert: !!tsunami.color }];
-  if (quake.freeFormComment) {
-    lines.push({ label: "付加文", text: quake.freeFormComment, color: `rgba(${tokens.ink},0.75)` });
+  const tsunamiLine = { label: "津波情報", text: tsunami.text, color: tsunami.color || tokens.textSecondary, alert: !!tsunami.color };
+  const lowerTsunami = isTsunamiNoWorryConfirmed(quake);
+  if (part === "bottom") return lowerTsunami ? [tsunamiLine] : [];
+  const lines = [];
+  if (!(part === "top" && lowerTsunami)) lines.push(tsunamiLine);
+  const comment = cleanFreeFormComment(quake.freeFormComment);
+  if (comment) {
+    lines.push({ label: "付加文", text: comment, color: `rgba(${tokens.ink},0.75)` });
   }
   return lines;
 }
