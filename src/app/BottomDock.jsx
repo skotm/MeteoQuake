@@ -15,7 +15,7 @@ import { CORNER_TAB_ATTACHED_RADIUS_PORTRAIT, CORNER_TAB_SIZE, CORNER_TAB_PAD, C
 import { NAV } from "./navigation";
 import { BackToListButton, RealtimeDataTimeBadge, SearchFabButton, ShakeEventCard, ShakeTestRunningBadge, StationMarkerToggleButton } from "./mapOverlayUi";
 import { EewDetailFloatingCard, EewFabButton } from "./eewUi";
-import { LongPeriodCard, PanelDragHandoffCard, QuakeDetailCard, QuakeMechDetailPanel, QuakeMessageCard, StationPointsList } from "./quakeDetailUi";
+import { LongPeriodCard, LongPeriodMapToggle, PanelDragHandoffCard, QuakeDetailCard, QuakeMechDetailPanel, QuakeMessageCard, StationPointsList } from "./quakeDetailUi";
 import { TsunamiTabBody } from "./tsunamiTideUi";
 import { SettingsBody } from "./SettingsBody";
 import { derivePrefFromEewAreaName } from "./eewUi";
@@ -105,6 +105,7 @@ export function BottomDock({
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
   eewTestForm, eewEpicenterPickActive,
+  testQuakes, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeLpPickActive, lpMapView, onSetLpMapView, quakeTestAutoPlaying,
   testQuakes, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeLpPickActive, quakeTestAutoPlaying,
   shakeTests, onShakeTestAction, shakeTestForm, shakeTestEpicenterPickActive, shakeTestEewLink,
   epicenterEstimates,
@@ -2725,6 +2726,7 @@ export function BottomDock({
                         </PanelDragHandoffCard>
                         {selected.longPeriodInfo && <LongPeriodCard quake={selected}/>}
                         {!selected.isEqdb && <QuakeMessageCard quake={selected} part="top"/>}
+                        {selected.longPeriodInfo && (selected.longPeriodInfo.areas || []).length > 0 && onSetLpMapView && <LongPeriodMapToggle mapView={!!lpMapView} onChange={onSetLpMapView}/>}
                         {stationPoints.length > 0 && (
                           <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
                             openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>
@@ -3088,6 +3090,7 @@ export function BottomDock({
                       </PanelDragHandoffCard>
                       {selected.longPeriodInfo && <LongPeriodCard quake={selected}/>}
                         {!selected.isEqdb && <QuakeMessageCard quake={selected} part="top"/>}
+                      {selected.longPeriodInfo && (selected.longPeriodInfo.areas || []).length > 0 && onSetLpMapView && <LongPeriodMapToggle mapView={!!lpMapView} onChange={onSetLpMapView}/>}
                       {stationPoints.length > 0 && (
                         <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
                           openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>

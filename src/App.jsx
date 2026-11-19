@@ -3882,6 +3882,7 @@ export default function App() {
                   quakeTestForm={quakeTestForm}
                   quakeEpicenterPickActive={quakeEpicenterPickActive}
                   quakeLpPickActive={quakeLpPickActive}
+                  lpMapView={lpViewActive} onSetLpMapView={setLpMapView}
                   quakeTestAutoPlaying={quakeTestAutoPlaying}
                   shakeTests={shakeTests}
                   onShakeTestAction={handleShakeTestAction}
@@ -4065,6 +4066,7 @@ export default function App() {
               quakeTestForm={quakeTestForm}
               quakeEpicenterPickActive={quakeEpicenterPickActive}
               quakeLpPickActive={quakeLpPickActive}
+              lpMapView={lpViewActive} onSetLpMapView={setLpMapView}
               quakeTestAutoPlaying={quakeTestAutoPlaying}
               shakeTests={shakeTests}
               onShakeTestAction={handleShakeTestAction}

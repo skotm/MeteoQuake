@@ -156,6 +156,32 @@ const LONG_PERIOD_PHRASE = { 1: "やや大きな揺れ", 2: "大きな揺れ", 3
 // 観測点名の末尾などに付く「＊」(気象庁以外の震度観測点)は表示しない。
 function stripStationMark(t) { return typeof t === "string" ? t.replace(/[*＊]/g, "").trim() : t; }
 
+// 地図に出す内容の切り替え: 「各地の震度」(観測点・推計震度分布) ⇄ 「長周期地震動階級」(細分区域の塗り)
+export function LongPeriodMapToggle({ mapView, onChange }) {
+  const { tokens } = useContext(ThemeContext);
+  const seg = (active, label, onClick) => (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        flex: 1, padding: "5px 10px", border: "none", cursor: "pointer", borderRadius: 999,
+        fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
+        background: active ? "#0A84FF" : "transparent",
+        color: active ? "#fff" : `rgba(${tokens.ink},0.7)`,
+      }}
+    >{label}</button>
+  );
+  return (
+    <div style={{ margin: "4px 14px 2px", display: "flex", alignItems: "center", gap: 8 }}>
+      <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0 }}>地図の表示</span>
+      <div style={{ flex: 1, display: "flex", padding: 2, borderRadius: 999, background: `rgba(${tokens.ink},0.08)` }}>
+        {seg(!mapView, "各地の震度", () => onChange(false))}
+        {seg(mapView, "長周期地震動階級", () => onChange(true))}
+      </div>
+    </div>
+  );
+}
+
 export function LongPeriodCard({ quake }) {
   const { tokens } = useContext(ThemeContext);
   const schemeId = useContext(QuakeColorSchemeContext);
