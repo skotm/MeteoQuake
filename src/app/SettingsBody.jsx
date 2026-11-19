@@ -56,6 +56,7 @@ export function SettingsBody({
   shakeDetectionEnabled, onChangeShakeDetectionEnabled,
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
   shakeEventCardsEnabled, onChangeShakeEventCardsEnabled,
+  longPeriodEnabled, onChangeLongPeriodEnabled,
   displayInsets, onOpenDisplayAreaEditor,
   tabPlacement, onChangeTabPlacement,
   epicenterEstimationEnabled, onChangeEpicenterEstimationEnabled,
@@ -328,6 +329,13 @@ export function SettingsBody({
           />
           <SettingsCardDivider/>
           <SettingsMenuRow label="各地の震度の表示方法" onClick={() => onNavigate([...path, "stationListDisplay"])}/>
+          <SettingsCardDivider/>
+          <SettingsToggleRow
+            label="長周期地震動階級を表示"
+            description="気象庁が発表した長周期地震動階級を、地震の一覧(震度バッジの右上)と詳細に表示します。データはWolfx Open APIから取得します。観測情報は地震の約10分後に発表されるため、少し遅れて表示されます(初期設定はオン)。"
+            checked={longPeriodEnabled}
+            onChange={() => onChangeLongPeriodEnabled(!longPeriodEnabled)}
+          />
         </SettingsCard>
 
         <div style={captionStyle}>気象</div>

@@ -4,6 +4,7 @@ import { ThemeContext, touchGlassBackdropFilter } from "./theme";
 import { getIntensityStyleFromScheme } from "./colorSchemes";
 import { GlassOpaqueContext, PressableButton } from "./glass";
 import { QUAKE_STAGE_LABEL } from "./quakeCards";
+import { LongPeriodBadge } from "./quakeDetailUi";
 import { EMPTY_EQDB_LIST, EQDB_EPICENTER_NAME_OPTIONS_DEFAULT, EQDB_MAX_INT_OPTIONS, EQDB_MAX_INT_SCALE, EQDB_MIN_MAG_OPTIONS, EQDB_SORT_OPTIONS, buildEqdbQuakeCard, eqdbIntensityStringToScale, eqdbIntensityThresholdScale, eqdbListItemToPreview, fetchEqdbEventCached, fetchEqdbSearch, useEqdbEpicenterPoints } from "./eqdb";
 import { loadEpicenterNamesData, loadGeoData } from "./mapDataLoaders";
 import { HistoryClockIcon, ListViewIcon, RealtimeWaveIcon, SearchGlassIcon, TideGaugeIcon } from "./mapOverlayUi";
@@ -46,6 +47,7 @@ export function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect, loa
           </span>
         ) : (
           <span style={{
+            position: "relative",
             flexShrink: 0, width: 28, height: 22, borderRadius: 6,
             background: style.bg, color: style.fg,
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -53,6 +55,7 @@ export function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect, loa
             lineHeight: 1.1, textAlign: "center",
           }}>
             {q.isForeign ? "遠地" : q.maxIntensity === "?" ? "調査中" : q.maxIntensity === "5u" ? "未入電" : style.label}
+            <LongPeriodBadge grade={q.longPeriod} size={14} offset={-6}/>
           </span>
         )}
         <span style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 5 }}>

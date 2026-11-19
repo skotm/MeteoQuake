@@ -12,7 +12,9 @@ import { Filters, LAYERS } from "./app/navigation";
 import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layoutHooks";
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
 import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, computeGlareGuard, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
-import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredTabPlacement, saveTabPlacement, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
+import { useLongPeriod } from "./app/useLongPeriod";
+import { attachLongPeriod } from "./longPeriod";
+import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredTabPlacement, saveTabPlacement, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredLongPeriodEnabled, saveLongPeriodEnabled, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
 import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
 import { loadEpicenterNamesData, loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
@@ -333,6 +335,11 @@ export default function App() {
   }
 
   // 揺れ検出情報をフローティングのカードに表示するか(既定ON)。検知自体は止めず、カードだけを隠す。
+  const [longPeriodEnabled, setLongPeriodEnabledState] = useState(loadStoredLongPeriodEnabled);
+  function handleChangeLongPeriodEnabled(next) {
+    setLongPeriodEnabledState(next);
+    saveLongPeriodEnabled(next);
+  }
   const [shakeEventCardsEnabled, setShakeEventCardsEnabledState] = useState(loadStoredShakeEventCardsEnabled);
   function handleChangeShakeEventCardsEnabled(next) {
     setShakeEventCardsEnabledState(next);
@@ -1881,7 +1888,12 @@ export default function App() {
     replayQuakeListRef.current = next;
     return next;
   })();
-  const baseQuakes = replayQuakeList ?? quakes;
+  // 長周期地震動階級(Wolfx)を、地震カードに重ねる。リプレイ中は、再生時刻より後に出た観測情報は出さない。
+  const longPeriodEvents = useLongPeriod(longPeriodEnabled);
+  const baseQuakes = useMemo(
+    () => attachLongPeriod(replayQuakeList ?? quakes, longPeriodEvents, replayQuakeList ? replayQuakeNowMs : null),
+    [replayQuakeList, quakes, longPeriodEvents, replayQuakeNowMs],
+  );
 
   // テスト配信中は、実際の一覧の先頭にテストデータを合成する。地震タブに関するApp側の判定
   // (一覧・選択中の地震・地図表示)は、以降すべてこちらを使う。
@@ -3672,6 +3684,8 @@ export default function App() {
                   tabPlacement={tabPlacement}
                   onChangeTabPlacement={handleChangeTabPlacement}
                   shakeEventCardsEnabled={shakeEventCardsEnabled}
+                  longPeriodEnabled={longPeriodEnabled}
+                  onChangeLongPeriodEnabled={handleChangeLongPeriodEnabled}
                   onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
                   cameraSettings={cameraSettings}
                   onChangeCameraSettings={handleChangeCameraSettings}
@@ -3850,6 +3864,8 @@ export default function App() {
               tabPlacement={tabPlacement}
               onChangeTabPlacement={handleChangeTabPlacement}
               shakeEventCardsEnabled={shakeEventCardsEnabled}
+              longPeriodEnabled={longPeriodEnabled}
+              onChangeLongPeriodEnabled={handleChangeLongPeriodEnabled}
               onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
               cameraSettings={cameraSettings}
               onChangeCameraSettings={handleChangeCameraSettings}
