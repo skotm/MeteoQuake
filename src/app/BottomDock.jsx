@@ -1797,6 +1797,7 @@ export function BottomDock({
   const navPointerId = useRef(null);
   const navMoved     = useRef(false);
   const navStartX    = useRef(0);
+  const navStartY    = useRef(0);
   const N = NAV.length;                       // タブ数
   const tabW = 100 / N;                       // 1タブの幅 [%]（内側領域基準）
 
@@ -1834,6 +1835,7 @@ export function BottomDock({
     navPointerId.current = e.pointerId;
     navMoved.current     = false;
     navStartX.current    = e.clientX;
+    navStartY.current    = e.clientY;
     e.currentTarget.setPointerCapture(e.pointerId);
     const idx = clientXToIndex(e.clientX);
     setPreviewIdx(idx);
@@ -1848,6 +1850,21 @@ export function BottomDock({
 
   function handleNavPointerMove(e) {
     if (navPointerId.current !== e.pointerId) return;
+    // フローティングが閉じている時に、ナビ行を上にスワイプしたら、タブ選択ではなく
+    // フローティングの高さを動かす操作として引き継ぐ(以降はuseSnapDragが指に追従する)。
+    if (!isWide && !cornerTabs && snapIndex === 0 && !navMoved.current) {
+      const dy = navStartY.current - e.clientY;
+      if (dy > 6 && dy > Math.abs(e.clientX - navStartX.current)) {
+        navPointerId.current = null;
+        navMoved.current = true; // この後のclickでタブが選ばれないようにする
+        setNavDragging(false);
+        setNavPressed(false);
+        setPreviewIdx(null);
+        setHighlightLeft(activeIndex * tabW);
+        handlePointerDown({ clientY: navStartY.current, preventDefault() {} });
+        return;
+      }
+    }
     if (Math.abs(e.clientX - navStartX.current) > 3 && !navMoved.current) {
       // ここで初めて「実際のドラッグ」と確定する。
       // この瞬間から transition を切って指に即座追従させる。
@@ -2991,7 +3008,7 @@ export function BottomDock({
                     スクロール内の先頭に置くので、速報のカードが出れば入れ替わるだけで
                     上部に隙間は残らない。地震を選択して詳細を見ている間は出さない。 */}
                 {!hasActiveEew && selectedQuakeId == null && (
-                  <div style={{ textAlign: "center", padding: "0 0 6px", fontSize: 10.5, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, letterSpacing: 0.2 }}>
+                  <div onPointerDown={isWide ? undefined : handlePointerDown} style={{ textAlign: "center", padding: isWide ? "0 0 6px" : "8px 0 10px", margin: isWide ? 0 : "-8px 0 -4px", touchAction: isWide ? undefined : "none", cursor: isWide ? undefined : "grab", fontSize: 10.5, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, letterSpacing: 0.2 }}>
                     現在緊急地震速報は発表されていません
                   </div>
                 )}
