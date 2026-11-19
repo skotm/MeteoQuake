@@ -159,24 +159,32 @@ function stripStationMark(t) { return typeof t === "string" ? t.replace(/[*＊]/
 // 地図に出す内容の切り替え: 「各地の震度」(観測点・推計震度分布) ⇄ 「長周期地震動階級」(細分区域の塗り)
 export function LongPeriodMapToggle({ mapView, onChange }) {
   const { tokens } = useContext(ThemeContext);
-  const seg = (active, label, onClick) => (
+  const [pressed, setPressed] = useState(null);
+  // 角を少しだけ丸めた長方形。押している間は色を濃くする。
+  const seg = (id, active, label, onClick) => (
     <button
       type="button"
       onClick={onClick}
+      onPointerDown={() => setPressed(id)}
+      onPointerUp={() => setPressed(null)}
+      onPointerLeave={() => setPressed(null)}
+      onPointerCancel={() => setPressed(null)}
       style={{
-        flex: 1, padding: "5px 10px", border: "none", cursor: "pointer", borderRadius: 999,
+        flex: 1, padding: "7px 10px", border: "none", cursor: "pointer", borderRadius: 6,
         fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
         background: active ? "#0A84FF" : "transparent",
         color: active ? "#fff" : `rgba(${tokens.ink},0.7)`,
+        filter: pressed === id ? "brightness(0.78)" : "none",
+        transition: "filter 0.08s",
       }}
     >{label}</button>
   );
   return (
     <div style={{ margin: "4px 14px 2px", display: "flex", alignItems: "center", gap: 8 }}>
       <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0 }}>地図の表示</span>
-      <div style={{ flex: 1, display: "flex", padding: 2, borderRadius: 999, background: `rgba(${tokens.ink},0.08)` }}>
-        {seg(!mapView, "各地の震度", () => onChange(false))}
-        {seg(mapView, "長周期地震動階級", () => onChange(true))}
+      <div style={{ flex: 1, display: "flex", padding: 2, borderRadius: 8, background: `rgba(${tokens.ink},0.08)` }}>
+        {seg("a", !mapView, "各地の震度", () => onChange(false))}
+        {seg("b", mapView, "長周期地震動階級", () => onChange(true))}
       </div>
     </div>
   );
@@ -583,12 +591,7 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
 
   return (
     <div style={{ margin: "2px 14px 8px" }}>
-      <div style={{
-        padding: "6px 2px",
-        fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`,
-      }}>
-        各地の震度
-      </div>
+      <div style={{ height: 4 }}/>
 
       <div style={{
         borderRadius: 12,
