@@ -851,12 +851,6 @@ export default function App() {
     setEewEpicenterPickActive(false);
   }
 
-  const longPeriodCtxValue = useMemo(() => ({
-    enabled: longPeriodEnabled,
-    ready: wolfxDetail.status === "ready" || wolfxDetail.status === "error",
-    events: longPeriodEvents,
-    wolfxMinuteKeys,
-  }), [longPeriodEnabled, wolfxDetail.status, longPeriodEvents, wolfxMinuteKeys]);
 
   // テスト配信中は、実際の一覧の先頭にテストデータを合成する。地図・パネルとも、
   // 以降のEEW関連の判定はこちら(effectiveEews)を使う。
@@ -1993,6 +1987,12 @@ export default function App() {
     for (const [k, v] of wolfxDetail.longPeriod) m.set(k, v);
     return m;
   }, [longPeriodEnabled, wolfxDetail.longPeriod, jmaLongPeriod]);
+  const longPeriodCtxValue = useMemo(() => ({
+    enabled: longPeriodEnabled,
+    ready: wolfxDetail.status === "ready" || wolfxDetail.status === "error",
+    events: longPeriodEvents,
+    wolfxMinuteKeys,
+  }), [longPeriodEnabled, wolfxDetail.status, longPeriodEvents, wolfxMinuteKeys]);
   const baseQuakes = useMemo(
     () => attachLongPeriod(replayQuakeList ?? quakes, longPeriodEvents, replayQuakeList ? replayQuakeNowMs : null),
     [replayQuakeList, quakes, longPeriodEvents, replayQuakeNowMs],
