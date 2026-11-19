@@ -204,6 +204,7 @@ export function isTsunamiNoWorryConfirmed(quake) {
   // テストの①②は津波「調査中」固定なので、「心配なし」ならそれは③以降。
   const testDetail = !!quake?.isTest;
   return (hasStationDetail || testDetail) && quake?.domesticTsunami === "None";
+  return hasStationDetail && quake?.domesticTsunami === "None";
 }
 
 // 観測点名の「＊」表示をやめたため、それを説明する定型の付加文も出さない。
