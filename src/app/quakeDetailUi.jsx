@@ -423,7 +423,7 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
   // 親(BottomDock)側にstateを持ち上げてpropsで受け取る形にしている
   // (✕ボタン自体はこれまで通りこのコンポーネント内に残す)。
   const [openPrefs, setOpenPrefs] = useState(() => new Set()); // 詳細画面内で開いている都道府県
-  const [closePressed, setClosePressed] = useState(false); // 詳細画面の✕(ガラス)ボタンの押下状態
+  const [openGroups, setOpenGroups] = useState(() => new Set()); // その場で開いている震度グループ
   const schemeId = useContext(QuakeColorSchemeContext);
   const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
 
@@ -446,16 +446,8 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
   useEffect(() => {
     onOpenKeyChange(null);
     setOpenPrefs(new Set());
+    setOpenGroups(new Set());
   }, [points]);
-
-  // 詳細画面を閉じた時・別の震度キーの詳細画面へ切り替わった時は、
-  // 開いていた都道府県の展開状態をリセットする。
-  // openPrefsは震度キーをまたいで共有しているstateなので、これをやらないと
-  // 「震度5弱の詳細で北海道を開いたまま閉じて、震度3の詳細を開いたら
-  //  北海道が開きっぱなしになっている」といった意図しない引き継ぎが起きる。
-  useEffect(() => {
-    setOpenPrefs(new Set());
-  }, [openKey]);
 
   if (sorted.length === 0) return null;
 
@@ -469,6 +461,14 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
   const visible = expanded ? sorted : sorted.slice(0, VISIBLE_COUNT);
   const hasMore = sorted.length > VISIBLE_COUNT;
 
+  function toggleGroup(key) {
+    setOpenGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
   function togglePref(pref) {
     setOpenPrefs(prev => {
       const next = new Set(prev);
@@ -477,13 +477,9 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
     });
   }
 
-  // 階層表示(grouped)で、ある震度キーの地域詳細画面を開いている場合はそちらを表示する
-  if (displayMode === "grouped" && openKey != null) {
-    const groupPoints = groups.find(([k]) => k === openKey)?.[1] || [];
-    const style = getIntensityStyleFromScheme(scheme, openKey);
-
-    // 都道府県ごと→さらに市区町村ごとにまとめ直す(出現順を維持)。
-    // 同じ市区町村の地点は1つの見出しの下にまとめ、見出しの繰り返しを避ける。
+  // 階層表示(grouped)は別画面へ遷移せず、その場で開閉する(震度 → 都道府県 → 市区町村)。
+  // 震度ごとの都道府県・市区町村のまとめ(出現順を維持)。
+  function buildByPref(groupPoints) {
     const byPref = [];
     const prefIndexOf = new Map();
     for (const p of groupPoints) {
@@ -499,94 +495,15 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
       }
       prefEntry.cities[prefEntry.cityIndexOf.get(cityKey)].addrs.push(stripStationMark(p.addr));
     }
-
-    return (
-      <div style={{ margin: "2px 14px 8px", textAlign: "left" }}>
-        <div style={{ position: "relative", display: "flex", alignItems: "center", padding: "6px 2px 10px" }}>
-          <div style={{ flex: 1, textAlign: "left", fontSize: 14, fontWeight: 700, color: tokens.text, paddingRight: 36 }}>
-            震度{style.label}の地域
-          </div>
-          <div style={{ position: "absolute", right: 0 }}>
-            <Glass
-              radius={999}
-              style={{
-                width: 28, height: 28,
-                transform: closePressed ? "scale(1.16)" : "scale(1)",
-                transformOrigin: "center",
-                transition: "transform 0.18s cubic-bezier(.22,1,.36,1)",
-              }}
-            >
-              <button
-                onClick={() => onOpenKeyChange(null)}
-                onPointerDown={() => setClosePressed(true)}
-                onPointerUp={() => setClosePressed(false)}
-                onPointerCancel={() => setClosePressed(false)}
-                onPointerLeave={() => setClosePressed(false)}
-                aria-label="閉じる"
-                style={{
-                  width: "100%", height: "100%",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  background: "transparent", border: "none", cursor: "pointer",
-                }}
-              >
-                <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
-                     stroke={`rgba(${tokens.ink},0.75)`} strokeWidth="2.4" strokeLinecap="round">
-                  <line x1="6" y1="6" x2="18" y2="18"/>
-                  <line x1="18" y1="6" x2="6" y2="18"/>
-                </svg>
-              </button>
-            </Glass>
-          </div>
-        </div>
-
-        <div style={{
-          borderRadius: 12,
-          overflow: "hidden",
-          background: `rgba(${tokens.ink},0.04)`,
-          boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)`,
-        }}>
-          {byPref.map((entry, pi) => {
-            const isOpen = openPrefs.has(entry.pref);
-            return (
-              <div key={entry.pref}>
-                {pi > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.08)` }}/>}
-                <PressableButton
-                  onClick={() => togglePref(entry.pref)}
-                  style={{
-                    width: "100%", display: "block", background: "transparent", border: "none",
-                    cursor: "pointer", textAlign: "left", padding: 0,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 12px" }}>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: tokens.text, flex: 1 }}>
-                      {entry.pref}
-                    </span>
-                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
-                         stroke={`rgba(${tokens.ink},0.3)`} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"
-                         style={{ transform: isOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s ease", flexShrink: 0 }}>
-                      <polyline points="6 9 12 15 18 9"/>
-                    </svg>
-                  </div>
-                  {isOpen && (
-                    <div style={{ padding: "0 12px 10px", textAlign: "left" }}>
-                      {entry.cities.map((c, ci) => (
-                        <div key={ci} style={{ marginTop: ci > 0 ? 6 : 0, fontSize: 14, lineHeight: 1.7, textAlign: "left" }}>
-                          {c.city && (
-                            <span style={{ fontWeight: 700, color: tokens.text }}>{c.city} </span>
-                          )}
-                          <span style={{ color: `rgba(${tokens.ink},0.88)` }}>{c.addrs.join(" ")}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </PressableButton>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
+    return byPref;
   }
+  const chevron = (open, size = 14) => (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none"
+         stroke={`rgba(${tokens.ink},0.35)`} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"
+         style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s ease", flexShrink: 0 }}>
+      <polyline points="6 9 12 15 18 9"/>
+    </svg>
+  );
 
   return (
     <div style={{ margin: "2px 14px 8px" }}>
@@ -609,11 +526,12 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
           groups.map(([key, groupPoints], gi) => {
             const style = getIntensityStyleFromScheme(scheme, key);
             const prefs = [...new Set(groupPoints.map(p => p.pref))];
+            const groupOpen = openGroups.has(key);
             return (
               <div key={key}>
                 {gi > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.08)` }}/>}
                 <PressableButton
-                  onClick={() => onOpenKeyChange(key)}
+                  onClick={() => toggleGroup(key)}
                   style={{
                     width: "100%", display: "flex", alignItems: "center", gap: 10,
                     padding: "9px 12px", background: "transparent", border: "none",
@@ -632,20 +550,51 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
                     <div style={{ fontSize: 13, fontWeight: 700, color: tokens.text }}>
                       震度{style.label}
                     </div>
-                    <div style={{ fontSize: 13, color: `rgba(${tokens.ink},0.65)`, marginTop: 3, lineHeight: 1.6 }}>
-                      {prefs.map((pref, pi) => (
-                        <span key={pref} style={{ whiteSpace: "nowrap" }}>
-                          {pref}{pi < prefs.length - 1 ? "、" : ""}
-                        </span>
-                      ))}
-                    </div>
+                    {!groupOpen && (
+                      <div style={{ fontSize: 13, color: `rgba(${tokens.ink},0.65)`, marginTop: 3, lineHeight: 1.6 }}>
+                        {prefs.map((pref, pi) => (
+                          <span key={pref} style={{ whiteSpace: "nowrap" }}>
+                            {pref}{pi < prefs.length - 1 ? "、" : ""}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
-                       stroke={`rgba(${tokens.ink},0.3)`} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
-                       style={{ flexShrink: 0 }}>
-                    <polyline points="9 6 15 12 9 18"/>
-                  </svg>
+                  {chevron(groupOpen)}
                 </PressableButton>
+                {groupOpen && (
+                  <div style={{ padding: "0 12px 8px 12px" }}>
+                    {buildByPref(groupPoints).map(entry => {
+                      const pk = `${key}|${entry.pref}`;
+                      const prefOpen = openPrefs.has(pk);
+                      return (
+                        <div key={pk} style={{ borderLeft: `3px solid ${style.bg}`, marginTop: 4 }}>
+                          <PressableButton
+                            onClick={() => togglePref(pk)}
+                            style={{
+                              width: "100%", display: "flex", alignItems: "center", gap: 8,
+                              padding: "9px 10px", background: "transparent", border: "none",
+                              cursor: "pointer", textAlign: "left",
+                            }}
+                          >
+                            <span style={{ flex: 1, fontSize: 14, fontWeight: 700, color: tokens.text }}>{entry.pref}</span>
+                            {chevron(prefOpen, 13)}
+                          </PressableButton>
+                          {prefOpen && (
+                            <div style={{ padding: "0 10px 8px 10px" }}>
+                              {entry.cities.map((c, ci) => (
+                                <div key={ci} style={{ marginTop: ci > 0 ? 6 : 0, fontSize: 14, lineHeight: 1.7 }}>
+                                  {c.city && <span style={{ fontWeight: 700, color: tokens.text }}>{c.city} </span>}
+                                  <span style={{ color: `rgba(${tokens.ink},0.88)` }}>{c.addrs.join(" ")}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })

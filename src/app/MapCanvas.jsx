@@ -199,6 +199,8 @@ export function MapCanvas({
   // 同時にONにはならない)。
   const quakeEpicenterPickActiveRef = useRef(quakeEpicenterPickActive);
   quakeEpicenterPickActiveRef.current = quakeEpicenterPickActive;
+  const prevFocusHypoRef = useRef(null);
+  const prevFocusFillRef = useRef(quakeLongPeriodFillActive);
   const quakeLpPickActiveRef = useRef(quakeLongPeriodPickActive);
   quakeLpPickActiveRef.current = quakeLongPeriodPickActive;
   const onPickQuakeLpAreaRef = useRef(onPickQuakeLongPeriodArea);
@@ -2375,6 +2377,14 @@ export function MapCanvas({
       })),
     });
 
+    // 長周期階級の塗り表示への切り替え(観測点が隠れる/戻る)だけでは、地図を動かさない。
+    // 選択中の地震(hypocenters)が同じまま、塗り表示の状態か観測点だけが変わった場合は何もしない。
+    const sameHypo = prevFocusHypoRef.current === hypocenters;
+    const fillChanged = prevFocusFillRef.current !== quakeLongPeriodFillActive;
+    prevFocusHypoRef.current = hypocenters;
+    prevFocusFillRef.current = quakeLongPeriodFillActive;
+    if (sameHypo && (fillChanged || quakeLongPeriodFillActive)) return;
+
     // 震源(複数あれば全件) + 観測点(緯度経度が引けたもの)が全部収まる
     // bounding boxを作ってfitBoundsする。観測点が1件も無い(マッチできなかった)
     // 場合は、震源(複数なら重心)を中心にほどよいズームへ寄せる。
@@ -2407,7 +2417,7 @@ export function MapCanvas({
         offset: isWide ? [230, 0] : [0, 0],
       });
     }
-  }, [hypocenters, stationPoints, status, isWide]);
+  }, [hypocenters, stationPoints, status, isWide, quakeLongPeriodFillActive]);
 
   // 台風情報: typhoonGeojsonが変わるたびにsourceへ流し込み、予報円の横に出す
   // 時刻ラベル(maplibregl.Marker)も同じタイミングで作り直す。

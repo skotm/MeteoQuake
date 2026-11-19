@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { cardMinuteKey, eventIdMinuteKey } from "../longPeriod";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { attachLongPeriod, cardMinuteKey, eventIdMinuteKey } from "../longPeriod";
 import { JMA_LP_PAST_LIST_URL, decodeCsvBytes, jmaLpLevelCsvUrl, parseJmaLevelCsv, parseJmaPastList } from "../jmaLongPeriod";
 
 /* ─────────────────────────────────────────────────────
@@ -76,4 +76,23 @@ export function useJmaLongPeriod(cards, enabled, skipMinuteKeys) {
   }, [cards, enabled, skipMinuteKeys]);
 
   return enabled ? events : EMPTY;
+}
+
+/* App側で作った「Wolfx+気象庁」の長周期データを、検索結果の一覧など離れた場所へ渡すためのContext。
+   enabled: 設定で表示がオンか / ready: Wolfxの取得が済んだか / wolfxMinuteKeys: Wolfxが持つ地震の発生時刻(分)
+   events: いま分かっている全eventId→LongPeriodEvent */
+const EMPTY_KEYS = new Set();
+export const LongPeriodContext = createContext({ enabled: false, ready: false, events: EMPTY, wolfxMinuteKeys: EMPTY_KEYS });
+
+/* 地震カード(検索結果の一覧のプレビューなど)に長周期の階級(longPeriod/longPeriodInfo)を付けて返す。
+   Wolfxに無い古い地震は、気象庁の過去データから該当分だけ取りに行く。 */
+export function useAttachLongPeriod(cards) {
+  const ctx = useContext(LongPeriodContext);
+  const jma = useJmaLongPeriod(cards, ctx.enabled && ctx.ready, ctx.wolfxMinuteKeys);
+  return useMemo(() => {
+    if (!ctx.enabled) return cards;
+    const m = new Map(jma);
+    for (const [k, v] of ctx.events) m.set(k, v);
+    return attachLongPeriod(cards, m);
+  }, [cards, ctx.enabled, ctx.events, jma]);
 }
