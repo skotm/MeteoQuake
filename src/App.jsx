@@ -12,9 +12,10 @@ import { Filters, LAYERS } from "./app/navigation";
 import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layoutHooks";
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
 import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, computeGlareGuard, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
-import { useLongPeriod } from "./app/useLongPeriod";
+import { useWolfxDetail } from "./app/useWolfxDetail";
 import { attachLongPeriod } from "./longPeriod";
-import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredTabPlacement, saveTabPlacement, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredLongPeriodEnabled, saveLongPeriodEnabled, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
+const EMPTY_LONG_PERIOD = new Map();
+import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredTabPlacement, saveTabPlacement, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredLongPeriodEnabled, saveLongPeriodEnabled, loadStoredQuakeSource, saveQuakeSource, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
 import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
 import { loadEpicenterNamesData, loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
@@ -335,6 +336,12 @@ export default function App() {
   }
 
   // 揺れ検出情報をフローティングのカードに表示するか(既定ON)。検知自体は止めず、カードだけを隠す。
+  // 地震情報(緊急地震速報を除く)の取得元: "p2p" | "wolfx"
+  const [quakeSource, setQuakeSourceState] = useState(loadStoredQuakeSource);
+  function handleChangeQuakeSource(next) {
+    setQuakeSourceState(next);
+    saveQuakeSource(next);
+  }
   const [longPeriodEnabled, setLongPeriodEnabledState] = useState(loadStoredLongPeriodEnabled);
   function handleChangeLongPeriodEnabled(next) {
     setLongPeriodEnabledState(next);
@@ -1889,7 +1896,9 @@ export default function App() {
     return next;
   })();
   // 長周期地震動階級(Wolfx)を、地震カードに重ねる。リプレイ中は、再生時刻より後に出た観測情報は出さない。
-  const longPeriodEvents = useLongPeriod(longPeriodEnabled);
+  // 長周期の表示と、地震情報のWolfx取得は同じ通信(jma_earthquake_detail)から作る。
+  const wolfxDetail = useWolfxDetail(longPeriodEnabled || quakeSource === "wolfx");
+  const longPeriodEvents = longPeriodEnabled ? wolfxDetail.longPeriod : EMPTY_LONG_PERIOD;
   const baseQuakes = useMemo(
     () => attachLongPeriod(replayQuakeList ?? quakes, longPeriodEvents, replayQuakeList ? replayQuakeNowMs : null),
     [replayQuakeList, quakes, longPeriodEvents, replayQuakeNowMs],
@@ -2319,11 +2328,22 @@ export default function App() {
   // quakeFetchLimit(設定タブで変更可能)が変わった場合も、この効果全体をやり直して
   // 新しい件数で一覧を取得し直す。
   const [wsStatus, setWsStatus] = useState("connecting"); // connecting | open | closed
+  const prevQuakeSourceRef = useRef(quakeSource);
   useEffect(() => {
     let cancelled = false;
+    // 地震情報の取得元がWolfxの間は、P2P地震情報の地震一覧(/history・WebSocketの地震)は使わない。
+    // (津波情報・緊急地震速報は、P2P地震情報のWebSocketをこれまでどおり使う)
+    const useP2pQuakes = quakeSource !== "wolfx";
+    if (prevQuakeSourceRef.current !== quakeSource) {
+      // 取得元を切り替えた時は、前の取得元の一覧を引き継がない(同じ地震が別idで重複するため)。
+      prevQuakeSourceRef.current = quakeSource;
+      setQuakes([]);
+      setQuakeStatus("loading");
+    }
 
-    fetchRecentQuakes(quakeFetchLimit)
+    (useP2pQuakes ? fetchRecentQuakes(quakeFetchLimit) : Promise.resolve(null))
       .then(list => {
+        if (list == null) return;
         if (cancelled) return;
         setQuakes(prev => {
           // /historyの完了より先にWebSocketで新着が届いていた場合、
@@ -2426,7 +2446,7 @@ export default function App() {
 
     const socket = connectQuakeWebSocket(
       (newQuake) => {
-        if (cancelled) return;
+        if (cancelled || !useP2pQuakes) return;
         console.log("[quake-select-diag][ws-receive] 新着地震をWebSocketで受信", {
           id: newQuake.id, time: newQuake.time, place: newQuake.place,
           pointsCount: Array.isArray(newQuake.points) ? newQuake.points.length : 0,
@@ -2484,7 +2504,19 @@ export default function App() {
     );
 
     return () => { cancelled = true; socket.close(); };
-  }, [quakeFetchLimit]);
+  }, [quakeFetchLimit, quakeSource]);
+
+  // 地震情報の取得元がWolfxの時は、Wolfxから作った地震カードを一覧にする。
+  // (idは電文が増えても変わらないので、選択中の地震が途中で外れることはない)
+  useEffect(() => {
+    if (quakeSource !== "wolfx") return;
+    if (wolfxDetail.status === "ready") {
+      setQuakes(wolfxDetail.quakeCards.slice(0, quakeFetchLimit));
+      setQuakeStatus("ready");
+    } else if (wolfxDetail.status === "error") {
+      setQuakeStatus("error");
+    }
+  }, [quakeSource, wolfxDetail.status, wolfxDetail.quakeCards, quakeFetchLimit]);
 
   // Wolfxの緊急地震速報WebSocket。P2P地震情報とは完全に別のドメイン・接続なので、
   // 専用のuseEffectで独立して繋ぐ(quakeFetchLimitの変更などで無駄に再接続
@@ -3685,6 +3717,8 @@ export default function App() {
                   onChangeTabPlacement={handleChangeTabPlacement}
                   shakeEventCardsEnabled={shakeEventCardsEnabled}
                   longPeriodEnabled={longPeriodEnabled}
+                  quakeSource={quakeSource}
+                  onChangeQuakeSource={handleChangeQuakeSource}
                   onChangeLongPeriodEnabled={handleChangeLongPeriodEnabled}
                   onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
                   cameraSettings={cameraSettings}
@@ -3865,6 +3899,8 @@ export default function App() {
               onChangeTabPlacement={handleChangeTabPlacement}
               shakeEventCardsEnabled={shakeEventCardsEnabled}
               longPeriodEnabled={longPeriodEnabled}
+              quakeSource={quakeSource}
+              onChangeQuakeSource={handleChangeQuakeSource}
               onChangeLongPeriodEnabled={handleChangeLongPeriodEnabled}
               onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
               cameraSettings={cameraSettings}
