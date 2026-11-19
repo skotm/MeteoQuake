@@ -21,6 +21,7 @@ export class AreaFillCoordinator {
     this.applyColor = applyColor;
     this.quake = new Map();
     this.eew = new Map();
+    this.pick = new Map();
     this.applied = new Map();
   }
 
@@ -36,9 +37,16 @@ export class AreaFillCoordinator {
     this.flush();
   }
 
+  /** 地震情報テストの「長周期地震動階級を割り当てる地域を地図で選ぶ」時の塗り(最優先)。Map<区域コード, 色>。 */
+  setPickFill(codeToColor) {
+    this.pick = new Map(codeToColor);
+    this.flush();
+  }
+
   flush() {
     const next = new Map(this.quake);
     for (const [code, color] of this.eew) next.set(code, color); // 重なる区域はEEWが優先
+    for (const [code, color] of this.pick) next.set(code, color); // 地域選択中の塗りは最優先
     for (const code of this.applied.keys()) {
       if (!next.has(code)) this.applyColor(code, null);
     }

@@ -7,7 +7,7 @@ import { buildSiteLookup } from "./engines/shakeTestWaveform";
 import { setJmaTravelTimeTable, tableFromJSON } from "./engines/jmaTravelTime";
 import { CONSENT_DOCS, isConsentUpToDate, loadStoredConsent, saveConsent } from "./app/consent";
 import { loadMarkdownFile } from "./app/settingsPanels";
-import { QuakeColorSchemeContext, REALTIME_API_BASE_URL, loadStoredQuakeColorScheme, saveQuakeColorScheme } from "./app/colorSchemes";
+import { QUAKE_COLOR_SCHEMES, getLongPeriodStyleFromScheme, QuakeColorSchemeContext, REALTIME_API_BASE_URL, loadStoredQuakeColorScheme, saveQuakeColorScheme } from "./app/colorSchemes";
 import { Filters, LAYERS } from "./app/navigation";
 import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layoutHooks";
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
@@ -933,7 +933,8 @@ export default function App() {
       depth: 20,
       magnitude: 5.8,
       domesticTsunami: "None", // ③確定報で使う津波判定
-      longPeriod: 2,           // ④長周期地震動に関する観測情報で使う最大階級(1〜4)
+      longPeriod: 2,           // 地図で地域を選ぶ時に割り当てる階級(1〜4)
+      longPeriodAreas: [],     // ④で配信する、階級を割り当てた細分区域 [{ name, grade }]
     };
   }
   const [quakeTestForm, setQuakeTestForm] = useState(defaultQuakeTestForm);
@@ -947,6 +948,8 @@ export default function App() {
     setTestQuakes(next);
   }
   const [quakeEpicenterPickActive, setQuakeEpicenterPickActive] = useState(false);
+  // 長周期地震動階級を割り当てる地域を地図で選ぶモード(階級はフォームのlongPeriod、割り当てはフォームのlongPeriodAreas)
+  const [quakeLpPickActive, setQuakeLpPickActive] = useState(false);
   const [quakeTestAutoPlaying, setQuakeTestAutoPlaying] = useState(false);
 
   /**
@@ -976,6 +979,19 @@ export default function App() {
     }
     if (action === "cancelEpicenterPick") {
       setQuakeEpicenterPickActive(false);
+      return;
+    }
+    if (action === "startLpPick") {
+      setQuakeEpicenterPickActive(false);
+      setQuakeLpPickActive(true);
+      return;
+    }
+    if (action === "finishLpPick") {
+      setQuakeLpPickActive(false);
+      return;
+    }
+    if (action === "clearLpAreas") {
+      setQuakeTestForm(prev => ({ ...prev, longPeriodAreas: [] }));
       return;
     }
     if (action === "resetForm") {
@@ -1058,8 +1074,21 @@ export default function App() {
       const list = testQuakesRef.current;
       const prevGroup = list.find(g => g.gid === form.editingId) || null;
       if (!prevGroup) return;
-      const lg = Math.min(4, Math.max(1, Math.round(Number(form.longPeriod) || 1)));
-      const info = buildTestLongPeriodInfo(prevGroup.card, lg, null);
+      const assigned = Array.isArray(form.longPeriodAreas) ? form.longPeriodAreas : [];
+      let lg, info;
+      if (assigned.length > 0) {
+        // 地図で選んだ地域の階級をそのまま使う(最大階級はその最大値)。
+        lg = Math.max(...assigned.map(a => a.grade));
+        info = {
+          eventId: "test", maxLg: lg, issuedAtMs: null, cities: [],
+          areas: assigned.map(a => ({ name: a.name, lg: a.grade })).sort((a, b) => b.lg - a.lg || a.name.localeCompare(b.name, "ja")),
+          hypocenterName: prevGroup.card.place ?? null,
+        };
+      } else {
+        // 地域を選んでいない時は、観測点から自動でダミーを作る(階級はフォームのlongPeriodが最大)。
+        lg = Math.min(4, Math.max(1, Math.round(Number(form.longPeriod) || 1)));
+        info = buildTestLongPeriodInfo(prevGroup.card, lg, null);
+      }
       const group = { ...prevGroup, card: { ...prevGroup.card, longPeriod: lg, longPeriodInfo: info } };
       commitTestQuakes(list.map(g => (g.gid === prevGroup.gid ? group : g)));
       return;
@@ -1093,6 +1122,20 @@ export default function App() {
   // 「今どちらのテスト配信パネルを開いているか」で行き先を切り替えるのではなく、
   // quakeEpicenterPickActiveがtrueの間だけこちらへ、そうでなければEEW側へ、という
   // 単純な排他制御にしている(両方同時にONにはならない)。
+  // 地図タップで、細分区域に長周期地震動階級(フォームのlongPeriod)を割り当てる/外す。
+  // 同じ階級が付いている地域をもう一度タップすると外れ、違う階級が付いていれば付け替える。
+  function handlePickQuakeLpArea(areaName) {
+    setQuakeTestForm(prev => {
+      const grade = Math.min(4, Math.max(1, Math.round(Number(prev.longPeriod) || 1)));
+      const list = Array.isArray(prev.longPeriodAreas) ? prev.longPeriodAreas : [];
+      const cur = list.find(a => a.name === areaName);
+      const next = cur && cur.grade === grade
+        ? list.filter(a => a.name !== areaName)
+        : [...list.filter(a => a.name !== areaName), { name: areaName, grade }];
+      return { ...prev, longPeriodAreas: next };
+    });
+  }
+
   function handlePickQuakeEpicenter(lat, lon, placeName) {
     setQuakeTestForm(prev => ({
       ...prev,
@@ -3276,7 +3319,11 @@ export default function App() {
           eewEpicenterPickActive={eewEpicenterPickActive}
           onPickEewEpicenter={handlePickEewEpicenter}
           quakeEpicenterPickActive={quakeEpicenterPickActive}
+          quakeLpPickActive={quakeLpPickActive}
           onPickQuakeEpicenter={handlePickQuakeEpicenter}
+          quakeLongPeriodPickActive={quakeLpPickActive}
+          onPickQuakeLongPeriodArea={handlePickQuakeLpArea}
+          quakeLongPeriodPickAreas={quakeTestForm.longPeriodAreas}
           shakeTestEpicenterPickActive={shakeTestEpicenterPickActive}
           onPickShakeTestEpicenter={handlePickShakeTestEpicenter}
           eewDetailOpen={eewMapLegendVisible}
@@ -3428,7 +3475,7 @@ export default function App() {
             正しい位置に表示できる。表示条件はバー単独の場合
             (showRealtimeMapLayers)とバナー単独の場合(pick中)の両方をORで
             まとめてコンテナごと出し分けている。 */}
-        {(showRealtimeMapLayers || tsunamiAreaPickActive || eewEpicenterPickActive || shakeTestEpicenterPickActive || hasLinkedShakeTest) && (
+        {(showRealtimeMapLayers || tsunamiAreaPickActive || eewEpicenterPickActive || quakeLpPickActive || shakeTestEpicenterPickActive || hasLinkedShakeTest) && (
           <div style={isWide ? {
             position: "absolute",
             right: 16,
@@ -3515,6 +3562,67 @@ export default function App() {
                       >
                         <span style={{ width: 8, height: 8, borderRadius: 999, background: color, flexShrink: 0 }}/>
                         {opt.label}
+                      </PressableButton>
+                    );
+                  })}
+                </div>
+              </Glass>
+            )}
+
+            {/* 地震情報テスト: 長周期地震動階級を割り当てる地域を地図タップで選ぶモードのバナー。
+                下段で「今タップしたら付ける階級」を切り替えられる。同じ階級の地域をもう一度タップすると外れる。 */}
+            {quakeLpPickActive && (
+              <Glass radius={22} style={{
+                display: "flex", flexDirection: "column", gap: 8,
+                padding: "10px 12px",
+                maxWidth: "calc(100vw - 32px)",
+                animation: "appear 0.3s cubic-bezier(.25,1,.5,1)",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: themeContextValue.tokens.text, flex: 1 }}>
+                    地図をタップして地域に長周期階級を割り当て
+                    {(quakeTestForm.longPeriodAreas || []).length > 0 && `(${quakeTestForm.longPeriodAreas.length}地域)`}
+                  </span>
+                  <PressableButton
+                    type="button"
+                    onClick={() => handleTestQuakeAction("clearLpAreas")}
+                    style={{
+                      flexShrink: 0, padding: "6px 12px", borderRadius: 999, border: "none", cursor: "pointer",
+                      background: `rgba(${themeContextValue.tokens.ink},0.08)`,
+                      fontSize: 12, fontWeight: 700, color: themeContextValue.tokens.textSecondary,
+                    }}
+                  >
+                    クリア
+                  </PressableButton>
+                  <PressableButton
+                    type="button"
+                    onClick={() => handleTestQuakeAction("finishLpPick")}
+                    style={{ flexShrink: 0, padding: "6px 14px", borderRadius: 999, border: "none", cursor: "pointer", background: "#0A84FF", fontSize: 12, fontWeight: 700, color: "#fff" }}
+                  >
+                    完了
+                  </PressableButton>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: themeContextValue.tokens.textSecondary, flexShrink: 0 }}>付ける階級:</span>
+                  {[1, 2, 3, 4].map(g => {
+                    const active = quakeTestForm.longPeriod === g;
+                    const st = getLongPeriodStyleFromScheme(QUAKE_COLOR_SCHEMES[quakeColorScheme] || QUAKE_COLOR_SCHEMES.fill, g);
+                    return (
+                      <PressableButton
+                        key={g}
+                        type="button"
+                        onClick={() => handleTestQuakeAction("patchForm", { longPeriod: g })}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 5,
+                          padding: "5px 10px 5px 8px", borderRadius: 999, cursor: "pointer",
+                          border: active ? `1.5px solid ${st.bg}` : "1.5px solid transparent",
+                          background: active ? `${st.bg}33` : `rgba(${themeContextValue.tokens.ink},0.05)`,
+                          fontSize: 11, fontWeight: 700,
+                          color: active ? themeContextValue.tokens.text : themeContextValue.tokens.textSecondary,
+                        }}
+                      >
+                        <span style={{ width: 8, height: 8, borderRadius: 999, background: st.bg, flexShrink: 0 }}/>
+                        階級{g}
                       </PressableButton>
                     );
                   })}
@@ -3773,6 +3881,7 @@ export default function App() {
                   onTestQuakeAction={handleTestQuakeAction}
                   quakeTestForm={quakeTestForm}
                   quakeEpicenterPickActive={quakeEpicenterPickActive}
+                  quakeLpPickActive={quakeLpPickActive}
                   quakeTestAutoPlaying={quakeTestAutoPlaying}
                   shakeTests={shakeTests}
                   onShakeTestAction={handleShakeTestAction}
@@ -3955,6 +4064,7 @@ export default function App() {
               onTestQuakeAction={handleTestQuakeAction}
               quakeTestForm={quakeTestForm}
               quakeEpicenterPickActive={quakeEpicenterPickActive}
+              quakeLpPickActive={quakeLpPickActive}
               quakeTestAutoPlaying={quakeTestAutoPlaying}
               shakeTests={shakeTests}
               onShakeTestAction={handleShakeTestAction}
