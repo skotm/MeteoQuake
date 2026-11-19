@@ -672,3 +672,23 @@ export function saveTabPlacement(value) {
     console.warn("タブボタンの配置の設定を保存できませんでした:", err);
   }
 }
+
+/* 長周期地震動階級を地震情報に表示するか(既定ON)。データ源はWolfx Open API。 */
+const LONG_PERIOD_ENABLED_STORAGE_KEY = "longPeriodEnabled";
+
+export function loadStoredLongPeriodEnabled() {
+  try {
+    return localStorage.getItem(LONG_PERIOD_ENABLED_STORAGE_KEY) !== "false";
+  } catch (err) {
+    console.warn("長周期地震動階級の表示設定を読み込めませんでした:", err);
+  }
+  return true;
+}
+
+export function saveLongPeriodEnabled(enabled) {
+  try {
+    localStorage.setItem(LONG_PERIOD_ENABLED_STORAGE_KEY, String(enabled));
+  } catch (err) {
+    console.warn("長周期地震動階級の表示設定を保存できませんでした:", err);
+  }
+}

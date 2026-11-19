@@ -15,7 +15,7 @@ import { CORNER_TAB_ATTACHED_RADIUS_PORTRAIT, CORNER_TAB_SIZE, CORNER_TAB_PAD, C
 import { NAV } from "./navigation";
 import { BackToListButton, RealtimeDataTimeBadge, SearchFabButton, ShakeEventCard, ShakeTestRunningBadge, StationMarkerToggleButton } from "./mapOverlayUi";
 import { EewDetailFloatingCard, EewFabButton } from "./eewUi";
-import { PanelDragHandoffCard, QuakeDetailCard, QuakeMechDetailPanel, QuakeMessageCard, StationPointsList } from "./quakeDetailUi";
+import { LongPeriodCard, PanelDragHandoffCard, QuakeDetailCard, QuakeMechDetailPanel, QuakeMessageCard, StationPointsList } from "./quakeDetailUi";
 import { TsunamiTabBody } from "./tsunamiTideUi";
 import { SettingsBody } from "./SettingsBody";
 import { derivePrefFromEewAreaName } from "./eewUi";
@@ -91,6 +91,7 @@ export function BottomDock({
   shakeDetectionEnabled, onChangeShakeDetectionEnabled,
   weakArrayDetectionEnabled, onChangeWeakArrayDetectionEnabled,
   shakeEventCardsEnabled = true, onChangeShakeEventCardsEnabled,
+  longPeriodEnabled = true, onChangeLongPeriodEnabled,
   displayInsets, onOpenDisplayAreaEditor,
   tabPlacement = "slide", onChangeTabPlacement,
   cameraSettings, onChangeCameraSettings,
@@ -2707,6 +2708,7 @@ export function BottomDock({
                         <PanelDragHandoffCard onHandoffToPanelDrag={handlePointerDown}>
                           <QuakeDetailCard quake={selected}/>
                         </PanelDragHandoffCard>
+                        {selected.longPeriodInfo && <LongPeriodCard quake={selected}/>}
                         {!selected.isEqdb && <QuakeMessageCard quake={selected}/>}
                         {shouldShowNearbyQuakeButton(selected) && (
                           <div style={{ margin: "2px 14px 8px" }}>
@@ -2876,6 +2878,8 @@ export function BottomDock({
                   onChangeTabPlacement={onChangeTabPlacement}
                   shakeEventCardsEnabled={shakeEventCardsEnabled}
                   onChangeShakeEventCardsEnabled={onChangeShakeEventCardsEnabled}
+                  longPeriodEnabled={longPeriodEnabled}
+                  onChangeLongPeriodEnabled={onChangeLongPeriodEnabled}
                   cameraSettings={cameraSettings}
                   onChangeCameraSettings={onChangeCameraSettings}
                   epicenterEstimationEnabled={epicenterEstimationEnabled}
@@ -3063,7 +3067,8 @@ export function BottomDock({
                       <PanelDragHandoffCard onHandoffToPanelDrag={handlePointerDown}>
                         <QuakeDetailCard quake={selected}/>
                       </PanelDragHandoffCard>
-                      {!selected.isEqdb && <QuakeMessageCard quake={selected}/>}
+                      {selected.longPeriodInfo && <LongPeriodCard quake={selected}/>}
+                        {!selected.isEqdb && <QuakeMessageCard quake={selected}/>}
                       {shouldShowNearbyQuakeButton(selected) && (
                         <div style={{ margin: "2px 14px 8px" }}>
                           <PressableButton

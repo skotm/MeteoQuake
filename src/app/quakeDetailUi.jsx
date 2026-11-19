@@ -120,6 +120,83 @@ export function PanelDragHandoffCard({ onHandoffToPanelDrag, children }) {
 }
 
 /* ─────────────────────────────────────────────────────
+   LONG PERIOD BADGE — 長周期地震動階級の「通知バッジ」
+   アプリの通知のように、震度バッジの右上に小さな赤い丸+階級の数字を重ねる。
+   親(震度バッジ)はposition: relativeであること。階級が無い/0なら何も描かない。
+   ───────────────────────────────────────────────────── */
+export function LongPeriodBadge({ grade, size = 16, offset = -6 }) {
+  if (!(grade >= 1)) return null;
+  return (
+    <span
+      aria-label={`長周期地震動階級${grade}`}
+      style={{
+        position: "absolute", top: offset, right: offset, zIndex: 2,
+        minWidth: size, height: size, boxSizing: "border-box", padding: "0 3px",
+        borderRadius: size / 2,
+        background: grade >= 4 ? "#B3002D" : "#FF3B30", color: "#fff",
+        boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9), 0 1px 3px rgba(0,0,0,0.3)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: Math.round(size * 0.62), fontWeight: 800, lineHeight: 1,
+        pointerEvents: "none",
+      }}
+    >
+      {grade}
+    </span>
+  );
+}
+
+const LONG_PERIOD_PHRASE = { 1: "やや大きな揺れ", 2: "大きな揺れ", 3: "非常に大きな揺れ", 4: "極めて大きな揺れ" };
+
+/* ─────────────────────────────────────────────────────
+   LONG PERIOD CARD — 長周期地震動階級(市区町村ごと)
+   階級の高い順に、その階級を観測した市区町村を並べる。
+   市区町村の階級は、観測点(コード先頭5桁が市区町村)の最大階級。観測点のある市区町村のみ。
+   ───────────────────────────────────────────────────── */
+export function LongPeriodCard({ quake }) {
+  const { tokens } = useContext(ThemeContext);
+  const info = quake.longPeriodInfo;
+  const groups = useMemo(() => {
+    if (!info) return [];
+    const m = new Map();
+    for (const c of info.cities) { if (!m.has(c.lg)) m.set(c.lg, []); m.get(c.lg).push(c.name); }
+    return [...m.entries()].sort((a, b) => b[0] - a[0]);
+  }, [info]);
+  if (!info || !(info.maxLg >= 1)) return null;
+  return (
+    <div style={{ margin: "2px 14px 8px" }}>
+      <div style={{
+        borderRadius: 12, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6,
+        background: `rgba(${tokens.ink},0.04)`, boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)`,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: tokens.text }}>長周期地震動階級</span>
+          <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.6)` }}>
+            最大 {info.maxLg}（{LONG_PERIOD_PHRASE[info.maxLg]}）
+          </span>
+        </div>
+        {groups.length === 0 ? (
+          <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.6)`, lineHeight: 1.5 }}>
+            {info.areas.map((a) => `${a.name}(階級${a.lg})`).join("、")}
+          </div>
+        ) : groups.map(([lg, names]) => (
+          <div key={lg} style={{ display: "flex", gap: 8, alignItems: "flex-start", lineHeight: 1.5 }}>
+            <span style={{
+              flexShrink: 0, minWidth: 20, height: 20, borderRadius: 10, padding: "0 5px", boxSizing: "border-box",
+              background: lg >= 4 ? "#B3002D" : "#FF3B30", color: "#fff", fontSize: 12, fontWeight: 800,
+              display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1,
+            }}>{lg}</span>
+            <span style={{ fontSize: 13, color: `rgba(${tokens.ink},0.9)` }}>{names.join("、")}</span>
+          </div>
+        ))}
+        <div style={{ fontSize: 10.5, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.4 }}>
+          観測点のある市区町村のみ。気象庁の長周期地震動に関する観測情報(Wolfx Open API経由)。
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    QUAKE DETAIL CARD
    地震リスト/地図で選択した地震の詳細を表示するカード。
    左に「最大震度」バッジ、右にM/深さ・震源地・発生時刻を積む構成。
@@ -159,6 +236,7 @@ export function QuakeDetailCard({ quake }) {
             display: "flex", alignItems: "center", justifyContent: "center",
           }}
         >
+          <LongPeriodBadge grade={quake.longPeriod} size={22} offset={-8}/>
           {/* テスト配信バッジ — 津波警報テスト配信(TsunamiDetailCard)と全く同じ見た目を
               そのまま流用する。最大震度アイコンの角に乗せることで、一目でテストデータだと
               分かるようにする。 */}
