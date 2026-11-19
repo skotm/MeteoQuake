@@ -27,6 +27,8 @@ import { TSUNAMI_ICON_BORDER, tsunamiBarWidthForZoom, tsunamiStationIconId } fro
 import { Glass } from "./glass";
 
 
+const EMPTY_LP_AREAS = [];
+
 /* ─────────────────────────────────────────────────────
    MAP CANVAS — MapLibre GL JS(描画エンジン) + ローカルGeoJSON(データ)
    世界(world.json)・都道府県(prefectures.json)をベクターとして描画する。
@@ -47,7 +49,7 @@ export function MapCanvas({
   eews = [],
   eewEpicenterPickActive = false, onPickEewEpicenter,
   quakeEpicenterPickActive = false, onPickQuakeEpicenter,
-  quakeLongPeriodPickActive = false, onPickQuakeLongPeriodArea, quakeLongPeriodPickAreas = [],
+  quakeLongPeriodPickActive = false, quakeLongPeriodFillActive = false, onPickQuakeLongPeriodArea, quakeLongPeriodPickAreas = EMPTY_LP_AREAS,
   shakeTestEpicenterPickActive = false, onPickShakeTestEpicenter,
   eewDetailOpen = false,
   currentLocationPoint = null, // { lat, lon } | null。気象タブ「地点」モード中のGPS現在地(iOS風の青丸)
