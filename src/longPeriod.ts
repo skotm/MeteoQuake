@@ -18,6 +18,8 @@ export interface LongPeriodArea { name: string; lg: number }
 export interface LongPeriodEvent {
   /** 14桁のeventId(発生時刻JST、秒まで)。 */
   eventId: string;
+  /** 発生時刻(分)のキー("YYYY/MM/DD HH:mm")。気象庁の一覧の「発生日時」から付ける。eventIdの分と発生時刻の分がずれる地震があるため、あればこちらを優先する。 */
+  originMinuteKey?: string;
   /** 最大長周期地震動階級(0〜4)。 */
   maxLg: number;
   /** 観測情報(VXSE62)が最初に発表された時刻(ms)。リプレイで「まだ出ていない」判定に使う。 */
@@ -140,7 +142,7 @@ export function findLongPeriodFor(card: LongPeriodCardLike, events: Iterable<Lon
   const key = cardMinuteKey(card.time);
   if (!key) return null;
   const cands: LongPeriodEvent[] = [];
-  for (const e of events) if (eventIdMinuteKey(e.eventId) === key) cands.push(e);
+  for (const e of events) if ((e.originMinuteKey ?? eventIdMinuteKey(e.eventId)) === key) cands.push(e);
   if (cands.length === 0) return null;
   if (cands.length === 1) return cands[0];
   const same = cands.filter((e) => e.hypocenterName && e.hypocenterName === card.place);
