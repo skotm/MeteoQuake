@@ -359,6 +359,11 @@ const NEARBY_SORT_BUTTONS = [
   { key: "lp", label: "長周期階級" },
 ];
 
+// 通常の検索結果の並び順(画面を作り直しても保つ)
+let persistedResultSort = { results: null, key: null, desc: true };
+// 近傍地震一覧の並び順(震源地名ごと)
+const persistedNearbySort = new Map();
+
 // 検索結果(eqdb)を並べ替えた「元の並びでの番号」の配列を返す。
 // previewsは results と同じ順の、長周期の階級付きプレビュー(longPeriodが階級、無ければnull)。
 // 長周期階級の欄は、階級がある地震を上(降順時)に、同じ階級の中では最大震度→新しい順で並べる。
@@ -421,8 +426,10 @@ export function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, 
   const cached = nearbyQuakeSearchCache.get(place);
   const [status, setStatus] = useState(cached ? "done" : "loading"); // loading | error | done
   const [results, setResults] = useState(cached || []);
-  const [sortKey, setSortKey] = useState("maxInt");
-  const [sortDesc, setSortDesc] = useState(true);
+  const savedSort = persistedNearbySort.get(place);
+  const [sortKey, setSortKey] = useState(savedSort?.key ?? "maxInt");
+  const [sortDesc, setSortDesc] = useState(savedSort?.desc ?? true);
+  useEffect(() => { persistedNearbySort.set(place, { key: sortKey, desc: sortDesc }); }, [place, sortKey, sortDesc]);
   const [loadingId, setLoadingId] = useState(null);
 
   // 実際の震度データベースの収録期間(date.json)。取得できるまでは
@@ -582,9 +589,19 @@ export function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelect
   } = search;
   const allResultPreviews = useEqdbPreviewsWithLongPeriod(results);
   // 検索結果の並べ替え(null=検索した順のまま)。同じボタンを続けて押すと昇順/降順を切り替える。
-  const [resultSortKey, setResultSortKey] = useState(null);
-  const [resultSortDesc, setResultSortDesc] = useState(true);
-  useEffect(() => { setResultSortKey(null); setResultSortDesc(true); }, [results]);
+  // 地震を選んで戻ってくると、この画面は作り直されるので、並び順はモジュール側に覚えておく。
+  // 検索結果(results)そのものが新しくなった時だけ、元の順に戻す。
+  const [resultSortKey, setResultSortKey] = useState(persistedResultSort.key);
+  const [resultSortDesc, setResultSortDesc] = useState(persistedResultSort.desc);
+  useEffect(() => {
+    if (persistedResultSort.results !== results) {
+      persistedResultSort = { results, key: null, desc: true };
+      setResultSortKey(null); setResultSortDesc(true);
+    }
+  }, [results]);
+  useEffect(() => {
+    persistedResultSort = { ...persistedResultSort, key: resultSortKey, desc: resultSortDesc };
+  }, [resultSortKey, resultSortDesc]);
   const resultOrder = useMemo(
     () => resultSortKey ? sortedEqdbIndices(results, allResultPreviews, resultSortKey, resultSortDesc) : results.map((_, i) => i),
     [results, allResultPreviews, resultSortKey, resultSortDesc],
