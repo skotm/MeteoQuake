@@ -356,7 +356,57 @@ const NEARBY_SORT_BUTTONS = [
   { key: "mag", label: "M" },
   { key: "maxInt", label: "最大震度" },
   { key: "depth", label: "深さ" },
+  { key: "lp", label: "長周期階級" },
 ];
+
+// 検索結果(eqdb)を並べ替えた「元の並びでの番号」の配列を返す。
+// previewsは results と同じ順の、長周期の階級付きプレビュー(longPeriodが階級、無ければnull)。
+// 長周期階級の欄は、階級がある地震を上(降順時)に、同じ階級の中では最大震度→新しい順で並べる。
+function sortedEqdbIndices(results, previews, sortKey, sortDesc) {
+  const valueOf = (i) => {
+    const eq = results[i];
+    if (sortKey === "time") return eq.id || "";
+    if (sortKey === "mag") return parseFloat(eq.mag) || 0;
+    if (sortKey === "depth") return parseInt((eq.dep || "").match(/\d+/)?.[0] || "0", 10);
+    if (sortKey === "lp") return previews[i]?.longPeriod ?? 0;
+    return eqdbIntensityStringToScale(eq.maxI || "");
+  };
+  const idx = results.map((_, i) => i);
+  idx.sort((a, b) => {
+    const av = valueOf(a), bv = valueOf(b);
+    let cmp = av < bv ? -1 : av > bv ? 1 : 0;
+    if (cmp === 0 && sortKey === "lp") {
+      const ai = eqdbIntensityStringToScale(results[a].maxI || ""), bi = eqdbIntensityStringToScale(results[b].maxI || "");
+      cmp = ai < bi ? -1 : ai > bi ? 1 : ((results[a].id || "") < (results[b].id || "") ? -1 : 1);
+    }
+    return sortDesc ? -cmp : cmp;
+  });
+  return idx;
+}
+
+// 並べ替えボタンの並び(近傍一覧・検索結果で共通)
+function EqdbSortBar({ sortKey, sortDesc, onTap, buttons = NEARBY_SORT_BUTTONS }) {
+  const { tokens } = useContext(ThemeContext);
+  return (
+    <div style={{ display: "flex", gap: 6, padding: "8px 14px 10px", flexWrap: "wrap" }}>
+      {buttons.map(b => (
+        <PressableButton
+          key={b.key}
+          type="button"
+          onClick={() => onTap(b.key)}
+          style={{
+            padding: "5px 10px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+            border: "none", cursor: "pointer",
+            background: sortKey === b.key ? `rgba(${tokens.ink},0.18)` : `rgba(${tokens.ink},0.06)`,
+            color: sortKey === b.key ? tokens.text : `rgba(${tokens.ink},0.6)`,
+          }}
+        >
+          {b.label}{sortKey === b.key ? (sortDesc ? " ↓" : " ↑") : ""}
+        </PressableButton>
+      ))}
+    </div>
+  );
+}
 
 // 近傍地震一覧の検索結果キャッシュ(震源地名→結果一覧)。
 // NearbyQuakesPanelは、近傍一覧→他の地震の詳細→近傍一覧、と行き来するたびに
@@ -432,22 +482,10 @@ export function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, 
     return () => { cancelled = true; };
   }, [place, eqdbDateRange]);
 
-  const sorted = useMemo(() => {
-    const arr = [...results];
-    const valueOf = (eq) => {
-      if (sortKey === "time") return eq.id || "";
-      if (sortKey === "mag") return parseFloat(eq.mag) || 0;
-      if (sortKey === "depth") return parseInt((eq.dep || "").match(/\d+/)?.[0] || "0", 10);
-      return eqdbIntensityStringToScale(eq.maxI || "");
-    };
-    arr.sort((a, b) => {
-      const av = valueOf(a), bv = valueOf(b);
-      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-      return sortDesc ? -cmp : cmp;
-    });
-    return arr;
-  }, [results, sortKey, sortDesc]);
-  const sortedPreviews = useEqdbPreviewsWithLongPeriod(sorted);
+  const allPreviews = useEqdbPreviewsWithLongPeriod(results);
+  const order = useMemo(() => sortedEqdbIndices(results, allPreviews, sortKey, sortDesc), [results, allPreviews, sortKey, sortDesc]);
+  const sorted = useMemo(() => order.map(i => results[i]), [order, results]);
+  const sortedPreviews = useMemo(() => order.map(i => allPreviews[i]), [order, allPreviews]);
 
   function handleSortTap(key) {
     if (sortKey === key) { setSortDesc(d => !d); return; }
@@ -477,23 +515,7 @@ export function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, 
         </span>
       </div>
 
-      <div style={{ display: "flex", gap: 6, padding: "8px 14px 10px", flexWrap: "wrap" }}>
-        {NEARBY_SORT_BUTTONS.map(b => (
-          <PressableButton
-            key={b.key}
-            type="button"
-            onClick={() => handleSortTap(b.key)}
-            style={{
-              padding: "5px 10px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-              border: "none", cursor: "pointer",
-              background: sortKey === b.key ? `rgba(${tokens.ink},0.18)` : `rgba(${tokens.ink},0.06)`,
-              color: sortKey === b.key ? tokens.text : `rgba(${tokens.ink},0.6)`,
-            }}
-          >
-            {b.label}{sortKey === b.key ? (sortDesc ? " ↓" : " ↑") : ""}
-          </PressableButton>
-        ))}
-      </div>
+      <EqdbSortBar sortKey={sortKey} sortDesc={sortDesc} onTap={handleSortTap}/>
 
       {status === "loading" && (
         <div style={{ padding: "18px 0", textAlign: "center", color: `rgba(${tokens.ink},0.45)`, fontSize: 12 }}>
@@ -558,7 +580,20 @@ export function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelect
     startDate, endDate, minMag, maxInt, sort, epicenterName,
     status, isSearching, hasSearched, results, loadingId,
   } = search;
-  const resultPreviews = useEqdbPreviewsWithLongPeriod(results);
+  const allResultPreviews = useEqdbPreviewsWithLongPeriod(results);
+  // 検索結果の並べ替え(null=検索した順のまま)。同じボタンを続けて押すと昇順/降順を切り替える。
+  const [resultSortKey, setResultSortKey] = useState(null);
+  const [resultSortDesc, setResultSortDesc] = useState(true);
+  useEffect(() => { setResultSortKey(null); setResultSortDesc(true); }, [results]);
+  const resultOrder = useMemo(
+    () => resultSortKey ? sortedEqdbIndices(results, allResultPreviews, resultSortKey, resultSortDesc) : results.map((_, i) => i),
+    [results, allResultPreviews, resultSortKey, resultSortDesc],
+  );
+  function handleResultSortTap(key) {
+    if (resultSortKey === key) { setResultSortDesc(d => !d); return; }
+    setResultSortKey(key);
+    setResultSortDesc(true);
+  }
 
   // 震源地名の選択肢(プルダウン)。EEW・地震情報テスト配信の「地図をタップして
   // 震源を指定」で使っているep.json(気象庁の震央地名区域)をそのまま流用し、
@@ -792,16 +827,22 @@ export function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelect
           </div>
         )
       ) : (
-        results.map((eq, i) => (
-          <QuakeListRow
-            key={eq.id}
-            quake={resultPreviews[i]}
-            showDivider={i > 0}
-            colorScheme={colorScheme}
-            onSelect={() => handleSelect(eq)}
-            loading={loadingId === eq.id}
-          />
-        ))
+        <>
+          <EqdbSortBar sortKey={resultSortKey} sortDesc={resultSortDesc} onTap={handleResultSortTap}/>
+          {resultOrder.map((ri, i) => {
+            const eq = results[ri];
+            return (
+              <QuakeListRow
+                key={eq.id}
+                quake={allResultPreviews[ri]}
+                showDivider={i > 0}
+                colorScheme={colorScheme}
+                onSelect={() => handleSelect(eq)}
+                loading={loadingId === eq.id}
+              />
+            );
+          })}
+        </>
       )}
     </div>
   );
