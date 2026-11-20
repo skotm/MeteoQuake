@@ -20,19 +20,21 @@ export interface JmaPastListRow { eventId: string; minuteKey: string | null }
  * eventId(14桁)の秒より前の分と、一覧に表示される発生日時の分が一致しない地震があるため、
  * 地震カードとの突き合わせには、一覧に表示されている発生日時の分を使う。
  * 行は「発生日時 → ... → 詳細リンク(eventId)」の順に並ぶので、直前に現れた発生日時と対にする。
+ * リンクの書き方(event.php?eventId=… / data/past/<id>/index.html / 相対パスの <id>/index.html など)に
+ * 依存しないよう、行内に現れる14桁の数字をeventIdとして扱う。
  */
 export function parseJmaPastListRows(html: string): JmaPastListRow[] {
   const rows: JmaPastListRow[] = [];
   const seen = new Set<string>();
   let lastKey: string | null = null;
-  const re = /(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})時(\d{1,2})分|eventId=(\d{14})|data\/past\/(\d{14})\//g;
+  const re = /(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})時(\d{1,2})分|(?<!\d)(\d{14})(?!\d)/g;
   for (const m of String(html).matchAll(re)) {
     if (m[1]) {
       const p2 = (x: string) => x.padStart(2, "0");
       lastKey = `${m[1]}/${p2(m[2])}/${p2(m[3])} ${p2(m[4])}:${p2(m[5])}`;
       continue;
     }
-    const id = m[6] ?? m[7];
+    const id = m[6];
     if (seen.has(id)) continue;
     seen.add(id);
     rows.push({ eventId: id, minuteKey: lastKey });
@@ -41,7 +43,7 @@ export function parseJmaPastListRows(html: string): JmaPastListRow[] {
   return rows;
 }
 
-/** 一覧HTMLから14桁のeventIdを重複なく取り出す(新旧どちらのリンク形式も拾う)。 */
+/** 一覧HTMLから14桁のeventIdを重複なく取り出す。 */
 export function parseJmaPastList(html: string): string[] {
   return parseJmaPastListRows(html).map((r) => r.eventId);
 }

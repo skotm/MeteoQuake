@@ -59,3 +59,13 @@ test("実物(2021年・Shift_JIS)のlevel.csvを文字化けなく読める", as
   assert.equal(e.areas[0].name, "福島県中通り");
   assert.ok(e.cities.some((c) => c.name === "福島市" && c.lg === 4 && c.pref === "福島県"));
 });
+
+test("2022年以前の相対リンク(<id>/index.html など)でも読める", async () => {
+  const { parseJmaPastListRows } = await import("../src/jmaLongPeriod.ts");
+  const html = `<tr><td>2022年03月16日 23時36分</td><td>福島県沖</td><td><a href="20220316233646/index.html">詳細</a></td></tr>
+  <tr><td>2021年02月13日 23時07分</td><td>福島県沖</td><td><a href="../past/20210213230800/index.html">詳細</a></td></tr>
+  <tr><td>2013年03月31日 16時46分</td><td>宮城県沖</td><td><a href='/eew/data/ltpgm_explain/data/past/20130331164628/index.html'>詳細</a></td></tr>`;
+  assert.deepEqual(parseJmaPastListRows(html).map((r) => [r.eventId, r.minuteKey]), [
+    ["20220316233646", "2022/03/16 23:36"], ["20210213230800", "2021/02/13 23:07"], ["20130331164628", "2013/03/31 16:46"],
+  ]);
+});
