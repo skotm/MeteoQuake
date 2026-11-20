@@ -11,6 +11,7 @@ import { JMA_LP_PAST_LIST_URL, decodeCsvBytes, jmaLpLevelCsvUrl, parseJmaLevelCs
 const EMPTY = new Map();
 const MAX_PARALLEL = 3;
 let listPromise = null;
+let loggedSummary = false;
 const eventCache = new Map(); // eventId -> LongPeriodEvent | null(取得済みで階級なし/失敗)
 const minuteOfEvent = new Map(); // eventId -> 一覧に表示されている発生日時(分)のキー
 const inflight = new Set();
@@ -19,7 +20,11 @@ function loadList() {
   if (!listPromise) {
     listPromise = fetch(JMA_LP_PAST_LIST_URL)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
-      .then(parseJmaPastListRows)
+      .then((html) => {
+        const rows = parseJmaPastListRows(html);
+        console.info(`[気象庁 長周期] 一覧 ${rows.length}件(発生日時つき ${rows.filter(r => r.minuteKey).length}件)、最古 ${rows.at(-1)?.eventId ?? "-"}`);
+        return rows;
+      })
       .catch((err) => { console.warn("気象庁の長周期地震動の一覧の取得に失敗:", err); listPromise = null; return []; });
   }
   return listPromise;
@@ -32,6 +37,7 @@ async function loadEvent(eventId) {
     const ev = parseJmaLevelCsv(decodeCsvBytes(await res.arrayBuffer()), eventId);
     const mk = minuteOfEvent.get(eventId);
     eventCache.set(eventId, ev && mk ? { ...ev, originMinuteKey: mk } : ev);
+    console.info(`[気象庁 長周期] level.csv ${eventId}: ${ev ? `最大階級${ev.maxLg}・地域${ev.areas.length}件・市区町村${ev.cities.length}件` : "階級1以上なし/列を読み取れず"}`);
   } catch (err) {
     console.warn("気象庁の長周期地震動階級(level.csv)の取得に失敗:", eventId, err);
     eventCache.set(eventId, null);
@@ -64,6 +70,9 @@ export function useJmaLongPeriod(cards, enabled, skipMinuteKeys) {
         for (const id of byMinute.get(k) ?? []) if (!eventCache.has(id) && !inflight.has(id)) want.add(id);
       }
       const queue = [...want];
+      const matched = cards.filter((c) => byMinute.has(cardMinuteKey(c.time))).length;
+      if (queue.length > 0 || !loggedSummary) console.info(`[気象庁 長周期] 表示中の地震${cards.length}件のうち一覧と一致 ${matched}件、今回取得する level.csv ${queue.length}件(取得済み${eventCache.size}件)`);
+      loggedSummary = true;
       const worker = async () => {
         while (queue.length > 0 && !cancelled) {
           const id = queue.shift();
