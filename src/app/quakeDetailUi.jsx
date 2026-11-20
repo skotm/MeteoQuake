@@ -8,6 +8,7 @@ import { useIsStandalonePwa } from "./layoutHooks";
 import { IntensityNumWithSuffix } from "./intensityLabel";
 import { findJmaMechanism, findUsgsCmtForQuake } from "./cmt";
 import { loadStoredCmtSourcePref, saveCmtSourcePref } from "./settingsStorage";
+import { prefOfAreaName } from "../longPeriod";
 
 
 /* ─────────────────────────────────────────────────────
@@ -189,45 +190,122 @@ export function LongPeriodMapToggle({ mapView, onChange }) {
   );
 }
 
+// 長周期地震動階級の地域一覧。「各地の震度」と同じく、階級 → 都道府県 → 市区町村の順にその場で開閉する。
 export function LongPeriodCard({ quake }) {
   const { tokens } = useContext(ThemeContext);
   const schemeId = useContext(QuakeColorSchemeContext);
   const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
   const info = quake.longPeriodInfo;
+  const [openGroups, setOpenGroups] = useState(() => new Set());
+  const [openPrefs, setOpenPrefs] = useState(() => new Set());
+  useEffect(() => { setOpenGroups(new Set()); setOpenPrefs(new Set()); }, [info]);
+
+  // 階級ごと(大きい順)に、都道府県→名前の一覧にまとめる。都道府県が分からない行は「pref=null」にまとめ、その階層は出さない。
   const groups = useMemo(() => {
     if (!info) return [];
-    const m = new Map();
     const rows = info.cities.length > 0 ? info.cities : (info.areas || []);
-    for (const c of rows) { if (!m.has(c.lg)) m.set(c.lg, []); m.get(c.lg).push(c.name); }
-    return [...m.entries()].sort((a, b) => b[0] - a[0]);
+    const m = new Map();
+    for (const c of rows) {
+      const pref = c.pref ?? prefOfAreaName(c.name) ?? null;
+      if (!m.has(c.lg)) m.set(c.lg, new Map());
+      const pm = m.get(c.lg);
+      if (!pm.has(pref)) pm.set(pref, []);
+      pm.get(pref).push(pref && c.name.startsWith(pref) ? c.name.slice(pref.length) || c.name : c.name);
+    }
+    return [...m.entries()].sort((a, b) => b[0] - a[0]).map(([lg, pm]) => [lg, [...pm.entries()]]);
   }, [info]);
   if (!info || !(info.maxLg >= 1)) return null;
+
+  const toggle = (setter, key) => setter(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  const chevron = (open, size = 14) => (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none"
+         stroke={`rgba(${tokens.ink},0.35)`} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"
+         style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s ease", flexShrink: 0 }}>
+      <polyline points="6 9 12 15 18 9"/>
+    </svg>
+  );
+
   return (
     <div style={{ margin: "2px 14px 8px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 2px" }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: tokens.text }}>長周期地震動階級</span>
+        <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.6)` }}>
+          最大 {info.maxLg}（{LONG_PERIOD_PHRASE[info.maxLg]}）
+        </span>
+      </div>
       <div style={{
-        borderRadius: 12, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6,
+        borderRadius: 12, overflow: "hidden",
         background: `rgba(${tokens.ink},0.04)`, boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)`,
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: tokens.text }}>長周期地震動階級</span>
-          <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.6)` }}>
-            最大 {info.maxLg}（{LONG_PERIOD_PHRASE[info.maxLg]}）
-          </span>
-        </div>
-        {groups.length === 0 ? (
-          <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.6)`, lineHeight: 1.5 }}>
-            {info.areas.map((a) => `${a.name}(階級${a.lg})`).join("、")}
-          </div>
-        ) : groups.map(([lg, names]) => (
-          <div key={lg} style={{ display: "flex", gap: 8, alignItems: "flex-start", lineHeight: 1.5 }}>
-            <span style={{
-              flexShrink: 0, minWidth: 20, height: 20, borderRadius: 10, padding: "0 5px", boxSizing: "border-box",
-              background: getLongPeriodStyleFromScheme(scheme, lg)?.bg, color: getLongPeriodStyleFromScheme(scheme, lg)?.fg, fontSize: 12, fontWeight: 800,
-              display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1,
-            }}>{lg}</span>
-            <span style={{ fontSize: 13, color: `rgba(${tokens.ink},0.9)` }}>{names.join("、")}</span>
-          </div>
-        ))}
+        {groups.map(([lg, prefList], gi) => {
+          const st = getLongPeriodStyleFromScheme(scheme, lg);
+          const open = openGroups.has(lg);
+          const known = prefList.filter(([p]) => p).map(([p]) => p);
+          const summary = known.length > 0 ? known.join("、") : prefList.flatMap(([, names]) => names).join("、");
+          return (
+            <div key={lg}>
+              {gi > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.08)` }}/>}
+              <PressableButton
+                onClick={() => toggle(setOpenGroups, lg)}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 10,
+                  padding: "9px 12px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left",
+                }}
+              >
+                <span style={{
+                  flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
+                  background: st?.bg, color: st?.fg,
+                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800,
+                }}>{lg}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: tokens.text }}>階級{lg}</div>
+                  {!open && (
+                    <div style={{ fontSize: 13, color: `rgba(${tokens.ink},0.65)`, marginTop: 3, lineHeight: 1.6 }}>{summary}</div>
+                  )}
+                </div>
+                {chevron(open)}
+              </PressableButton>
+              {open && (
+                <div style={{ padding: "0 12px 8px 12px" }}>
+                  {prefList.map(([pref, names]) => {
+                    if (!pref) {
+                      return (
+                        <div key="__none" style={{ borderLeft: `3px solid ${st?.bg}`, padding: "6px 10px", fontSize: 14, lineHeight: 1.7, color: `rgba(${tokens.ink},0.88)` }}>
+                          {names.join("、")}
+                        </div>
+                      );
+                    }
+                    const pk = `${lg}|${pref}`;
+                    const pOpen = openPrefs.has(pk);
+                    return (
+                      <div key={pk} style={{ borderLeft: `3px solid ${st?.bg}`, marginTop: 4 }}>
+                        <PressableButton
+                          onClick={() => toggle(setOpenPrefs, pk)}
+                          style={{
+                            width: "100%", display: "flex", alignItems: "center", gap: 8,
+                            padding: "9px 10px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left",
+                          }}
+                        >
+                          <span style={{ flex: 1, fontSize: 14, fontWeight: 700, color: tokens.text }}>{pref}</span>
+                          {chevron(pOpen, 13)}
+                        </PressableButton>
+                        {pOpen && (
+                          <div style={{ padding: "0 10px 8px 10px", fontSize: 14, lineHeight: 1.7, color: `rgba(${tokens.ink},0.88)` }}>
+                            {names.join("、")}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
