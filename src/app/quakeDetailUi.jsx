@@ -492,7 +492,8 @@ export function QuakeMessageCard({ quake, part = "all" }) {
    観測点マスタに見つからず地図に表示されていない件数(unmappedCount)は、
    要約画面の最下部にまとめて表示する(詳細画面では表示しない)。
    ───────────────────────────────────────────────────── */
-export function StationPointsList({ points, displayMode = "list", openKey, onOpenKeyChange, showHeader = false }) {
+// 各地の震度は階層表示(震度→都道府県→市区町村)のみ。displayModeは互換のため受け取るだけで使わない。
+export function StationPointsList({ points, displayMode: _unusedDisplayMode, openKey, onOpenKeyChange, showHeader = false }) {
   const { tokens } = useContext(ThemeContext);
 
   const [expanded, setExpanded] = useState(false); // 一覧表示(list)用の「すべて表示」
@@ -600,7 +601,7 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
         background: `rgba(${tokens.ink},0.04)`,
         boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)`,
       }}>
-        {displayMode === "grouped" ? (
+        {true ? (
           groups.map(([key, groupPoints], gi) => {
             const style = getIntensityStyleFromScheme(scheme, key);
             const prefs = [...new Set(groupPoints.map(p => p.pref))];
@@ -707,7 +708,7 @@ export function StationPointsList({ points, displayMode = "list", openKey, onOpe
         )}
       </div>
 
-      {displayMode === "list" && hasMore && (
+      {false && hasMore && (
         <PressableButton
           onClick={() => setExpanded(v => !v)}
           style={{

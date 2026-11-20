@@ -6,7 +6,7 @@ import { GlassOpaqueContext } from "./glass";
 import { ThemeContext } from "./theme";
 import { SETTINGS_ITEMS, SETTINGS_MENU, SettingsCard, SettingsCardDivider, SettingsCheckRow, SettingsHeader, SettingsMenuRow, SettingsSegmentRow, SettingsToggleRow, TAB_SETTINGS_CATEGORIES } from "./settingsPrimitives";
 import { APP_VERSION } from "./consent";
-import { BoundaryLineColorSettings, LicenseFileCard, LogViewerPanel, MapColorSettings, MarkdownFileCard, QuakeColorSchemeSettings, QuakeFetchLimitSettings, StationListDisplayModeSettings } from "./settingsPanels";
+import { BoundaryLineColorSettings, LicenseFileCard, LogViewerPanel, MapColorSettings, MarkdownFileCard, QuakeColorSchemeSettings, QuakeFetchLimitSettings } from "./settingsPanels";
 import { EewTestBroadcastPanel, QuakeTestBroadcastPanel, ShakeDetectionTestPanel, TsunamiTestBroadcastPanel } from "./testPanels";
 import { DEFAULT_CAMERA_SETTINGS } from "./settingsStorage";
 import { NowcastColorSchemeSettings, TyphoonForecastIntervalSettings } from "./weatherSettings";
@@ -217,16 +217,6 @@ export function SettingsBody({
     );
   }
 
-  // 各地の震度リストの表示方法(表示設定の項目)の中身
-  if (category === "display" && leaf === "stationListDisplay") {
-    return (
-      <>
-        <SettingsHeader title="各地の震度の表示方法"/>
-        <StationListDisplayModeSettings value={stationListDisplayMode} onChange={onChangeStationListDisplayMode}/>
-      </>
-    );
-  }
-
   // 地震情報の取得元(地震カテゴリの項目)の中身。緊急地震速報の取得元は、この設定とは別。
   if (category === "quake" && leaf === "quakeSource") {
     return (
@@ -356,7 +346,6 @@ export function SettingsBody({
             onChange={() => onChangeEpicenterCirclesEnabled(!epicenterCirclesEnabled)}
           />
           <SettingsCardDivider/>
-          <SettingsMenuRow label="各地の震度の表示方法" onClick={() => onNavigate([...path, "stationListDisplay"])}/>
           <SettingsCardDivider/>
           <SettingsToggleRow
             label="長周期地震動階級を表示"
