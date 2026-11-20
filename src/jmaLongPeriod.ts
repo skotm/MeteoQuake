@@ -7,7 +7,7 @@
  * level.csvの列の並び・文字コードは実物で確認できていないため、見出し行(「階級」「地域」「観測点」など)から
  * 列を推定し、見出しが無い場合は値の形から推定する。推定できなければnull(=階級を付けない)を返す。
  */
-import { cityNameFromStationName, parseLg, type LongPeriodEvent } from "./longPeriod.ts";
+import { cityNameFromStationName, parseLg, prefOfAreaName, type LongPeriodEvent } from "./longPeriod.ts";
 
 export const JMA_LP_BASE = "https://www.data.jma.go.jp/eew/data/ltpgm_explain/";
 export const JMA_LP_PAST_LIST_URL = `${JMA_LP_BASE}data/past/past_list.html`;
@@ -83,6 +83,7 @@ export function parseJmaLevelCsv(text: string, eventId: string): LongPeriodEvent
 
   const areaMax = new Map<string, number>();
   const cityMax = new Map<string, number>();
+  const cityPref = new Map<string, string>();
   let maxLg = 0;
   for (const r of dataRows) {
     const lg = parseLg(r[lgCol]);
@@ -97,6 +98,8 @@ export function parseJmaLevelCsv(text: string, eventId: string): LongPeriodEvent
     if (stCol >= 0 && r[stCol]) {
       const city = cityNameFromStationName(clean(r[stCol]));
       cityMax.set(city, Math.max(cityMax.get(city) ?? 0, lg));
+      const pf = areaCol >= 0 ? prefOfAreaName(clean(r[areaCol] ?? "")) : null;
+      if (pf && !cityPref.has(city)) cityPref.set(city, pf);
     }
   }
   if (maxLg < 1) return null;
@@ -106,7 +109,7 @@ export function parseJmaLevelCsv(text: string, eventId: string): LongPeriodEvent
     eventId,
     maxLg,
     issuedAtMs: null,
-    cities: [...cityMax].map(([name, lg], i) => ({ code: `jma${i}`, name, lg })).sort(byLgThenName),
+    cities: [...cityMax].map(([name, lg], i) => ({ code: `jma${i}`, name, lg, pref: cityPref.get(name) })).sort(byLgThenName),
     areas: [...areaMax].map(([name, lg]) => ({ name, lg })).sort(byLgThenName),
     hypocenterName: null,
   };

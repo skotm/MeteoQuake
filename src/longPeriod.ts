@@ -12,7 +12,7 @@
  *  ・観測情報は、地震の約10分後に発表される。
  */
 
-export interface LongPeriodCity { code: string; name: string; lg: number }
+export interface LongPeriodCity { code: string; name: string; lg: number; /** 都道府県名(分かる場合のみ) */ pref?: string }
 export interface LongPeriodArea { name: string; lg: number }
 
 export interface LongPeriodEvent {
@@ -28,6 +28,12 @@ export interface LongPeriodEvent {
   areas: LongPeriodArea[];
   /** 震央地名(突き合わせの補助)。 */
   hypocenterName: string | null;
+}
+
+/** 区域名(「熊本県熊本」「東京都２３区」など)の先頭から都道府県名を取り出す。分からなければnull。 */
+export function prefOfAreaName(name: string): string | null {
+  const m = /^(北海道|東京都|大阪府|京都府|.{2,3}?県)/.exec(String(name || ""));
+  return m ? m[1] : null;
 }
 
 export function parseLg(v: unknown): number | null {
@@ -83,7 +89,7 @@ export function parseLongPeriodEvent(ev: any): LongPeriodEvent | null {
         const code = typeof st?.code === "string" ? st.code.slice(0, 5) : "";
         if (slg == null || slg <= 0 || code.length !== 5) continue;
         const cur = cityMap.get(code);
-        if (!cur || cur.lg < slg) cityMap.set(code, { code, name: cityNameFromStationName(st.name), lg: slg });
+        if (!cur || cur.lg < slg) cityMap.set(code, { code, name: cityNameFromStationName(st.name), lg: slg, pref: prefOfAreaName(a.name) ?? undefined });
         if (maxLg == null || slg > maxLg) maxLg = slg;
       }
     }
