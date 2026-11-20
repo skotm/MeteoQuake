@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { attachLongPeriod, cardMinuteKey, eventIdMinuteKey } from "../longPeriod";
-import { JMA_LP_PAST_LIST_URL, decodeCsvBytes, jmaLpLevelCsvUrl, parseJmaLevelCsv, parseJmaPastList } from "../jmaLongPeriod";
+import { JMA_LP_PAST_LIST_URL, decodeCsvBytes, jmaLpLevelCsvUrl, parseJmaLevelCsv, parseJmaPastListRows } from "../jmaLongPeriod";
 
 /* ─────────────────────────────────────────────────────
    気象庁の「長周期地震動に関する観測情報(過去の地震)」から、Wolfxに無い過去の地震の階級を補う。
@@ -12,13 +12,14 @@ const EMPTY = new Map();
 const MAX_PARALLEL = 3;
 let listPromise = null;
 const eventCache = new Map(); // eventId -> LongPeriodEvent | null(取得済みで階級なし/失敗)
+const minuteOfEvent = new Map(); // eventId -> 一覧に表示されている発生日時(分)のキー
 const inflight = new Set();
 
 function loadList() {
   if (!listPromise) {
     listPromise = fetch(JMA_LP_PAST_LIST_URL)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
-      .then(parseJmaPastList)
+      .then(parseJmaPastListRows)
       .catch((err) => { console.warn("気象庁の長周期地震動の一覧の取得に失敗:", err); listPromise = null; return []; });
   }
   return listPromise;
@@ -28,7 +29,9 @@ async function loadEvent(eventId) {
   try {
     const res = await fetch(jmaLpLevelCsvUrl(eventId));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    eventCache.set(eventId, parseJmaLevelCsv(decodeCsvBytes(await res.arrayBuffer()), eventId));
+    const ev = parseJmaLevelCsv(decodeCsvBytes(await res.arrayBuffer()), eventId);
+    const mk = minuteOfEvent.get(eventId);
+    eventCache.set(eventId, ev && mk ? { ...ev, originMinuteKey: mk } : ev);
   } catch (err) {
     console.warn("気象庁の長周期地震動階級(level.csv)の取得に失敗:", eventId, err);
     eventCache.set(eventId, null);
@@ -43,12 +46,16 @@ export function useJmaLongPeriod(cards, enabled, skipMinuteKeys) {
     if (!enabled || !Array.isArray(cards) || cards.length === 0) return undefined;
     let cancelled = false;
     (async () => {
-      const ids = await loadList();
-      if (cancelled || ids.length === 0) return;
+      const listRows = await loadList();
+      if (cancelled || listRows.length === 0) return;
       const byMinute = new Map();
-      for (const id of ids) {
-        const k = eventIdMinuteKey(id);
-        if (k) { if (!byMinute.has(k)) byMinute.set(k, []); byMinute.get(k).push(id); }
+      for (const { eventId: id, minuteKey } of listRows) {
+        // 一覧に発生日時が読み取れなかった行だけ、eventIdの分で代用する。
+        const k = minuteKey ?? eventIdMinuteKey(id);
+        if (!k) continue;
+        minuteOfEvent.set(id, k);
+        if (!byMinute.has(k)) byMinute.set(k, []);
+        byMinute.get(k).push(id);
       }
       const want = new Set();
       for (const c of cards) {

@@ -35,3 +35,27 @@ test("実物のlevel.csvの形式(先頭が#の見出し・＊付き観測点)",
   assert.ok(e.cities.some((c) => c.name === "豊田市") && !e.cities.some((c) => /＊/.test(c.name)));
   assert.ok(!e.areas.some((a) => a.name === "茨城県南部"));
 });
+
+test("一覧の発生日時(分)とeventIdの分が違う行でも、表示されている発生日時を使う", async () => {
+  const { parseJmaPastListRows } = await import("../src/jmaLongPeriod.ts");
+  const { findLongPeriodFor } = await import("../src/longPeriod.ts");
+  const html = `<tr><td>2026年07月28日 16時27分</td><td>熊本県熊本地方</td><td>7.1</td><td>階級4</td><td><a href="event.php?eventId=20260728162800&dir1=data/past&past=1">詳細</a></td></tr>
+  <tr><td>2016年04月16日 01時25分</td><td>熊本県熊本地方</td><td>7.3</td><td>階級4</td><td><a href="https://x/data/past/20160416012510/index.html">詳細</a></td></tr>`;
+  const rows = parseJmaPastListRows(html);
+  assert.deepEqual(rows, [
+    { eventId: "20260728162800", minuteKey: "2026/07/28 16:27" },
+    { eventId: "20160416012510", minuteKey: "2016/04/16 01:25" },
+  ]);
+  const ev = { eventId: "20260728162800", maxLg: 4, issuedAtMs: null, cities: [], areas: [], hypocenterName: null, originMinuteKey: rows[0].minuteKey! };
+  assert.equal(findLongPeriodFor({ time: "2026/07/28 16:27:55" }, [ev]), ev);
+});
+
+test("実物(2021年・Shift_JIS)のlevel.csvを文字化けなく読める", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { decodeCsvBytes } = await import("../src/jmaLongPeriod.ts");
+  const b = readFileSync(new URL("./fixtures/jma_level_2021_sjis.csv", import.meta.url));
+  const e = parseJmaLevelCsv(decodeCsvBytes(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer), "20210213230800")!;
+  assert.equal(e.maxLg, 4);
+  assert.equal(e.areas[0].name, "福島県中通り");
+  assert.ok(e.cities.some((c) => c.name === "福島市" && c.lg === 4 && c.pref === "福島県"));
+});
