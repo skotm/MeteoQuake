@@ -58,7 +58,6 @@ export function SettingsBody({
   shakeEventCardsEnabled, onChangeShakeEventCardsEnabled,
   longPeriodEnabled, onChangeLongPeriodEnabled,
   quakeSource = "p2p", onChangeQuakeSource = () => {},
-  tsunamiSource = "p2p", onChangeTsunamiSource = () => {},
   displayInsets, onOpenDisplayAreaEditor,
   tabPlacement, onChangeTabPlacement,
   epicenterEstimationEnabled, onChangeEpicenterEstimationEnabled,
@@ -245,30 +244,6 @@ export function SettingsBody({
     );
   }
 
-  // 津波情報の取得元(地震カテゴリの項目)の中身
-  if (category === "quake" && leaf === "tsunamiSource") {
-    return (
-      <>
-        <SettingsHeader title="津波情報の取得元"/>
-        <SettingsCard>
-          <SettingsCheckRow
-            label="P2P地震情報"
-            description="標準の取得元です。起動時に一覧を取得し、新着はWebSocketで受け取ります。"
-            checked={tsunamiSource === "p2p"}
-            onChange={() => onChangeTsunamiSource("p2p")}
-          />
-          <SettingsCardDivider/>
-          <SettingsCheckRow
-            label="Wolfx Open API"
-            description="現在の津波警報・注意報の状態を、Wolfxから取得します。Wolfxの状態が確認できない間(期限切れ・不明)は、P2P地震情報の情報を表示します。過去の津波の一覧は、どちらを選んでも従来どおりです。"
-            checked={tsunamiSource === "wolfx"}
-            onChange={() => onChangeTsunamiSource("wolfx")}
-          />
-        </SettingsCard>
-      </>
-    );
-  }
-
   // 取得件数(地震カテゴリの項目)の中身
   if (category === "quake" && leaf === "fetchLimit") {
     return (
@@ -400,8 +375,6 @@ export function SettingsBody({
         <SettingsHeader title="地震"/>
         <SettingsCard>
           <SettingsMenuRow label="地震情報の取得元" onClick={() => onNavigate([...path, "quakeSource"])}/>
-          <SettingsCardDivider/>
-          <SettingsMenuRow label="津波情報の取得元" onClick={() => onNavigate([...path, "tsunamiSource"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="取得件数" onClick={() => onNavigate([...path, "fetchLimit"])}/>
           <SettingsCardDivider/>

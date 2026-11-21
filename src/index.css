@@ -110,3 +110,18 @@ code {
   padding: 4px 8px;
   background: var(--code-bg);
 }
+
+/* バージョン表記。パネルより下の、画面最下部の余白に置く(操作の邪魔にならないようpointer-events無効) */
+.app-version-mark {
+  position: fixed;
+  bottom: 5px;
+  right: 28px;
+  z-index: 1;
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  user-select: none;
+}
+@media (orientation: landscape) {
+  .app-version-mark { right: auto; left: 40px; bottom: 3px; }
+}

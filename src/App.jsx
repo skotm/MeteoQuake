@@ -5,7 +5,7 @@ import { buildReplayEewsAt } from "./replayEew";
 import { prepareShakeTest, isShakeTestFinished, computeShakeTestValues } from "./engines/shakeTestSimulation";
 import { buildSiteLookup } from "./engines/shakeTestWaveform";
 import { setJmaTravelTimeTable, tableFromJSON } from "./engines/jmaTravelTime";
-import { CONSENT_DOCS, isConsentUpToDate, loadStoredConsent, saveConsent } from "./app/consent";
+import { APP_VERSION, CONSENT_DOCS, isConsentUpToDate, loadStoredConsent, saveConsent } from "./app/consent";
 import { loadMarkdownFile } from "./app/settingsPanels";
 import { QUAKE_COLOR_SCHEMES, getLongPeriodStyleFromScheme, QuakeColorSchemeContext, REALTIME_API_BASE_URL, loadStoredQuakeColorScheme, saveQuakeColorScheme } from "./app/colorSchemes";
 import { Filters, LAYERS } from "./app/navigation";
@@ -3298,6 +3298,8 @@ export default function App() {
     <NowcastColorSchemeContext.Provider value={nowcastColorScheme}>
       <GlobalStyles tokens={themeContextValue.tokens}/>
       <Filters/>
+      {/* バージョン表記(画面最下部の余白に、小さく薄く)。縦向きは右下、横向きは左下 */}
+      <div className="app-version-mark" style={{ color: `rgba(${themeContextValue.tokens.ink},0.32)` }}>v{APP_VERSION}</div>
 
       {!isConsentUpToDate(consent) && (
         <ConsentGate storedConsent={consent} onAgree={handleAgreeConsent}/>
@@ -3793,6 +3795,16 @@ export default function App() {
             1つの共有Glassの中に並べて描画し、継ぎ目の無い1枚のガラスに
             見せる(BottomDock自身はisWideの時、自前のGlassを持たず透明な
             中身だけを返す)。 */}
+        {/* ドックの下端より下(ホームインジケータ側の余白)は、地図を操作できないようにする。
+            ドック自身のbottomと同じ値の高さの透明な帯で、地図へのタッチを受け止める。 */}
+        <div
+          aria-hidden="true"
+          style={{
+            position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 39,
+            height: isWide ? 16 : (isStandalonePwa ? "calc(env(safe-area-inset-bottom) - 10px)" : "calc(env(safe-area-inset-bottom) + 10px)"),
+            touchAction: "none",
+          }}
+        />
         <div style={isWide ? {
           position: "fixed",
           left: 12, top: 16, bottom: 16,
@@ -3807,7 +3819,7 @@ export default function App() {
           zIndex: 40, padding: "0 16px",
         }}>
           {isWide ? (
-              <div style={{ height: "100%", animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both" }}>
+              <div style={{ height: "100%", animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s backwards" }}>
                 <Glass radius={tabPlacement === "corner" ? WIDE_PANEL_RADIUS_ATTACHED : 28} rimClip={tabPlacement === "corner" ? widePanelRimClip(CORNER_TAB_STACK_HEIGHT) : undefined} style={{ height: "100%" }}>
                   <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
                     {tabPlacement !== "corner" && (

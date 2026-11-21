@@ -2519,7 +2519,7 @@ export function BottomDock({
           この箱の下端(bottom:100%)がパネルの上端なので、パネルの高さに追従する。パネルと同じ
           幅の枠(maxWidth 480、中央寄せ)の右端に揃える。パネルが閉じている間は、独立した丸ピルになる。 */}
       {cornerTabs && !isWide && (
-        <div style={{ position: "absolute", left: 16, right: 16, bottom: "100%", display: "flex", justifyContent: "center", pointerEvents: "none", zIndex: 10, animation: "appearFade 0.4s ease-out 0.1s both" }}>
+        <div style={{ position: "absolute", left: 16, right: 16, bottom: "100%", display: "flex", justifyContent: "center", pointerEvents: "none", zIndex: 10, animation: "appearFade 0.4s ease-out 0.1s backwards" }}>
           <div style={{ width: "100%", maxWidth: 480, minWidth: 240, display: "flex", justifyContent: "flex-end" }}>
             <div
               onPointerDown={(e) => { tabRowMovedRef.current = false; tabRowStartYRef.current = e.clientY; handlePointerDown(e); }}
@@ -2565,7 +2565,7 @@ export function BottomDock({
                 overflow: "hidden",
                 // タブをフローティングの右上に出す設定では、パネルを閉じている間は箱ごと見えなくする。
                 visibility: cornerTabs && currentHeight <= 0 && !isDragging ? "hidden" : "visible",
-                animation: cornerTabs ? "appearFade 0.4s ease-out 0.1s both" : "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both",
+                animation: cornerTabs ? "appearFade 0.4s ease-out 0.1s backwards" : "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s backwards",
               },
             };
         return (
@@ -2828,6 +2828,8 @@ export function BottomDock({
                   tsunamis={tsunamis}
                   status={tsunamiStatus}
                   notice={tsunamiNotice}
+                  tsunamiSource={tsunamiSource}
+                  onChangeTsunamiSource={onChangeTsunamiSource}
                   selectedId={selectedTsunamiId}
                   onSelect={handleSelectTsunamiForScroll}
                   onHandoffToPanelDrag={handlePointerDown}
@@ -2912,8 +2914,6 @@ export function BottomDock({
                   longPeriodEnabled={longPeriodEnabled}
                   quakeSource={quakeSource}
                   onChangeQuakeSource={onChangeQuakeSource}
-                  tsunamiSource={tsunamiSource}
-                  onChangeTsunamiSource={onChangeTsunamiSource}
                   onChangeLongPeriodEnabled={onChangeLongPeriodEnabled}
                   cameraSettings={cameraSettings}
                   onChangeCameraSettings={onChangeCameraSettings}
