@@ -68,6 +68,6 @@ test("aggregateByCity takes max per polygon; area points and code-less points ig
 });
 
 test("opacity expressions crossfade around the zoom", () => {
-  assert.deepEqual(cityFillOpacityExpr(7.5, true, 0.75), ["interpolate", ["linear"], ["zoom"], 7.1, 0, 7.9, 0.75]);
-  assert.deepEqual(cityFillOpacityExpr(7.5, false, 0.75), ["interpolate", ["linear"], ["zoom"], 7.1, 0.75, 7.9, 0]);
+  assert.deepEqual(cityFillOpacityExpr(7.5, true, 0.75), ["interpolate", ["linear"], ["zoom"], 7.35, 0, 7.65, 0.75]);
+  assert.deepEqual(cityFillOpacityExpr(7.5, false, 0.75), ["interpolate", ["linear"], ["zoom"], 7.35, 0.75, 7.65, 0]);
 });

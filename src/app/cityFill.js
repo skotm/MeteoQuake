@@ -89,8 +89,8 @@ export function aggregateByCity(resolvedPoints, index) {
   return maxByCity;
 }
 
-/** 切り替えズーム z の前後 ±0.4 で、細分区域塗り→市区町村塗りへ重なりながら切り替えるための式。 */
-export const CITY_FILL_CROSSFADE = 0.4;
+/** 切り替えズーム z の前後 ±0.15(計0.3ズーム分)で、細分区域塗り→市区町村塗りへ重なりながら切り替えるための式。 */
+export const CITY_FILL_CROSSFADE = 0.15;
 export function cityFillOpacityExpr(zoom, showCity, opacity) {
   const lo = Math.max(0, zoom - CITY_FILL_CROSSFADE);
   const hi = zoom + CITY_FILL_CROSSFADE;
