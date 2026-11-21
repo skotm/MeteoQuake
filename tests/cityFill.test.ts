@@ -20,6 +20,30 @@ test("every station city code maps to at least one polygon", () => {
   assert.deepEqual(missing, []);
 });
 
+test("every designated-city ward maps to a polygon of its own city (not another city)", () => {
+  const seen = new Map<string, string>();
+  for (const s of stations) if (s.city?.code && s.city.name.endsWith("区")) seen.set(s.city.code, s.city.name);
+  const names = new Map<string, string>();
+  for (const f of raw.features) if (f.properties.regioncode) names.set(f.properties.regioncode, f.properties.name);
+  for (const [code, name] of seen) {
+    if (index.exact.has(code)) continue; // 東京23区などは区ごとのポリゴンがある
+    const polys = resolveCityPolygonCodes(index, code, name);
+    assert.ok(polys.length > 0, `${name} unresolved`);
+    for (const pc of polys) {
+      const pn = names.get(pc)!;
+      assert.ok(name.includes(pn.slice(0, pn.indexOf("市"))), `${name} (${code}) -> wrong parent ${pn} (${pc})`);
+    }
+  }
+});
+
+test("Fukuoka / Hamamatsu / Kita-Kyushu wards go to their own city", () => {
+  assert.deepEqual(resolveCityPolygonCodes(index, "4013200", "福岡博多区"), ["4013000"]);
+  assert.deepEqual(resolveCityPolygonCodes(index, "4013700", "福岡早良区"), ["4013000"]);
+  assert.deepEqual(resolveCityPolygonCodes(index, "4010100", "北九州門司区"), ["4010000"]);
+  assert.deepEqual([...resolveCityPolygonCodes(index, "2214000", "浜松天竜区")].sort(), ["2213001", "2213002"]);
+  assert.deepEqual([...resolveCityPolygonCodes(index, "2210100", "静岡葵区")].sort(), ["2210001", "2210002"]);
+});
+
 test("exact / split city / designated-city ward", () => {
   assert.deepEqual(resolveCityPolygonCodes(index, "1310300", "港区"), ["1310300"]);
   assert.deepEqual([...resolveCityPolygonCodes(index, "1620100", "富山市")].sort(), ["1620111", "1620112", "1620113"]);

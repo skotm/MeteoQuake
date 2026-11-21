@@ -6,7 +6,9 @@
      ・一致するコードがある(大半)            → そのポリゴン1枚
      ・1つの市が複数のポリゴンに分割されている → 上5桁が同じポリゴンすべて(例: 富山市 1620100 → 1620111〜13)
      ・政令指定都市の「区」                  → 親の市のポリゴン(例: 横浜鶴見区 1410100 → 横浜市 1410011/12)
-                                                  区のコードは「県2桁+市1桁+区2桁」で、親は「上3桁+00」で始まる
+         区のコードは親の市のコードより大きく(福岡市 40130 → 博多区 40132、浜松市 22130 → 天竜区 22140 など)、
+         親の位置は「X00」「X10」と決まっていない。そこで、コードを小さい方へたどり、最初に見つかった
+         「ポリゴン名の市名(例: 福岡)が区名の頭と一致する」ものを親とする(別の市を親にしない)。
    政令市の区は区ごとの形状データが無いため、市単位(の最大震度)で塗られる。
    ───────────────────────────────────────────────────── */
 
@@ -17,17 +19,19 @@ export function buildCityFillData(rawGeoJson) {
   const exact = new Set();
   const byPrefix5 = new Map(); // 上5桁 → コード[]
   const features = [];
+  const names = new Map(); // コード → ポリゴン名(区の親を探す時の照合用)
   for (const f of rawGeoJson?.features || []) {
     const code = f?.properties?.regioncode;
     if (!code || !f.geometry) continue; // コードが無いもの(離島・埋立地など)は塗り分けの対象外
     exact.add(code);
+    names.set(code, f.properties.name || "");
     const p5 = code.slice(0, 5);
     if (!byPrefix5.has(p5)) byPrefix5.set(p5, []);
     byPrefix5.get(p5).push(code);
     // 地図に載せるのはコードと形だけ(余分なプロパティを持たせず、メモリを抑える)
     features.push({ type: "Feature", properties: { regioncode: code }, geometry: f.geometry });
   }
-  return { index: { exact, byPrefix5, cache: new Map() }, collection: { type: "FeatureCollection", features } };
+  return { index: { exact, byPrefix5, names, cache: new Map() }, collection: { type: "FeatureCollection", features } };
 }
 
 /** 観測点の市区町村コード(7桁)・市区町村名から、塗るポリゴンのコード配列を返す(無ければ空配列)。 */
@@ -42,12 +46,32 @@ export function resolveCityPolygonCodes(index, cityCode, cityName) {
   } else if (index.byPrefix5.has(cityCode.slice(0, 5))) {
     result = index.byPrefix5.get(cityCode.slice(0, 5));
   } else if (cityName && cityName.endsWith("区")) {
-    // 政令市の区 → 親の市(上3桁+"00")
-    const parent = index.byPrefix5.get(`${cityCode.slice(0, 3)}00`);
-    if (parent) result = parent;
+    result = findWardParent(index, cityCode, cityName);
   }
   index.cache.set(key, result);
   return result;
+}
+
+// 政令市の区 → 親の市のポリゴン。区のコード(上5桁)から小さい方へたどり、最初に見つかった
+// 「ポリゴン名が『◯◯市…』で、◯◯が区名の頭と一致する」ものを親とする。
+const WARD_PARENT_SEARCH_RANGE = 40;
+function findWardParent(index, cityCode, cityName) {
+  const w = parseInt(cityCode.slice(0, 5), 10);
+  if (!Number.isFinite(w)) return [];
+  const pref = cityCode.slice(0, 2);
+  for (let k = w - 1; k > w - WARD_PARENT_SEARCH_RANGE; k--) {
+    const key = String(k).padStart(5, "0");
+    if (key.slice(0, 2) !== pref) break;
+    const codes = index.byPrefix5.get(key);
+    if (!codes) continue;
+    const stems = codes.map(c => {
+      const n = index.names.get(c) || "";
+      const i = n.indexOf("市");
+      return i > 0 ? n.slice(0, i) : null;
+    });
+    if (stems.every(Boolean) && stems.some(st => cityName.includes(st))) return codes;
+  }
+  return [];
 }
 
 /** 解決済みの観測点から、ポリゴンコードごとの最大震度キーを集計する(区域単位の点=isAreaは対象外)。 */
