@@ -712,3 +712,23 @@ export function saveQuakeSource(source) {
     console.warn("地震情報の取得元の設定を保存できませんでした:", err);
   }
 }
+
+/* 津波情報の取得元。"p2p"(P2P地震情報、既定) または "wolfx"(Wolfx Open API)。 */
+const TSUNAMI_SOURCE_STORAGE_KEY = "tsunamiSource";
+
+export function loadStoredTsunamiSource() {
+  try {
+    return localStorage.getItem(TSUNAMI_SOURCE_STORAGE_KEY) === "wolfx" ? "wolfx" : "p2p";
+  } catch (err) {
+    console.warn("津波情報の取得元の設定を読み込めませんでした:", err);
+  }
+  return "p2p";
+}
+
+export function saveTsunamiSource(source) {
+  try {
+    localStorage.setItem(TSUNAMI_SOURCE_STORAGE_KEY, source === "wolfx" ? "wolfx" : "p2p");
+  } catch (err) {
+    console.warn("津波情報の取得元の設定を保存できませんでした:", err);
+  }
+}

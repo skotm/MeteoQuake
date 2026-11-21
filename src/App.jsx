@@ -5,7 +5,7 @@ import { buildReplayEewsAt } from "./replayEew";
 import { prepareShakeTest, isShakeTestFinished, computeShakeTestValues } from "./engines/shakeTestSimulation";
 import { buildSiteLookup } from "./engines/shakeTestWaveform";
 import { setJmaTravelTimeTable, tableFromJSON } from "./engines/jmaTravelTime";
-import { CONSENT_DOCS, isConsentUpToDate, loadStoredConsent, saveConsent } from "./app/consent";
+import { APP_VERSION, CONSENT_DOCS, isConsentUpToDate, loadStoredConsent, saveConsent } from "./app/consent";
 import { loadMarkdownFile } from "./app/settingsPanels";
 import { QUAKE_COLOR_SCHEMES, getLongPeriodStyleFromScheme, QuakeColorSchemeContext, REALTIME_API_BASE_URL, loadStoredQuakeColorScheme, saveQuakeColorScheme } from "./app/colorSchemes";
 import { Filters, LAYERS } from "./app/navigation";
@@ -13,10 +13,11 @@ import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layou
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
 import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, computeGlareGuard, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
 import { LongPeriodContext, useJmaLongPeriod } from "./app/useJmaLongPeriod";
+import { useWolfxTsunami } from "./app/useWolfxTsunami";
 import { useWolfxDetail } from "./app/useWolfxDetail";
 import { attachLongPeriod, buildTestLongPeriodInfo, eventIdMinuteKey } from "./longPeriod";
 const EMPTY_LONG_PERIOD = new Map();
-import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredTabPlacement, saveTabPlacement, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredLongPeriodEnabled, saveLongPeriodEnabled, loadStoredQuakeSource, saveQuakeSource, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
+import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredTabPlacement, saveTabPlacement, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredLongPeriodEnabled, saveLongPeriodEnabled, loadStoredQuakeSource, saveQuakeSource, loadStoredTsunamiSource, saveTsunamiSource, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
 import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
 import { loadEpicenterNamesData, loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
@@ -338,6 +339,11 @@ export default function App() {
 
   // 揺れ検出情報をフローティングのカードに表示するか(既定ON)。検知自体は止めず、カードだけを隠す。
   // 地震情報(緊急地震速報を除く)の取得元: "p2p" | "wolfx"
+  const [tsunamiSource, setTsunamiSourceState] = useState(loadStoredTsunamiSource);
+  function handleChangeTsunamiSource(next) {
+    setTsunamiSourceState(next);
+    saveTsunamiSource(next);
+  }
   const [quakeSource, setQuakeSourceState] = useState(loadStoredQuakeSource);
   function handleChangeQuakeSource(next) {
     setQuakeSourceState(next);
@@ -1705,7 +1711,29 @@ export default function App() {
 
   // テスト配信中は、実際の一覧の先頭にテストデータを合成する。以降、津波タブに
   // 関するApp側の判定(現在有効な津波・選択中の津波・地図表示)は、すべてこちらを使う。
-  const effectiveTsunamis = testTsunami ? [testTsunami, ...tsunamis] : tsunamis;
+  // 津波情報の取得元がWolfxの時は、Wolfxの「現在の状態」(警報等あり/解除)を先頭に置く。
+  // Wolfxの状態が確認できない間(期限切れ・不明・未取得)は、P2P地震情報の一覧をそのまま使い、
+  // 「津波の心配なし」とは決して断定しない。過去の津波一覧(tsunamiHistory)は常にP2P/気象庁。
+  const wolfxTsunami = useWolfxTsunami(tsunamiSource === "wolfx");
+  const tsunamisBySource = useMemo(() => {
+    const card = tsunamiSource === "wolfx" ? wolfxTsunami.result?.card : null;
+    if (!card) return tsunamis;
+    const t0 = new Date(card.time).getTime();
+    // 同じ発表がP2P側にも出ている場合は、Wolfx側を採用して重複を除く
+    const rest = tsunamis.filter(t => !(Number.isFinite(t0) && Math.abs(new Date(t.time).getTime() - t0) < 60 * 1000));
+    return [card, ...rest];
+  }, [tsunamiSource, wolfxTsunami.result, tsunamis]);
+  const tsunamiNotice = (() => {
+    if (tsunamiSource !== "wolfx") return null;
+    if (wolfxTsunami.result?.state === "untrusted") {
+      return { uncertain: true, text: "Wolfxの津波情報の現在の状態を確認できないため、P2P地震情報の情報を表示しています。" };
+    }
+    if (!wolfxTsunami.result && wolfxTsunami.status === "error") {
+      return { uncertain: true, text: "Wolfxの津波情報を取得できないため、P2P地震情報の情報を表示しています。" };
+    }
+    return null;
+  })();
+  const effectiveTsunamis = testTsunami ? [testTsunami, ...tsunamisBySource] : tsunamisBySource;
 
   /* ─────────────────────────────────────────────────────
      津波警報テスト配信: 予報区を「地図上の海岸線タップ」で選ぶモード(複数選択・
@@ -3270,6 +3298,8 @@ export default function App() {
     <NowcastColorSchemeContext.Provider value={nowcastColorScheme}>
       <GlobalStyles tokens={themeContextValue.tokens}/>
       <Filters/>
+      {/* バージョン表記(画面最下部の余白に、小さく薄く)。縦向きは右下、横向きは左下 */}
+      <div className="app-version-mark" style={{ color: `rgba(${themeContextValue.tokens.ink},0.32)` }}>v{APP_VERSION}</div>
 
       {!isConsentUpToDate(consent) && (
         <ConsentGate storedConsent={consent} onAgree={handleAgreeConsent}/>
@@ -3765,6 +3795,16 @@ export default function App() {
             1つの共有Glassの中に並べて描画し、継ぎ目の無い1枚のガラスに
             見せる(BottomDock自身はisWideの時、自前のGlassを持たず透明な
             中身だけを返す)。 */}
+        {/* ドックの下端より下(ホームインジケータ側の余白)は、地図を操作できないようにする。
+            ドック自身のbottomと同じ値の高さの透明な帯で、地図へのタッチを受け止める。 */}
+        <div
+          aria-hidden="true"
+          style={{
+            position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 39,
+            height: isWide ? 16 : (isStandalonePwa ? "calc(env(safe-area-inset-bottom) - 10px)" : "calc(env(safe-area-inset-bottom) + 10px)"),
+            touchAction: "none",
+          }}
+        />
         <div style={isWide ? {
           position: "fixed",
           left: 12, top: 16, bottom: 16,
@@ -3779,7 +3819,7 @@ export default function App() {
           zIndex: 40, padding: "0 16px",
         }}>
           {isWide ? (
-              <div style={{ height: "100%", animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both" }}>
+              <div style={{ height: "100%", animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s backwards" }}>
                 <Glass radius={tabPlacement === "corner" ? WIDE_PANEL_RADIUS_ATTACHED : 28} rimClip={tabPlacement === "corner" ? widePanelRimClip(CORNER_TAB_STACK_HEIGHT) : undefined} style={{ height: "100%" }}>
                   <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
                     {tabPlacement !== "corner" && (
@@ -3829,6 +3869,7 @@ export default function App() {
                   onSelectQuake={selectQuake}
                   tsunamis={effectiveTsunamis}
                   tsunamiStatus={tsunamiStatus}
+                  tsunamiNotice={tsunamiNotice}
                   selectedTsunamiId={selectedTsunamiId}
                   onSelectTsunami={setSelectedTsunamiId}
                   isViewingPastTsunami={isViewingPastTsunami}
@@ -3894,6 +3935,9 @@ export default function App() {
                   longPeriodEnabled={longPeriodEnabled}
                   quakeSource={quakeSource}
                   onChangeQuakeSource={handleChangeQuakeSource}
+                  tsunamiSource={tsunamiSource}
+                  onChangeTsunamiSource={handleChangeTsunamiSource}
+                  tsunamiNotice={tsunamiNotice}
                   onChangeLongPeriodEnabled={handleChangeLongPeriodEnabled}
                   onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
                   cameraSettings={cameraSettings}
@@ -4013,6 +4057,7 @@ export default function App() {
               onSelectQuake={selectQuake}
               tsunamis={effectiveTsunamis}
               tsunamiStatus={tsunamiStatus}
+              tsunamiNotice={tsunamiNotice}
               selectedTsunamiId={selectedTsunamiId}
               onSelectTsunami={setSelectedTsunamiId}
               isViewingPastTsunami={isViewingPastTsunami}
@@ -4078,6 +4123,8 @@ export default function App() {
               longPeriodEnabled={longPeriodEnabled}
               quakeSource={quakeSource}
               onChangeQuakeSource={handleChangeQuakeSource}
+              tsunamiSource={tsunamiSource}
+              onChangeTsunamiSource={handleChangeTsunamiSource}
               onChangeLongPeriodEnabled={handleChangeLongPeriodEnabled}
               onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
               cameraSettings={cameraSettings}

@@ -266,6 +266,11 @@ function TsunamiAreaRow({ area, showDivider, observedStations = [], onSelectStat
    ───────────────────────────────────────────────────── */
 export function TsunamiTabBody({
   tsunamis, status, selectedId, onSelect,
+  // 取得元(Wolfx)の状態を知らせる注意書き。{ text, uncertain }。uncertainがtrueで一覧が
+  // 空の間は、「発表なし」と断定せず「確認できません」と表示する。
+  notice = null,
+  // 津波情報の取得元の設定("p2p" | "wolfx")。一覧(直近)の最下部に表示する。
+  tsunamiSource = "p2p", onChangeTsunamiSource,
   onHandoffToPanelDrag,
   // 「過去」モード関連。viewModeが"history"の間は、直近一覧(tsunamis)の代わりに
   // historyItems(/history APIをoffsetで遡って追加取得した一覧)を表示する。
@@ -601,6 +606,10 @@ export function TsunamiTabBody({
     );
   }
 
+  const sourceSettingEl = onChangeTsunamiSource ? (
+    <TsunamiSourceSetting value={tsunamiSource} onChange={onChangeTsunamiSource}/>
+  ) : null;
+
   if (status === "loading" && tsunamis.length === 0) {
     return (
       <div style={{
@@ -622,24 +631,77 @@ export function TsunamiTabBody({
     return (
       <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.8 }}>
         津波情報の取得に失敗しました。
+        {sourceSettingEl}
       </div>
     );
   }
 
+  const noticeEl = notice?.text ? (
+    <div style={{ padding: "8px 16px", fontSize: 11.5, lineHeight: 1.6, color: `rgba(${tokens.ink},0.55)` }}>
+      {notice.text}
+    </div>
+  ) : null;
+
   if (tsunamis.length === 0) {
     return (
-      <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: `rgba(${tokens.ink},0.45)` }}>
-        現在発表されている津波予報・警報はありません
-      </div>
+      <>
+        {noticeEl}
+        <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: `rgba(${tokens.ink},0.45)` }}>
+          {notice?.uncertain
+            ? "津波情報の現在の状態を確認できません"
+            : "現在発表されている津波予報・警報はありません"}
+        </div>
+        {sourceSettingEl}
+      </>
     );
   }
 
   return (
     <>
+      {noticeEl}
       {tsunamis.map((t, i) => (
         <TsunamiListRow key={t.id} tsunami={t} showDivider={i > 0} onSelect={() => onSelect(t.id)}/>
       ))}
+      {sourceSettingEl}
     </>
+  );
+}
+
+// 津波情報の取得元(P2P地震情報 / Wolfx)を切り替える小さな設定欄。以前は設定タブにあったが、
+// 津波タブの一覧の最下部で直接変えられるようにした。
+function TsunamiSourceSetting({ value, onChange }) {
+  const { tokens } = useContext(ThemeContext);
+  const options = [
+    { id: "p2p", label: "P2P地震情報" },
+    { id: "wolfx", label: "Wolfx" },
+  ];
+  return (
+    <div style={{ padding: "14px 16px 10px" }}>
+      <div style={{ fontSize: 11.5, color: `rgba(${tokens.ink},0.5)`, marginBottom: 6 }}>津波情報の取得元</div>
+      <div style={{ display: "flex", gap: 6 }}>
+        {options.map(o => {
+          const on = value === o.id;
+          return (
+            <button
+              key={o.id}
+              type="button"
+              onClick={() => onChange(o.id)}
+              style={{
+                flex: 1, padding: "7px 0", borderRadius: 9, border: "none", cursor: "pointer",
+                fontSize: 12.5, fontWeight: on ? 600 : 500, fontFamily: "inherit",
+                color: `rgba(${tokens.ink},${on ? 0.9 : 0.5})`,
+                background: `rgba(${tokens.ink},${on ? 0.16 : 0.06})`,
+              }}
+            >{o.label}</button>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 11, lineHeight: 1.6, color: `rgba(${tokens.ink},0.4)`, marginTop: 6 }}>
+        {value === "wolfx"
+          ? "Wolfxの現在の状態を表示します。状態を確認できない間はP2P地震情報の情報を表示します。過去の津波は、どちらでも従来どおりです。"
+          : "標準の取得元です。"}
+      </div>
+    </div>
   );
 }
 
