@@ -111,17 +111,12 @@ code {
   background: var(--code-bg);
 }
 
-/* バージョン表記。パネルより下の、画面最下部の余白に置く(操作の邪魔にならないようpointer-events無効) */
+/* バージョン表記(App.jsxの下端の帯の中に置く)。小さく薄く。操作の邪魔にならないようpointer-events無効 */
 .app-version-mark {
-  position: fixed;
-  bottom: 5px;
-  right: 28px;
-  z-index: 1;
   font-size: 9.5px;
+  line-height: 1;
   letter-spacing: 0.02em;
   pointer-events: none;
   user-select: none;
-}
-@media (orientation: landscape) {
-  .app-version-mark { right: auto; left: 40px; bottom: 3px; }
+  white-space: nowrap;
 }
