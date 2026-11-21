@@ -8,7 +8,7 @@ import { SETTINGS_ITEMS, SETTINGS_MENU, SettingsCard, SettingsCardDivider, Setti
 import { APP_VERSION } from "./consent";
 import { BoundaryLineColorSettings, LicenseFileCard, LogViewerPanel, MapColorSettings, MarkdownFileCard, QuakeColorSchemeSettings, QuakeFetchLimitSettings } from "./settingsPanels";
 import { EewTestBroadcastPanel, QuakeTestBroadcastPanel, ShakeDetectionTestPanel, TsunamiTestBroadcastPanel } from "./testPanels";
-import { DEFAULT_CAMERA_SETTINGS, CITY_FILL_ZOOM_MIN, CITY_FILL_ZOOM_MAX, clampCityFillZoom } from "./settingsStorage";
+import { DEFAULT_CAMERA_SETTINGS, CITY_FILL_ZOOM_MIN, CITY_FILL_ZOOM_MAX, CITY_FILL_ZOOM_DEFAULT, clampCityFillZoom } from "./settingsStorage";
 import { NowcastColorSchemeSettings, TyphoonForecastIntervalSettings } from "./weatherSettings";
 
 
@@ -179,6 +179,15 @@ export function SettingsBody({
               <span style={{ fontSize: 15, fontWeight: 500, color: `rgba(${tokens.ink},0.9)` }}>市区町村塗りに切り替えるズーム</span>
               <span style={{ fontSize: 14, fontVariantNumeric: "tabular-nums", color: `rgba(${tokens.ink},0.6)` }}>{cityFillZoom.toFixed(1)}</span>
             </div>
+            {cityFillZoom !== CITY_FILL_ZOOM_DEFAULT && (
+              <button
+                type="button"
+                disabled={!areaFillEnabled}
+                onClick={() => onChangeCityFillZoom(CITY_FILL_ZOOM_DEFAULT)}
+                style={{ marginTop: 6, padding: "4px 10px", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 12, fontFamily: "inherit",
+                  color: `rgba(${tokens.ink},0.7)`, background: `rgba(${tokens.ink},0.08)` }}
+              >初期値({CITY_FILL_ZOOM_DEFAULT.toFixed(1)})に戻す</button>
+            )}
             <input
               type="range"
               min={CITY_FILL_ZOOM_MIN}
@@ -190,7 +199,7 @@ export function SettingsBody({
               style={{ width: "100%", marginTop: 8 }}
             />
             <div style={{ fontSize: 12, lineHeight: 1.6, color: `rgba(${tokens.ink},0.45)`, marginTop: 4 }}>
-              地図をこのズーム以上に拡大すると、細分区域の塗りが市区町村ごとの塗りに切り替わります(観測点のない市区町村は塗りません)。旧震度階級の地震は、常に細分区域単位です。
+              地図をこのズーム以上に拡大すると、細分区域の塗りが市区町村ごとの塗りに、短いフェードで切り替わります(観測点のない市区町村は塗りません)。旧震度階級の地震は、常に細分区域単位です。
             </div>
           </div>
           <SettingsCardDivider/>
