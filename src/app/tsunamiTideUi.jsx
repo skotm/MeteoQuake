@@ -266,6 +266,9 @@ function TsunamiAreaRow({ area, showDivider, observedStations = [], onSelectStat
    ───────────────────────────────────────────────────── */
 export function TsunamiTabBody({
   tsunamis, status, selectedId, onSelect,
+  // 取得元(Wolfx)の状態を知らせる注意書き。{ text, uncertain }。uncertainがtrueで一覧が
+  // 空の間は、「発表なし」と断定せず「確認できません」と表示する。
+  notice = null,
   onHandoffToPanelDrag,
   // 「過去」モード関連。viewModeが"history"の間は、直近一覧(tsunamis)の代わりに
   // historyItems(/history APIをoffsetで遡って追加取得した一覧)を表示する。
@@ -626,16 +629,28 @@ export function TsunamiTabBody({
     );
   }
 
+  const noticeEl = notice?.text ? (
+    <div style={{ padding: "8px 16px", fontSize: 11.5, lineHeight: 1.6, color: `rgba(${tokens.ink},0.55)` }}>
+      {notice.text}
+    </div>
+  ) : null;
+
   if (tsunamis.length === 0) {
     return (
-      <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: `rgba(${tokens.ink},0.45)` }}>
-        現在発表されている津波予報・警報はありません
-      </div>
+      <>
+        {noticeEl}
+        <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: `rgba(${tokens.ink},0.45)` }}>
+          {notice?.uncertain
+            ? "津波情報の現在の状態を確認できません"
+            : "現在発表されている津波予報・警報はありません"}
+        </div>
+      </>
     );
   }
 
   return (
     <>
+      {noticeEl}
       {tsunamis.map((t, i) => (
         <TsunamiListRow key={t.id} tsunami={t} showDivider={i > 0} onSelect={() => onSelect(t.id)}/>
       ))}

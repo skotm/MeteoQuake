@@ -93,6 +93,7 @@ export function BottomDock({
   shakeEventCardsEnabled = true, onChangeShakeEventCardsEnabled,
   longPeriodEnabled = true, onChangeLongPeriodEnabled,
   quakeSource = "p2p", onChangeQuakeSource,
+  tsunamiSource = "p2p", onChangeTsunamiSource, tsunamiNotice = null,
   displayInsets, onOpenDisplayAreaEditor,
   tabPlacement = "slide", onChangeTabPlacement,
   cameraSettings, onChangeCameraSettings,
@@ -1119,8 +1120,19 @@ export function BottomDock({
         episodeStart = prevTime;
       }
 
-      const winEnd = episodeStart;
-      const winStart = new Date(episodeStart.getTime() - 30 * 60 * 1000);
+      let winEnd = episodeStart;
+      let winStart = new Date(episodeStart.getTime() - 30 * 60 * 1000);
+      // Wolfxの津波情報はeventIds(地震のイベントID。先頭12桁がJSTの発生日時"YYYYMMDDHHmm")を
+      // 持つ。ある場合は時刻の推測より確実なので、その前後の狭い時間窓で探す。
+      const evMatch = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})/.exec(tsunamiCard.eventIds?.[0] || "");
+      if (evMatch) {
+        const [, y, mo, d, h, mi] = evMatch;
+        const evTime = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi));
+        if (Number.isFinite(evTime.getTime())) {
+          winStart = new Date(evTime.getTime() - 10 * 60 * 1000);
+          winEnd = new Date(evTime.getTime() + 10 * 60 * 1000);
+        }
+      }
       const pad2 = n => String(n).padStart(2, "0");
       const dateStr = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
       const timeStr = d => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
@@ -2815,6 +2827,7 @@ export function BottomDock({
                 <TsunamiTabBody
                   tsunamis={tsunamis}
                   status={tsunamiStatus}
+                  notice={tsunamiNotice}
                   selectedId={selectedTsunamiId}
                   onSelect={handleSelectTsunamiForScroll}
                   onHandoffToPanelDrag={handlePointerDown}
@@ -2899,6 +2912,8 @@ export function BottomDock({
                   longPeriodEnabled={longPeriodEnabled}
                   quakeSource={quakeSource}
                   onChangeQuakeSource={onChangeQuakeSource}
+                  tsunamiSource={tsunamiSource}
+                  onChangeTsunamiSource={onChangeTsunamiSource}
                   onChangeLongPeriodEnabled={onChangeLongPeriodEnabled}
                   cameraSettings={cameraSettings}
                   onChangeCameraSettings={onChangeCameraSettings}
