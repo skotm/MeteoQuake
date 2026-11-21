@@ -2,6 +2,7 @@ import { MIN_INTENSITY as SHINDO_MIN_INTENSITY, intensityToShindoColor } from ".
 import { NOWCAST_BOUNDS, nowcastProtocolUrl, precipProtocolUrl, wdistProtocolUrl } from "./weather/nowcast";
 import { registerNowcastProtocol, registerPrecipProtocol, registerWdistProtocol } from "./weather/typhoon";
 import { registerRiskProtocol, riskProtocolUrl } from "./weather/risk";
+import { getTileStatus, onTileRetry, retryAllTiles, subscribeTileStatus } from "./weather/tileFetch";
 import { buildWarningAreaColorExpr, buildWarningAreasGeoJson, loadWarningAreasFullGeoJson } from "./warnings";
 import { useRef, useState, useContext, useEffect } from "react";
 import { AnalysisRunner, shouldUseAnalysisWorker } from "../analysis/analysisRunner";
@@ -3151,6 +3152,35 @@ export function MapCanvas({
     // マウント解除時の後片付けは地図本体の破棄(map.remove())で行われる。
   }, [riskVisible, riskMode, riskFrame?.basetime, riskFrame?.validtime, status, riskKnownValidtimesKey]);
 
+  // 気象レイヤー(雨雲/降水量/天気分布/キキクル)のタイル取得状況。
+  // 読み込みが1.2秒以上続く時と、取得に失敗したタイルがある時だけバッジを出し、
+  // 「再読み込み」で失敗の記憶を消してソースを取り直す。
+  const [tileStatus, setTileStatus] = useState(getTileStatus);
+  const [tileSlow, setTileSlow] = useState(false);
+  useEffect(() => subscribeTileStatus(setTileStatus), []);
+  useEffect(() => {
+    if (tileStatus.pending === 0) { setTileSlow(false); return undefined; }
+    const t = setTimeout(() => setTileSlow(true), 1200);
+    return () => clearTimeout(t);
+  }, [tileStatus.pending > 0]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return undefined;
+    return onTileRetry(() => {
+      const sources = map.getStyle()?.sources || {};
+      Object.keys(sources).forEach(id => {
+        if (!/^(nowcast|precip|wdist|risk)-src-/.test(id)) return;
+        try {
+          const src = map.getSource(id);
+          if (typeof src?.reload === "function") src.reload();
+          else map.style?.sourceCaches?.[id]?.reload?.();
+        } catch { /* ignore */ }
+      });
+      map.triggerRepaint();
+    });
+  }, [status]);
+  const weatherTilesActive = nowcastVisible || precipVisible || wdistVisible || riskVisible;
+
   // 警報タブの市区町村境界線 — ライトモードは警報の塗り分け(黄〜赤)の上で
   // 白線だと見えづらいので黒にする。ダークモードは従来通り薄い白のまま。
   useEffect(() => {
@@ -3569,6 +3599,52 @@ export function MapCanvas({
           {estIntensityLoading ? "推計震度分布を計算中…"
             : pointsLoading ? "観測点データを処理中…"
             : "震央分布を読み込み中…"}
+        </div>
+      )}
+
+      {status === "ready" && weatherTilesActive && (tileStatus.failed > 0 || tileSlow) && (
+        <div style={{
+          position: "absolute",
+          top: "calc(58px + env(safe-area-inset-top, 0px))",
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 5,
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "6px 6px 6px 12px",
+          borderRadius: 999,
+          background: tokens.glassOpaqueBg,
+          backdropFilter: "blur(10px)",
+          WebkitBackdropFilter: "blur(10px)",
+          color: tokens.text,
+          fontSize: 11.5,
+          fontWeight: 600,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+          whiteSpace: "nowrap",
+        }}>
+          {tileStatus.failed > 0 ? (
+            <>
+              <span>一部のデータを読み込めませんでした</span>
+              <button
+                type="button"
+                onClick={retryAllTiles}
+                style={{
+                  border: "none", borderRadius: 999, padding: "5px 10px",
+                  background: `rgba(${tokens.ink},0.14)`, color: tokens.text,
+                  fontSize: 11.5, fontWeight: 700, cursor: "pointer",
+                }}
+              >再読み込み</button>
+            </>
+          ) : (
+            <>
+              <div style={{
+                width: 12, height: 12, borderRadius: "50%",
+                border: `2px solid rgba(${tokens.ink},0.25)`,
+                borderTopColor: `rgba(${tokens.ink},0.9)`,
+                animation: "spin 0.8s linear infinite", flexShrink: 0,
+              }}/>
+              <span style={{ paddingRight: 6 }}>気象データを読み込み中…</span>
+            </>
+          )}
         </div>
       )}
 
