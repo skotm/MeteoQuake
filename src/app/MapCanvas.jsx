@@ -22,6 +22,7 @@ import { filterEstimatesByConfidence, logEstimateConfidenceChanges } from "../en
 import { findAreaByPoint, findAreaCodesByName, findEpicenterNameByPoint, findNearestTsunamiAreaWithDistance } from "./geo";
 import { EEW_P_WAVE_SPEED_KM_S, EEW_S_WAVE_SPEED_KM_S, eewCirclePolygon, eewWaveSurfaceRadiusKm } from "./liveFeeds";
 import { aggregateByArea, loadJmaTravelTimeTable } from "./stations";
+import { aggregateByCity, buildCityFillData, cityFillOpacityExpr } from "./cityFill";
 import { buildTsunamiAreaColorExpr } from "./tsunamiData";
 import { TSUNAMI_ICON_BORDER, tsunamiBarWidthForZoom, tsunamiStationIconId } from "./mapIcons";
 import { Glass } from "./glass";
@@ -37,6 +38,9 @@ const EMPTY_LP_AREAS = [];
 export function MapCanvas({
   onReady, stationPoints, hypocenters, isWide,
   quakeTimeStr, maxIntensityKey, estIntensityEnabled, areaFillEnabled,
+  // 市区町村単位の震度塗り(ズームを上げると細分区域塗りから切り替わる)。
+  // quakeCityFillEligibleは、旧震度階級の地震・テスト配信ではfalse(従来どおり細分区域塗りのまま)。
+  quakeCityFillEligible = false, cityFillZoom = 7.5,
   faultsEnabled, plateBoundariesEnabled, boundaryLineColorId,
   epicenterPoints = [], onSelectEpicenterPoint,
   pointsLoading = false, epicenterLoading = false,
@@ -544,6 +548,33 @@ export function MapCanvas({
             paint: {
               "line-color": "rgba(0,0,0,0)",
               "line-width": 6,
+            },
+          }, "station-points-symbol");
+
+          // 地震情報の市区町村単位の震度塗り。データ(warning_areas.json)は、必要になった時に
+          // 1回だけ読み込んで流し込む(下方の専用useEffect参照)。色はfeature-stateで持たせる。
+          map.addSource("quake-cities", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+            promoteId: "regioncode",
+          });
+          map.addLayer({
+            id: "quake-cities-fill",
+            type: "fill",
+            source: "quake-cities",
+            paint: {
+              "fill-color": ["coalesce", ["feature-state", "color"], "rgba(0,0,0,0)"],
+              "fill-opacity": 0,
+            },
+          }, "station-points-symbol");
+          map.addLayer({
+            id: "quake-cities-line",
+            type: "line",
+            source: "quake-cities",
+            paint: {
+              "line-color": "rgba(0,0,0,0.35)",
+              "line-width": ["case", [">", ["coalesce", ["feature-state", "hasIntensity"], 0], 0], 0.6, 0],
+              "line-opacity": 0,
             },
           }, "station-points-symbol");
 
@@ -2224,6 +2255,83 @@ export function MapCanvas({
     }
     areaFillRef.current.setQuakeFill(quakeColors);
   }, [stationPoints, status, colorScheme, areaFillEnabled]);
+
+  // 市区町村単位の震度塗り。次の条件を全部満たす時だけ有効にする:
+  //   ・塗りつぶし設定がON ・旧震度階級の地震/テスト配信ではない(quakeCityFillEligible)
+  //   ・市区町村が分かる観測点が1つ以上ある(震度速報の「区域」だけの地震は、細分区域塗りのまま)
+  // 有効な間は、cityFillZoomの前後で「細分区域塗り→市区町村塗り」に重なりながら切り替える。
+  // 観測点の無い市区町村は塗らない(細分区域の色も引き継がない)。
+  const cityDataRef = useRef(null);       // { index, promise }
+  const cityPaintedRef = useRef(new Set()); // 前回塗ったポリゴンコード
+  const [cityFillActive, setCityFillActive] = useState(false);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    let cancelled = false;
+    const clearPainted = () => {
+      for (const code of cityPaintedRef.current) {
+        map.setFeatureState({ source: "quake-cities", id: code }, { color: null, hasIntensity: 0 });
+      }
+      cityPaintedRef.current = new Set();
+    };
+    const hasCityPoints = areaFillEnabled && quakeCityFillEligible
+      && (stationPoints || []).some(p => !p.isArea && p.cityCode);
+    if (!hasCityPoints) {
+      clearPainted();
+      setCityFillActive(false);
+      return undefined;
+    }
+    if (!cityDataRef.current) {
+      cityDataRef.current = {
+        promise: loadWarningAreasFullGeoJson().then(raw => {
+          const data = buildCityFillData(raw);
+          map.getSource("quake-cities")?.setData(data.collection); // 1回だけ流し込む
+          return data.index;
+        }),
+      };
+    }
+    cityDataRef.current.promise.then(index => {
+      if (cancelled) return;
+      const maxByCity = aggregateByCity(stationPoints, index);
+      clearPainted();
+      const next = new Set();
+      maxByCity.forEach((intensityKey, code) => {
+        const color = (colorScheme.colors[intensityKey] || colorScheme.colors["0"]).bg;
+        map.setFeatureState({ source: "quake-cities", id: code }, { color, hasIntensity: 1 });
+        next.add(code);
+      });
+      cityPaintedRef.current = next;
+      setCityFillActive(next.size > 0);
+    }).catch(err => {
+      // 読み込みに失敗したら、従来どおり細分区域塗りのままにする
+      console.error("市区町村塗りつぶし用データの読み込みに失敗:", err);
+      cityDataRef.current = null;
+      setCityFillActive(false);
+    });
+    return () => { cancelled = true; };
+  }, [stationPoints, status, colorScheme, areaFillEnabled, quakeCityFillEligible]);
+
+  // 切替ズームと有効/無効に応じて、細分区域塗り・市区町村塗りの不透明度を設定する。
+  // EEWの予想震度や長周期地震動の塗りは細分区域の塗りを使うので、それらが出ている間は
+  // 切り替えず(細分区域塗りのまま)にして、塗りが消えないようにする。
+  const areaFillInUseByOthers = (eews || []).some(e => !e.cancelled && Array.isArray(e.areas) && e.areas.length > 0)
+    || !!(quakeLongPeriodPickActive || quakeLongPeriodFillActive);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    if (!map.getLayer("quake-cities-fill") || !map.getLayer("areas-intensity-fill")) return;
+    if (cityFillActive && !areaFillInUseByOthers) {
+      map.setPaintProperty("areas-intensity-fill", "fill-opacity", cityFillOpacityExpr(cityFillZoom, false, 0.75));
+      map.setPaintProperty("areas-intensity-line", "line-opacity", cityFillOpacityExpr(cityFillZoom, false, 1));
+      map.setPaintProperty("quake-cities-fill", "fill-opacity", cityFillOpacityExpr(cityFillZoom, true, 0.75));
+      map.setPaintProperty("quake-cities-line", "line-opacity", cityFillOpacityExpr(cityFillZoom, true, 1));
+    } else {
+      map.setPaintProperty("areas-intensity-fill", "fill-opacity", 0.75);
+      map.setPaintProperty("areas-intensity-line", "line-opacity", 1);
+      map.setPaintProperty("quake-cities-fill", "fill-opacity", 0);
+      map.setPaintProperty("quake-cities-line", "line-opacity", 0);
+    }
+  }, [cityFillActive, cityFillZoom, status, areaFillInUseByOthers]);
 
   // 断層(faults.geojson)の表示ON/OFF。トグルがONになった最初の1回だけ
   // 実データ(数MB)を取得してsetDataで流し込み、以降のON/OFF切り替えは

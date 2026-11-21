@@ -288,10 +288,11 @@ export function buildEqdbQuakeCard(detail, listItem, stations, areasGeoJSON) {
     // 借りてくる(通常のP2P地震情報由来の地点と同じ「都道府県ごとの階層表示」に
     // 乗せられるようにするため)。マスタに見つからなければpref/cityともnullのまま
     // (今まで通り、階層表示では「その他」等の扱いにフォールバックする)。
-    const { pref, city, addr } = resolvePrefCityForEqdbPoint(stations, pt.name, pLat, pLon);
+    const { pref, city, cityCode, addr } = resolvePrefCityForEqdbPoint(stations, pt.name, pLat, pLon);
     return {
       pref,
       city,
+      cityCode,
       addr,
       intensityKey: maxScaleToIntensityKey(scale),
       latitude: Number.isFinite(pLat) ? pLat : null,

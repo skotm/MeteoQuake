@@ -75,6 +75,7 @@ export function BottomDock({
   onChangeNowcastColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
+  cityFillZoom, onChangeCityFillZoom,
   faultsEnabled, onChangeFaultsEnabled,
   plateBoundariesEnabled, onChangePlateBoundariesEnabled,
   epicenterCirclesEnabled, onChangeEpicenterCirclesEnabled,
@@ -2874,6 +2875,8 @@ export function BottomDock({
                   onChangeEstIntensityEnabled={onChangeEstIntensityEnabled}
                   areaFillEnabled={areaFillEnabled}
                   onChangeAreaFillEnabled={onChangeAreaFillEnabled}
+                  cityFillZoom={cityFillZoom}
+                  onChangeCityFillZoom={onChangeCityFillZoom}
                   faultsEnabled={faultsEnabled}
                   onChangeFaultsEnabled={onChangeFaultsEnabled}
                   plateBoundariesEnabled={plateBoundariesEnabled}

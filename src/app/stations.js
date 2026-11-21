@@ -110,6 +110,7 @@ export function resolveStationPoints(points, stations, areasGeoJSON) {
       pref: p.pref,
       addr: p.addr,
       city: station?.city?.name || null,
+      cityCode: station?.city?.code || null, // 市区町村塗りつぶし用(7桁)
       intensityKey: maxScaleToIntensityKey(p.scale),
       latitude: station ? parseFloat(station.lat) : null,
       longitude: station ? parseFloat(station.lon) : null,

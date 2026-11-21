@@ -732,3 +732,37 @@ export function saveTsunamiSource(source) {
     console.warn("津波情報の取得元の設定を保存できませんでした:", err);
   }
 }
+
+/* ─────────────────────────────────────────────────────
+   市区町村単位の震度塗りつぶしに切り替えるズームレベル。
+   このズームより拡大すると、細分区域塗りから市区町村塗りに切り替わる(前後0.4で重なりながら切替)。
+   既定は7.5。設定タブのスライダーで調節できる。
+   ───────────────────────────────────────────────────── */
+const CITY_FILL_ZOOM_STORAGE_KEY = "cityFillZoom";
+export const CITY_FILL_ZOOM_MIN = 5;
+export const CITY_FILL_ZOOM_MAX = 11;
+export const CITY_FILL_ZOOM_DEFAULT = 7.5;
+
+export function clampCityFillZoom(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return CITY_FILL_ZOOM_DEFAULT;
+  return Math.min(CITY_FILL_ZOOM_MAX, Math.max(CITY_FILL_ZOOM_MIN, Math.round(n * 10) / 10));
+}
+
+export function loadStoredCityFillZoom() {
+  try {
+    const saved = localStorage.getItem(CITY_FILL_ZOOM_STORAGE_KEY);
+    if (saved != null) return clampCityFillZoom(saved);
+  } catch (err) {
+    console.warn("市区町村塗りの切替ズームを読み込めませんでした:", err);
+  }
+  return CITY_FILL_ZOOM_DEFAULT;
+}
+
+export function saveCityFillZoom(zoom) {
+  try {
+    localStorage.setItem(CITY_FILL_ZOOM_STORAGE_KEY, String(clampCityFillZoom(zoom)));
+  } catch (err) {
+    console.warn("市区町村塗りの切替ズームを保存できませんでした:", err);
+  }
+}
