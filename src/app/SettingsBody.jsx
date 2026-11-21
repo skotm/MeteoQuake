@@ -8,7 +8,7 @@ import { SETTINGS_ITEMS, SETTINGS_MENU, SettingsCard, SettingsCardDivider, Setti
 import { APP_VERSION } from "./consent";
 import { BoundaryLineColorSettings, LicenseFileCard, LogViewerPanel, MapColorSettings, MarkdownFileCard, QuakeColorSchemeSettings, QuakeFetchLimitSettings } from "./settingsPanels";
 import { EewTestBroadcastPanel, QuakeTestBroadcastPanel, ShakeDetectionTestPanel, TsunamiTestBroadcastPanel } from "./testPanels";
-import { DEFAULT_CAMERA_SETTINGS } from "./settingsStorage";
+import { DEFAULT_CAMERA_SETTINGS, CITY_FILL_ZOOM_MIN, CITY_FILL_ZOOM_MAX, clampCityFillZoom } from "./settingsStorage";
 import { NowcastColorSchemeSettings, TyphoonForecastIntervalSettings } from "./weatherSettings";
 
 
@@ -40,6 +40,7 @@ export function SettingsBody({
   typhoonForecastIntervalHours, onChangeTyphoonForecastIntervalHours,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
+  cityFillZoom = 7.5, onChangeCityFillZoom = () => {},
   faultsEnabled, onChangeFaultsEnabled,
   plateBoundariesEnabled, onChangePlateBoundariesEnabled,
   epicenterCirclesEnabled, onChangeEpicenterCirclesEnabled,
@@ -168,10 +169,30 @@ export function SettingsBody({
         <SettingsCard>
           <SettingsToggleRow
             label="細分区域を震度で塗りつぶす"
-            description="観測点の震度をもとに、気象庁の細分区域単位で地図を塗り分けます。"
+            description="観測点の震度をもとに、細分区域単位(拡大すると市区町村単位)で地図を塗り分けます。"
             checked={areaFillEnabled}
             onChange={() => onChangeAreaFillEnabled(!areaFillEnabled)}
           />
+          <SettingsCardDivider/>
+          <div style={{ padding: "12px 16px 14px", opacity: areaFillEnabled ? 1 : 0.4 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <span style={{ fontSize: 15, fontWeight: 500, color: `rgba(${tokens.ink},0.9)` }}>市区町村塗りに切り替えるズーム</span>
+              <span style={{ fontSize: 14, fontVariantNumeric: "tabular-nums", color: `rgba(${tokens.ink},0.6)` }}>{cityFillZoom.toFixed(1)}</span>
+            </div>
+            <input
+              type="range"
+              min={CITY_FILL_ZOOM_MIN}
+              max={CITY_FILL_ZOOM_MAX}
+              step={0.1}
+              value={cityFillZoom}
+              disabled={!areaFillEnabled}
+              onChange={(e) => onChangeCityFillZoom(clampCityFillZoom(e.target.value))}
+              style={{ width: "100%", marginTop: 8 }}
+            />
+            <div style={{ fontSize: 12, lineHeight: 1.6, color: `rgba(${tokens.ink},0.45)`, marginTop: 4 }}>
+              地図をこのズーム以上に拡大すると、細分区域の塗りが市区町村ごとの塗りに切り替わります(観測点のない市区町村は塗りません)。旧震度階級の地震は、常に細分区域単位です。
+            </div>
+          </div>
           <SettingsCardDivider/>
           <SettingsToggleRow
             label="推計震度分布を表示"

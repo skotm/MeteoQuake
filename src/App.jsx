@@ -17,7 +17,7 @@ import { useWolfxTsunami } from "./app/useWolfxTsunami";
 import { useWolfxDetail } from "./app/useWolfxDetail";
 import { attachLongPeriod, buildTestLongPeriodInfo, eventIdMinuteKey } from "./longPeriod";
 const EMPTY_LONG_PERIOD = new Map();
-import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredTabPlacement, saveTabPlacement, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredLongPeriodEnabled, saveLongPeriodEnabled, loadStoredQuakeSource, saveQuakeSource, loadStoredTsunamiSource, saveTsunamiSource, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
+import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredCityFillZoom, saveCityFillZoom, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredTabPlacement, saveTabPlacement, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredLongPeriodEnabled, saveLongPeriodEnabled, loadStoredQuakeSource, saveQuakeSource, loadStoredTsunamiSource, saveTsunamiSource, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
 import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
 import { loadEpicenterNamesData, loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
@@ -459,6 +459,11 @@ export default function App() {
   const [shakeEvents, setShakeEvents] = useState([]);
 
   // 細分区域を震度の色で塗りつぶすかどうか。推計震度分布と同じく設定タブで操作し、localStorageに永続化する。
+  const [cityFillZoom, setCityFillZoomState] = useState(loadStoredCityFillZoom);
+  function handleChangeCityFillZoom(next) {
+    setCityFillZoomState(next);
+    saveCityFillZoom(next);
+  }
   const [areaFillEnabled, setAreaFillEnabledState] = useState(loadStoredAreaFillEnabled);
 
   function handleChangeAreaFillEnabled(next) {
@@ -2436,6 +2441,10 @@ export default function App() {
   useEffect(() => {
     if (activeNav !== "tsunami") setCausingQuakeCard(null);
   }, [activeNav]);
+  // 市区町村単位の震度塗りの対象かどうか。旧震度階級(1996年10月より前)の地震と、テスト配信は
+  // 対象外(従来どおり細分区域塗りのまま)。津波タブで表示中の「引き起こした地震」も同じ基準。
+  const cityFillCard = causingQuakeCard || selectedQuake;
+  const cityFillEligible = !!cityFillCard && !cityFillCard.legacyIntensityScale && !cityFillCard.isTest;
   const causingQuakeHypocenters = useMemo(() => {
     if (!causingQuakeCard) return [];
     if (Array.isArray(causingQuakeCard.hypocenters) && causingQuakeCard.hypocenters.length > 0) {
@@ -3380,6 +3389,8 @@ export default function App() {
           maxIntensityKey={causingQuakeCard ? causingQuakeCard.maxIntensity : selectedQuake?.maxIntensity}
           estIntensityEnabled={showQuakeMapLayers && estIntensityEnabled && !lpViewActive}
           areaFillEnabled={showQuakeMapLayers && areaFillEnabled}
+          quakeCityFillEligible={cityFillEligible}
+          cityFillZoom={cityFillZoom}
           faultsEnabled={showFaultPlateLayers && faultsEnabled}
           plateBoundariesEnabled={showFaultPlateLayers && plateBoundariesEnabled}
           boundaryLineColorId={boundaryLineColorId}
@@ -3896,6 +3907,8 @@ export default function App() {
                   onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
                   areaFillEnabled={areaFillEnabled}
                   onChangeAreaFillEnabled={handleChangeAreaFillEnabled}
+                  cityFillZoom={cityFillZoom}
+                  onChangeCityFillZoom={handleChangeCityFillZoom}
                   faultsEnabled={faultsEnabled}
                   onChangeFaultsEnabled={handleChangeFaultsEnabled}
                   plateBoundariesEnabled={plateBoundariesEnabled}
@@ -4084,6 +4097,8 @@ export default function App() {
               onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
               areaFillEnabled={areaFillEnabled}
               onChangeAreaFillEnabled={handleChangeAreaFillEnabled}
+              cityFillZoom={cityFillZoom}
+              onChangeCityFillZoom={handleChangeCityFillZoom}
               faultsEnabled={faultsEnabled}
               onChangeFaultsEnabled={handleChangeFaultsEnabled}
               plateBoundariesEnabled={plateBoundariesEnabled}

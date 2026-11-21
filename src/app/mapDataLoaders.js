@@ -64,7 +64,7 @@ export function loadMapLibre() {
      コストが無く、上限もブラウザの空きディスク容量に応じて大きく取れる。
    - Service Worker無し(ページのJSから直接)でも caches.open() だけで利用できる。
    ───────────────────────────────────────────────────── */
-const GEO_CACHE_VERSION = "v1"; // データ更新時はここを上げるとキャッシュを無効化できる
+const GEO_CACHE_VERSION = "v2"; // データ更新時はここを上げるとキャッシュを無効化できる
 const GEO_CACHE_NAME = `bosai-geo-${GEO_CACHE_VERSION}`;
 
 // Cache APIが使えない環境(プライベートブラウジング等で無効化されている場合や

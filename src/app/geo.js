@@ -378,10 +378,11 @@ export function resolvePrefCityForEqdbPoint(stations, name, lat, lon) {
   const match = findBestStationMatch(stations, name, lat, lon);
   const pref = match?.pref?.name || null;
   const city = match?.city?.name || null;
+  const cityCode = match?.city?.code || null;
   let addr = name;
   if (city && name && name.startsWith(city)) {
     const rest = name.slice(city.length);
     if (rest) addr = rest;
   }
-  return { pref, city, addr };
+  return { pref, city, cityCode, addr };
 }
