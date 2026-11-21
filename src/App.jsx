@@ -3307,8 +3307,6 @@ export default function App() {
     <NowcastColorSchemeContext.Provider value={nowcastColorScheme}>
       <GlobalStyles tokens={themeContextValue.tokens}/>
       <Filters/>
-      {/* バージョン表記(画面最下部の余白に、小さく薄く)。縦向きは右下、横向きは左下 */}
-      <div className="app-version-mark" style={{ color: `rgba(${themeContextValue.tokens.ink},0.32)` }}>v{APP_VERSION}</div>
 
       {!isConsentUpToDate(consent) && (
         <ConsentGate storedConsent={consent} onAgree={handleAgreeConsent}/>
@@ -3808,14 +3806,22 @@ export default function App() {
             中身だけを返す)。 */}
         {/* ドックの下端より下(ホームインジケータ側の余白)は、地図を操作できないようにする。
             ドック自身のbottomと同じ値の高さの透明な帯で、地図へのタッチを受け止める。 */}
+        {/* バージョン表記もこの帯の中に置く(帯はドックの下端より下の余白と同じ高さなので、
+            端末ごとの余白の差に関わらず、ドックに隠れたり画面外に見切れたりしない)。
+            縦向きは右寄せ、横向き(広い画面)は左寄せ。 */}
         <div
           aria-hidden="true"
           style={{
             position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 39,
-            height: isWide ? 16 : (isStandalonePwa ? "calc(env(safe-area-inset-bottom) - 10px)" : "calc(env(safe-area-inset-bottom) + 10px)"),
+            height: isWide ? 16 : (isStandalonePwa ? "max(0px, calc(env(safe-area-inset-bottom) - 10px))" : "calc(env(safe-area-inset-bottom) + 10px)"),
             touchAction: "none",
+            display: "flex", alignItems: "center", boxSizing: "border-box",
+            justifyContent: isWide ? "flex-start" : "flex-end",
+            padding: isWide ? "0 0 0 40px" : "0 28px 0 0",
           }}
-        />
+        >
+          <span className="app-version-mark" style={{ color: `rgba(${themeContextValue.tokens.ink},0.32)` }}>v{APP_VERSION}</span>
+        </div>
         <div style={isWide ? {
           position: "fixed",
           left: 12, top: 16, bottom: 16,
