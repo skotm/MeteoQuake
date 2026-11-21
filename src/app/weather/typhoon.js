@@ -1,5 +1,6 @@
 import { loadTurf } from "../mapDataLoaders";
-import { NOWCAST_COLOR_SCHEMES, WDIST_MODE_CONFIG, nowcastTileUrl, precipTileUrl, remapImageDataColors, wdistTileUrl } from "./nowcast.js";
+import { NOWCAST_COLOR_SCHEMES, nowcastTileUrl, precipTileUrl, remapImageDataColors, wdistTileUrl } from "./nowcast.js";
+import { fetchTileBlob, shouldSkipTile } from "./tileFetch.js";
 
 /* ─────────────────────────────────────────────────────
    台風情報 — 気象庁 台風情報API(bosai/typhoon)の取得と空間処理。
@@ -459,8 +460,6 @@ export async function fetchTyphoonData(forecastIntervalHours = 12) {
 
 
 
-// 404だったタイルURLの記録(モジュールスコープでアプリ全体を通じて使い回す)。
-const nowcastFailedTileUrls = new Set();
 
 
 let nowcastProtocolRegistered = false;
@@ -487,20 +486,9 @@ export function registerNowcastProtocol(maplibregl) {
       y = Math.floor(y / 2);
     }
     const url = nowcastTileUrl(basetime, validtime, z, x, y);
-    if (nowcastFailedTileUrls.has(url)) return { data: null };
-
-    let res;
-    try {
-      res = await fetch(url, { signal: abortController.signal });
-    } catch (err) {
-      if (err.name === "AbortError") throw err;
-      return { data: null };
-    }
-    if (!res.ok) {
-      if (res.status === 404) nowcastFailedTileUrls.add(url);
-      return { data: null };
-    }
-    const blob = await res.blob();
+    if (shouldSkipTile(url, z, x, y)) return { data: null };
+    const blob = await fetchTileBlob(url, abortController.signal);
+    if (!blob) return { data: null };
 
     // 奇数ズームの切り出しも、配色変換も不要な場合だけ、そのまま素通しする
     // (canvas処理をまるごと省いた方が速いため)。
@@ -528,9 +516,6 @@ export function registerNowcastProtocol(maplibregl) {
 }
 
 
-// 404だったタイルURLの記録(降水量用。雨雲レーダーと別集合にして、
-// 診断メッセージが混ざらないようにする)。
-const precipFailedTileUrls = new Set();
 
 
 let precipProtocolRegistered = false;
@@ -555,23 +540,9 @@ export function registerPrecipProtocol(maplibregl) {
       y = Math.floor(y / 2);
     }
     const url = precipTileUrl(mode, member, basetime, validtime, z, x, y);
-    if (precipFailedTileUrls.has(url)) return { data: null };
-
-    let res;
-    try {
-      res = await fetch(url, { signal: abortController.signal });
-    } catch (err) {
-      if (err.name === "AbortError") throw err;
-      return { data: null };
-    }
-    if (!res.ok) {
-      if (res.status === 404) {
-        precipFailedTileUrls.add(url);
-        console.warn(`降水量[${mode}]タイル 404: ${url}`);
-      }
-      return { data: null };
-    }
-    const blob = await res.blob();
+    if (shouldSkipTile(url, z, x, y)) return { data: null };
+    const blob = await fetchTileBlob(url, abortController.signal);
+    if (!blob) return { data: null };
 
     if (!cropQuadrant && !palette) {
       return { data: await blob.arrayBuffer() };
@@ -597,8 +568,6 @@ export function registerPrecipProtocol(maplibregl) {
 }
 
 
-// 404だったタイルURLの記録(天気分布予報用)。
-const wdistFailedTileUrls = new Set();
 
 
 let wdistProtocolRegistered = false;
@@ -624,23 +593,9 @@ export function registerWdistProtocol(maplibregl) {
       y = Math.floor(y / 2);
     }
     const url = wdistTileUrl(mode, member, basetime, validtime, z, x, y);
-    if (wdistFailedTileUrls.has(url)) return { data: null };
-
-    let res;
-    try {
-      res = await fetch(url, { signal: abortController.signal });
-    } catch (err) {
-      if (err.name === "AbortError") throw err;
-      return { data: null };
-    }
-    if (!res.ok) {
-      if (res.status === 404) {
-        wdistFailedTileUrls.add(url);
-        console.warn(`${WDIST_MODE_CONFIG[mode]?.label || mode}タイル 404(要素名・URL構造の推測が外れている可能性があります): ${url}`);
-      }
-      return { data: null };
-    }
-    const blob = await res.blob();
+    if (shouldSkipTile(url, z, x, y)) return { data: null };
+    const blob = await fetchTileBlob(url, abortController.signal);
+    if (!blob) return { data: null };
     if (!cropQuadrant) return { data: await blob.arrayBuffer() };
 
     const bitmap = await createImageBitmap(blob);

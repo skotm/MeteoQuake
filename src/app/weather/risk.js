@@ -1,4 +1,5 @@
 import { parseNowcastValidTime } from "./nowcast.js";
+import { fetchTileBlob } from "./tileFetch.js";
 
 /* ─────────────────────────────────────────────────────
    キキクル(危険度分布) — 土砂キキクル(land)・浸水キキクル(inund)。
@@ -78,8 +79,6 @@ export function formatRiskFrameLabel(frame) {
 }
 
 
-// 404だったタイルURLの記録(キキクル用)。
-const riskFailedTileUrls = new Set();
 
 
 let riskProtocolRegistered = false;
@@ -103,20 +102,8 @@ export function registerRiskProtocol(maplibregl) {
       y = Math.floor(y / 2);
     }
     const url = riskTileUrl(mode, basetime, validtime, z, x, y);
-    if (riskFailedTileUrls.has(url)) return { data: null };
-
-    let res;
-    try {
-      res = await fetch(url, { signal: abortController.signal });
-    } catch (err) {
-      if (err.name === "AbortError") throw err;
-      return { data: null };
-    }
-    if (!res.ok) {
-      if (res.status === 404) riskFailedTileUrls.add(url);
-      return { data: null };
-    }
-    const blob = await res.blob();
+    const blob = await fetchTileBlob(url, abortController.signal);
+    if (!blob) return { data: null };
 
     if (!cropQuadrant) return { data: await blob.arrayBuffer() };
 
