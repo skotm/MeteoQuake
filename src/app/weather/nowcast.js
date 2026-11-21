@@ -1,3 +1,4 @@
+import { fetchJsonShared } from "./tileFetch.js";
 import { createContext } from "react";
 
 /* ─────────────────────────────────────────────────────
@@ -165,13 +166,10 @@ export function remapImageDataColors(imageData, palette) {
 // 実況(N1)+予測(N2)を時刻昇順の1本のタイムラインにまとめて返す。
 // [{ basetime, validtime, kind: "obs"|"forecast" }, ...]
 export async function loadNowcastFrames() {
-  const [obsRes, fcRes] = await Promise.all([
-    fetch(NOWCAST_TARGET_TIMES_URLS.obs),
-    fetch(NOWCAST_TARGET_TIMES_URLS.forecast),
+  const [obsList, fcList] = await Promise.all([
+    fetchJsonShared(NOWCAST_TARGET_TIMES_URLS.obs).catch(e => { throw new Error(`雨雲レーダーの時刻一覧(実況)の取得に失敗(${e.message})`); }),
+    fetchJsonShared(NOWCAST_TARGET_TIMES_URLS.forecast).catch(e => { throw new Error(`雨雲レーダーの時刻一覧(予測)の取得に失敗(${e.message})`); }),
   ]);
-  if (!obsRes.ok) throw new Error(`雨雲レーダーの時刻一覧(実況)の取得に失敗(HTTP ${obsRes.status})`);
-  if (!fcRes.ok) throw new Error(`雨雲レーダーの時刻一覧(予測)の取得に失敗(HTTP ${fcRes.status})`);
-  const [obsList, fcList] = await Promise.all([obsRes.json(), fcRes.json()]);
   // N1・N2とも新しい順(降順)で来るので、時系列順(昇順)に直してから連結する。
   const obsFrames = [...obsList].reverse().map(t => ({ basetime: t.basetime, validtime: t.validtime, kind: "obs" }));
   const fcFramesRaw = [...fcList].reverse().map(t => ({ basetime: t.basetime, validtime: t.validtime, kind: "forecast" }));
@@ -279,9 +277,7 @@ export async function loadPrecipFrames(mode) {
   const url = `${PRECIP_DATA_BASE}/targetTimes.json`;
   let raw;
   try {
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    raw = await res.json();
+    raw = await fetchJsonShared(url);
   } catch (err) {
     console.warn(`降水量[${label}]: 時刻一覧の取得に失敗 url=${url}`, err);
     throw err;
@@ -346,9 +342,7 @@ export async function loadWdistFrames(mode) {
   const url = `${WDIST_DATA_BASE}/targetTimes.json`;
   let raw;
   try {
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    raw = await res.json();
+    raw = await fetchJsonShared(url);
   } catch (err) {
     console.warn(`${label}: 時刻一覧の取得に失敗 url=${url}`, err);
     throw err;

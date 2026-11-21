@@ -1,5 +1,5 @@
 import { parseNowcastValidTime } from "./nowcast.js";
-import { fetchTileBlob } from "./tileFetch.js";
+import { fetchJsonShared, fetchTileBlob } from "./tileFetch.js";
 
 /* ─────────────────────────────────────────────────────
    キキクル(危険度分布) — 土砂キキクル(land)・浸水キキクル(inund)。
@@ -40,17 +40,13 @@ export async function loadRiskFrames(mode) {
   let url = config.targetTimesUrl;
   let raw;
   try {
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    raw = await res.json();
+    raw = await fetchJsonShared(url);
   } catch (err) {
     if (url !== RISK_MODE_CONFIG.doshaKikkuru.targetTimesUrl) {
       console.warn(`${label}: 時刻一覧の取得に失敗、targetTimes.jsonにフォールバックします url=${url}`, err);
       url = RISK_MODE_CONFIG.doshaKikkuru.targetTimesUrl;
       try {
-        const res = await fetch(url, { cache: "no-store" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        raw = await res.json();
+        raw = await fetchJsonShared(url);
       } catch (err2) {
         console.warn(`${label}: フォールバック先の時刻一覧取得にも失敗 url=${url}`, err2);
         throw err2;
