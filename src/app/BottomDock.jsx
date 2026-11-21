@@ -30,6 +30,8 @@ import { loadRiskFrames, loadRiverOverview, formatRiskFrameLabel } from "./weath
 import { RiverStationDetailCard, WarningAreaDetailCard, WarningAreaListPanel } from "./warningPanels";
 import { TyphoonDetailCard, TyphoonListPanel } from "./TyphoonPanel";
 import { WeatherLocationPanel } from "./WeatherLocationPanel";
+import { startVisiblePolling } from "./visiblePolling";
+import { getTileStatus, subscribeTileStatus } from "./weather/tileFetch";
 import { NowcastTimeSlider, PrecipTimeSlider } from "./weatherLegends";
 
 
@@ -278,8 +280,8 @@ export function BottomDock({
         });
     };
     fetchAndApply();
-    const intervalId = setInterval(fetchAndApply, 5 * 60 * 1000); // 5分おきに追従
-    return () => { cancelled = true; clearInterval(intervalId); };
+    const stopPolling = startVisiblePolling(fetchAndApply, 5 * 60 * 1000); // 5分おきに追従
+    return () => { cancelled = true; stopPolling(); };
   }, [nowcastEnabled]);
 
   const currentNowcastFrame =
@@ -288,7 +290,34 @@ export function BottomDock({
   // 先読みを一旦廃止し、今見ているコマだけを読み込むようにする。
   // (元の「前後NOWCAST_PRELOAD_RADIUSコマぶん先読み」ロジックはコメントアウトで
   // 残してあるので、戻す時はここを差し替えるだけでよい。)
-  const nowcastPreloadFrames = useMemo(() => [], []);
+  // 先読みは「今のコマの読み込みが落ち着いてから、前後1コマだけ」。通信節約設定・
+  // 低速/モバイル回線では行わない(今見ているコマの取得を邪魔しないため)。
+  const [nowcastPrefetchReady, setNowcastPrefetchReady] = useState(false);
+  useEffect(() => {
+    setNowcastPrefetchReady(false);
+    if (!nowcastEnabled || nowcastFrameIndex == null) return undefined;
+    const conn = typeof navigator !== "undefined" ? navigator.connection : null;
+    if (conn && (conn.saveData || conn.type === "cellular" || /^(slow-2g|2g|3g)$/.test(conn.effectiveType || ""))) {
+      return undefined;
+    }
+    let cancelled = false;
+    let unsub = () => {};
+    const settle = setTimeout(() => {
+      if (cancelled) return;
+      const check = (st) => { if (!cancelled && st.pending === 0) { setNowcastPrefetchReady(true); unsub(); } };
+      unsub = subscribeTileStatus(check);
+      check(getTileStatus());
+    }, 1000);
+    return () => { cancelled = true; clearTimeout(settle); unsub(); };
+  }, [nowcastEnabled, nowcastFrameIndex, nowcastFrames]);
+  const nowcastPreloadFrames = useMemo(() => {
+    if (!nowcastPrefetchReady || !nowcastFrames || nowcastFrameIndex == null) return [];
+    const result = [];
+    for (const i of [nowcastFrameIndex - 1, nowcastFrameIndex + 1]) {
+      if (i >= 0 && i < nowcastFrames.length) result.push(nowcastFrames[i]);
+    }
+    return result;
+  }, [nowcastPrefetchReady, nowcastFrames, nowcastFrameIndex]);
   // const nowcastPreloadFrames = useMemo(() => {
   //   if (!nowcastFrames || nowcastFrameIndex == null) return [];
   //   const start = Math.max(0, nowcastFrameIndex - NOWCAST_PRELOAD_RADIUS);
@@ -374,8 +403,8 @@ export function BottomDock({
         });
     };
     fetchAndApply();
-    const intervalId = setInterval(fetchAndApply, 5 * 60 * 1000); // 5分おきに追従
-    return () => { cancelled = true; clearInterval(intervalId); };
+    const stopPolling = startVisiblePolling(fetchAndApply, 5 * 60 * 1000); // 5分おきに追従
+    return () => { cancelled = true; stopPolling(); };
   }, [precipMode]);
 
   const currentPrecipFrame =
@@ -443,8 +472,8 @@ export function BottomDock({
         });
     };
     fetchAndApply();
-    const intervalId = setInterval(fetchAndApply, 5 * 60 * 1000);
-    return () => { cancelled = true; clearInterval(intervalId); };
+    const stopPolling = startVisiblePolling(fetchAndApply, 5 * 60 * 1000);
+    return () => { cancelled = true; stopPolling(); };
   }, [wdistMode]);
 
   const currentWdistFrame =
@@ -936,8 +965,8 @@ export function BottomDock({
         });
     };
     fetchAndApply();
-    const intervalId = setInterval(fetchAndApply, 10 * 60 * 1000); // 10分おきに追従(JMAの更新周期と同じ)
-    return () => { cancelled = true; clearInterval(intervalId); };
+    const stopPolling = startVisiblePolling(fetchAndApply, 10 * 60 * 1000); // 10分おきに追従(JMAの更新周期と同じ)
+    return () => { cancelled = true; stopPolling(); };
   }, [alertLayerMode]);
 
   const currentRiskFrame =
@@ -978,8 +1007,8 @@ export function BottomDock({
         });
     };
     fetchAndApply();
-    const intervalId = setInterval(fetchAndApply, 10 * 60 * 1000); // 10分おきに追従
-    return () => { cancelled = true; clearInterval(intervalId); };
+    const stopPolling = startVisiblePolling(fetchAndApply, 10 * 60 * 1000); // 10分おきに追従
+    return () => { cancelled = true; stopPolling(); };
   }, [alertLayerMode]);
 
   useEffect(() => {

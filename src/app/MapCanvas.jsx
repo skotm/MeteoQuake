@@ -36,6 +36,28 @@ const EMPTY_LP_AREAS = [];
    世界(world.json)・都道府県(prefectures.json)をベクターとして描画する。
    外部タイル・外部スタイルサーバーには依存しない。
    ───────────────────────────────────────────────────── */
+// 気象レイヤー(コマごとにsource+layerを持つ)の保持数の上限。長時間コマ送りを
+// 続けるとキャッシュ済みコマがメモリに溜まり続けるため、表示中・先読み対象以外の
+// 古い(=先に追加された)コマから外す。外したコマに戻る時は再取得になる。
+const FRAME_LAYER_CAP = 8;
+function enforceFrameCap(map, prefix, keepKeys, cap) {
+  try {
+    const sources = Object.keys(map.getStyle()?.sources || {})
+      .filter(id => id.startsWith(`${prefix}-src-`)); // 追加順
+    let over = sources.length - cap;
+    if (over <= 0) return;
+    const keep = new Set(keepKeys.map(k => `${prefix}-src-${k}`));
+    for (const id of sources) {
+      if (over <= 0) break;
+      if (keep.has(id)) continue;
+      const layerId = id.replace(`${prefix}-src-`, `${prefix}-layer-`);
+      if (map.getLayer(layerId)) map.removeLayer(layerId);
+      map.removeSource(id);
+      over--;
+    }
+  } catch { /* ignore */ }
+}
+
 export function MapCanvas({
   onReady, stationPoints, hypocenters, isWide,
   quakeTimeStr, maxIntensityKey, estIntensityEnabled, areaFillEnabled,
@@ -2759,6 +2781,7 @@ export function MapCanvas({
         }, beforeId);
       }
     });
+    enforceFrameCap(map, "nowcast", wantedFrames.map(keyOf), FRAME_LAYER_CAP);
     // このeffectは既存レイヤーのopacity書き換え・不足分の追加だけで完結しており、
     // 依存配列の値が変わるたびに(=コマが変わるたびに)全部作り直す必要は無いので、
     // ここではクリーンアップ関数を返さない(返すとコマが変わるたびにキャッシュが
@@ -2861,6 +2884,7 @@ export function MapCanvas({
         paint: { "raster-opacity": 0.75 },
       }, beforeId);
     }
+    enforceFrameCap(map, "precip", [currentKey], FRAME_LAYER_CAP);
     // このeffectは既存レイヤーのopacity書き換え・不足分の追加だけで完結しており、
     // コマが変わるたびに全部作り直す必要は無いので、ここではクリーンアップ関数を
     // 返さない(雨雲レーダーと同じ考え方)。OFF時の後片付けは上の早期returnで、
@@ -2952,6 +2976,7 @@ export function MapCanvas({
         paint: { "raster-opacity": 0.75 },
       }, beforeId);
     }
+    enforceFrameCap(map, "wdist", [currentKey], FRAME_LAYER_CAP);
   }, [wdistVisible, wdistMode, wdistFrame?.basetime, wdistFrame?.validtime, status, wdistKnownValidtimesKey]);
 
 
@@ -3146,6 +3171,7 @@ export function MapCanvas({
         paint: { "raster-opacity": 0.8 },
       }, beforeId);
     }
+    enforceFrameCap(map, "risk", [currentKey], FRAME_LAYER_CAP);
     // このeffectは既存レイヤーのopacity書き換え・不足分の追加だけで完結しており、
     // コマが変わるたびに全部作り直す必要は無いので、ここではクリーンアップ関数を
     // 返さない(雨雲レーダー・降水量と同じ考え方)。OFF時の後片付けは上の早期returnで、

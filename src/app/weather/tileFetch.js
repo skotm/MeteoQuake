@@ -60,6 +60,7 @@ export function onTileRetry(fn) {
 export function retryAllTiles() {
   negCache.clear();
   failedAt.clear();
+  jsonCache.clear();
   emit();
   retryHandlers.forEach(fn => { try { fn(); } catch { /* ignore */ } });
 }
@@ -309,3 +310,32 @@ export function shouldSkipTile(tileUrl, z, x, y) {
   ensureCoverage(info);
   return tileOutsideCoverage(coverage.get(info.key)?.mask ?? null, z, x, y);
 }
+
+
+/* ─────────────────────────────────────────────────────
+   時刻一覧(targetTimes)など小さなJSONの共有取得。
+   同じURLへの同時要求を1本にまとめ、成功したものはTTLの間だけ使い回す
+   (機能のON/OFF連打や、複数パネルからの同時取得で同じ一覧を何度も取らないため)。
+   失敗した場合はキャッシュに残さない。タイムアウト付き。
+   ───────────────────────────────────────────────────── */
+const jsonCache = new Map(); // url -> { at, promise }
+export const JSON_TTL_MS = 60 * 1000;
+
+export function fetchJsonShared(url, { ttl = JSON_TTL_MS, timeoutMs = ATTEMPT_TIMEOUT_MS } = {}) {
+  const cur = jsonCache.get(url);
+  if (cur && Date.now() - cur.at < ttl) return cur.promise;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const promise = fetch(url, { cache: "no-store", signal: ctrl.signal })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .finally(() => clearTimeout(timer));
+  const entry = { at: Date.now(), promise };
+  jsonCache.set(url, entry);
+  promise.catch(() => { if (jsonCache.get(url) === entry) jsonCache.delete(url); });
+  return promise;
+}
+
+export function clearSharedJson() { jsonCache.clear(); }
