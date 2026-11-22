@@ -33,7 +33,7 @@ import { WeatherLocationPanel } from "./WeatherLocationPanel";
 import { startVisiblePolling } from "./visiblePolling";
 import { getTileStatus, prefetchAllowed, subscribeTileStatus } from "./weather/tileFetch";
 import { AMEDAS_ELEMENTS, buildAmedasFrames, buildAmedasGeoJson, floorToHourMs, loadAmedasFrame, loadAmedasLatestMs, loadAmedasTable } from "./weather/amedas";
-import { AmedasTimeSlider } from "./amedasUi";
+import { AmedasDetailPanel, AmedasTimeSlider } from "./amedasUi";
 import { NowcastTimeSlider, PrecipTimeSlider } from "./weatherLegends";
 
 
@@ -59,7 +59,7 @@ export function BottomDock({
   // navActive はナビ行でハイライトするタブ(リアルタイムでも"quake")。
   // quakeViewMode("realtime" | "search")はApp側で保持する。
   // 気象タブ(雨雲レーダー・降水量・天気分布・台風・地点の天気予報)用。App側(地図レイヤー)へ伝えるコールバック。
-  onCurrentLocationChange, onNowcastChange, onPrecipChange, onWdistChange, onAmedasChange, onTyphoonChange,
+  onCurrentLocationChange, onNowcastChange, onPrecipChange, onWdistChange, onAmedasChange, selectedAmedasStation = null, onClearAmedasStation, onTyphoonChange,
   onSelectTyphoon, selectedTyphoonInfo, onClearSelectedTyphoon, onSelectTyphoonDetail,
   // 警報タブ(警報・注意報、キキクル、河川水位)用。
   warningLevelMap = {}, warningAreaByRegioncode = {}, selectedWarningArea, onSelectWarningAreaFromList, onBackFromWarningArea,
@@ -1701,6 +1701,25 @@ export function BottomDock({
     prevTyphoonDetailKeyRef.current = typhoonDetailKey;
   }, [typhoonDetailKey]);
 
+  // アメダス観測点をタップした瞬間、フローティングが閉じていたら(または小さければ)
+  // 「中中」まで開いて詳細を見せる。すでに十分高い時は高さを変えない。
+  // 選択が別の観測点に変わっただけの時も高さは変えない(「未選択→選択」の時だけ)。
+  const amedasSelectedCode = selectedAmedasStation?.station?.code ?? null;
+  const prevAmedasCodeRef = useRef(amedasSelectedCode);
+  useEffect(() => {
+    if (amedasSelectedCode && !prevAmedasCodeRef.current && snapIndex < 2) {
+      killScrollMomentum();
+      setSnapIndex(2);
+      openedByTapRef.current = true;
+    }
+    prevAmedasCodeRef.current = amedasSelectedCode;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [amedasSelectedCode]);
+  // フローティングを完全に閉じたら、観測点の選択も解除する(台風と同じ)。
+  useEffect(() => {
+    if (snapIndex === 0 && amedasSelectedCode) onClearAmedasStation?.();
+  }, [snapIndex, amedasSelectedCode, onClearAmedasStation]);
+
   // フローティングが完全に閉じられたら(snapIndex===0)、台風の詳細選択も解除する。
   useEffect(() => {
     if (snapIndex === 0 && selectedTyphoonInfo != null) {
@@ -3187,7 +3206,15 @@ export function BottomDock({
               </>
             ) : active === "weather" ? (
               <>
-                {typhoonEnabled ? (
+                {selectedAmedasStation?.station ? (
+                  <AmedasDetailPanel
+                    station={selectedAmedasStation.station}
+                    entry={selectedAmedasStation.entry}
+                    timeMs={selectedAmedasStation.timeMs}
+                    latestMs={selectedAmedasStation.latestMs}
+                    onClose={onClearAmedasStation}
+                  />
+                ) : typhoonEnabled ? (
                   selectedTyphoonInfo ? (
                     <TyphoonDetailCard
                       info={selectedTyphoonInfo}
