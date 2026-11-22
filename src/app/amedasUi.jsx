@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState } from "react";
-import { Glass, PressableButton } from "./glass";
+import { Glass } from "./glass";
 import { ThemeContext } from "./theme";
 import {
   AMEDAS_ELEMENTS, amedasDateTimeLabel, amedasTimeLabel, buildAmedasDetailRows,
@@ -9,9 +9,9 @@ import {
 /* ─────────────────────────────────────────────────────
    アメダスの時刻スライダー(直近3時間・10分刻み)。連続再生は付けない。
    frames: 古い→新しい(最後が最新)。frameIndex: 表示中のコマ。
-   過去を見ている間は時刻を強調し、「現在に戻る」を出す。
+   過去を見ている間は時刻をオレンジにする(最新へはスライダーを右端へ)。
    ───────────────────────────────────────────────────── */
-export function AmedasTimeSlider({ frames, frameIndex, onChangeFrameIndex, onBackToLatest, loading = false, missing = false }) {
+export function AmedasTimeSlider({ frames, frameIndex, onChangeFrameIndex, hourly = false, loading = false, missing = false }) {
   const { tokens } = useContext(ThemeContext);
   if (!frames || frames.length === 0) return null;
   const last = frames.length - 1;
@@ -29,7 +29,7 @@ export function AmedasTimeSlider({ frames, frameIndex, onChangeFrameIndex, onBac
             {amedasTimeLabel(frame.timeMs)}
           </div>
           <div style={{ fontSize: 9.5, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>
-            {missing ? "データなし" : loading ? "読み込み中…" : isLatest ? "最新" : `${(last - idx) * 10}分前`}
+            {missing ? "データなし" : loading ? "読み込み中…" : isLatest ? (hourly ? "最新(毎正時)" : "最新") : `${Math.round((frames[last].timeMs - frame.timeMs) / 60000)}分前`}
           </div>
         </div>
         <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
@@ -43,7 +43,7 @@ export function AmedasTimeSlider({ frames, frameIndex, onChangeFrameIndex, onBac
           <div style={{ position: "absolute", left: 5, right: 5, top: "50%", transform: "translateY(-50%)", height: 22, pointerEvents: "none" }}>
             {frames.map((f, i) => {
               const pct = last > 0 ? (i / last) * 100 : 0;
-              const hour = (last - i) % 6 === 0; // 1時間ごと
+              const hour = f.timeMs % 3600000 === 0; // 正時
               return (
                 <div key={f.validtime} style={{
                   position: "absolute", left: `${pct}%`, top: 0, transform: "translateX(-50%)",
@@ -60,15 +60,6 @@ export function AmedasTimeSlider({ frames, frameIndex, onChangeFrameIndex, onBac
             style={{ position: "relative", display: "block", width: "100%" }}
           />
         </div>
-        {!isLatest && (
-          <PressableButton
-            onClick={onBackToLatest}
-            style={{
-              flexShrink: 0, padding: "5px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700,
-              color: tokens.text, background: `rgba(${tokens.ink},0.12)`, whiteSpace: "nowrap",
-            }}
-          >現在に戻る</PressableButton>
-        )}
       </div>
     </Glass>
   );
@@ -82,19 +73,22 @@ export function AmedasLegend({ elementId }) {
   const { tokens } = useContext(ThemeContext);
   const el = AMEDAS_ELEMENTS[elementId];
   if (!el) return null;
-  const lo = el.stops[0][0], hi = el.stops[el.stops.length - 1][0];
-  const gradient = `linear-gradient(to top, ${el.stops.map(([v, c]) => `${c} ${((v - lo) / (hi - lo)) * 100}%`).join(", ")})`;
-  const BAR_H = 120;
+  // 色の区切り(stops)を等間隔に並べる。値で線形に配置すると、0〜10のように
+  // 小さい値が固まる要素(降水量・積雪)で目盛りの文字が重なるため。
+  const n = el.stops.length;
+  const pos = (i) => (i / (n - 1)) * 100;
+  const gradient = `linear-gradient(to top, ${el.stops.map(([, c], i) => `${c} ${pos(i)}%`).join(", ")})`;
+  const BAR_H = Math.max(110, (n - 1) * 20);
   return (
-    <Glass radius={12} style={{ width: "fit-content" }}>
+    <Glass radius={12} style={{ width: "fit-content", flexShrink: 0 }}>
       <div style={{ padding: "8px 10px", fontSize: 10.5, color: tokens.text }}>
         <div style={{ fontWeight: 700, marginBottom: 6, whiteSpace: "nowrap" }}>{el.label} <span style={{ opacity: 0.6, fontWeight: 600 }}>{el.unit}</span></div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <div style={{ width: 10, height: BAR_H, borderRadius: 3, background: gradient, border: `0.5px solid rgba(${tokens.ink},0.3)` }}/>
-          <div style={{ position: "relative", height: BAR_H, width: 28, fontVariantNumeric: "tabular-nums" }}>
-            {el.legend.map(v => (
+        <div style={{ display: "flex", gap: 6, padding: "6px 0" }}>
+          <div style={{ width: 10, height: BAR_H, flexShrink: 0, borderRadius: 3, background: gradient, border: `0.5px solid rgba(${tokens.ink},0.3)` }}/>
+          <div style={{ position: "relative", height: BAR_H, minWidth: 24, fontVariantNumeric: "tabular-nums" }}>
+            {el.stops.map(([v], i) => (
               <span key={v} style={{
-                position: "absolute", left: 0, bottom: `${((v - lo) / (hi - lo)) * 100}%`,
+                position: "absolute", left: 0, bottom: `${pos(i)}%`,
                 transform: "translateY(50%)", whiteSpace: "nowrap", lineHeight: 1,
               }}>{v}</span>
             ))}

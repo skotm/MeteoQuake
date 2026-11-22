@@ -32,7 +32,7 @@ import { TyphoonDetailCard, TyphoonListPanel } from "./TyphoonPanel";
 import { WeatherLocationPanel } from "./WeatherLocationPanel";
 import { startVisiblePolling } from "./visiblePolling";
 import { getTileStatus, prefetchAllowed, subscribeTileStatus } from "./weather/tileFetch";
-import { AMEDAS_ELEMENTS, buildAmedasFrames, buildAmedasGeoJson, loadAmedasFrame, loadAmedasLatestMs, loadAmedasTable } from "./weather/amedas";
+import { AMEDAS_ELEMENTS, buildAmedasFrames, buildAmedasGeoJson, floorToHourMs, loadAmedasFrame, loadAmedasLatestMs, loadAmedasTable } from "./weather/amedas";
 import { AmedasTimeSlider } from "./amedasUi";
 import { NowcastTimeSlider, PrecipTimeSlider } from "./weatherLegends";
 
@@ -872,16 +872,24 @@ export function BottomDock({
     return () => { cancelled = true; stop(); };
   }, [amedasActive]);
 
-  const amedasFrames = useMemo(() => buildAmedasFrames(amedasLatestMs), [amedasLatestMs]);
-  // 表示する時刻。過去に固定していて、最新が進んで範囲(3時間)から外れたら一番古いコマに寄せる。
+  // 積雪など毎正時にしか値が無い要素は、スライダーも正時のコマだけにする。
+  const amedasHourly = !!AMEDAS_ELEMENTS[amedasElement]?.hourlyOnly;
+  const amedasFrames = useMemo(() => {
+    const all = buildAmedasFrames(amedasLatestMs);
+    return amedasHourly ? all.filter(f => f.timeMs % 3600000 === 0) : all;
+  }, [amedasLatestMs, amedasHourly]);
+  const amedasStepMs = amedasHourly ? 3600000 : 600000;
+  // 表示する時刻。範囲(3時間)から外れたら端のコマに寄せる。最新に追従中は最後のコマ。
   const amedasViewTimeMs = useMemo(() => {
     if (amedasFrames.length === 0) return null;
     const oldest = amedasFrames[0].timeMs;
-    if (amedasViewMs == null) return amedasLatestMs;
-    return Math.min(amedasLatestMs, Math.max(oldest, amedasViewMs));
-  }, [amedasFrames, amedasLatestMs, amedasViewMs]);
+    const newest = amedasFrames[amedasFrames.length - 1].timeMs;
+    if (amedasViewMs == null) return newest;
+    const base = amedasHourly ? floorToHourMs(amedasViewMs) : amedasViewMs;
+    return Math.min(newest, Math.max(oldest, base));
+  }, [amedasFrames, amedasViewMs, amedasHourly]);
   const amedasFrameIndex = amedasViewTimeMs == null ? 0
-    : Math.round((amedasViewTimeMs - amedasFrames[0].timeMs) / (10 * 60 * 1000));
+    : Math.max(0, amedasFrames.findIndex(f => f.timeMs === amedasViewTimeMs));
   const handleAmedasFrameIndex = useCallback((idx) => {
     if (amedasFrames.length === 0) return;
     setAmedasViewMs(idx >= amedasFrames.length - 1 ? null : amedasFrames[idx].timeMs);
@@ -905,10 +913,10 @@ export function BottomDock({
           if (data == null) {
             // 公開直後などで一時的に無いこともあるので、30秒後に1回取り直す
             retryTimer = setTimeout(() => setAmedasRetryTick(n => n + 1), 30000);
-          } else if (prefetchAllowed()) {
+          } else if (prefetchAllowed() && !AMEDAS_ELEMENTS[amedasElement]?.hourlyOnly) {
             // 落ち着いてから前後1コマだけ先読みする
-            [timeMs - 600000, timeMs + 600000].forEach(ms => {
-              if (ms >= amedasFrames[0].timeMs && ms <= amedasLatestMs) loadAmedasFrame(ms).catch(() => {});
+            [timeMs - amedasStepMs, timeMs + amedasStepMs].forEach(ms => {
+              if (ms >= amedasFrames[0].timeMs && ms <= amedasFrames[amedasFrames.length - 1].timeMs) loadAmedasFrame(ms).catch(() => {});
             });
           }
         })
@@ -955,7 +963,7 @@ export function BottomDock({
       frames={amedasFrames}
       frameIndex={amedasFrameIndex}
       onChangeFrameIndex={handleAmedasFrameIndex}
-      onBackToLatest={() => setAmedasViewMs(null)}
+      hourly={amedasHourly}
       loading={amedasLoading}
       missing={amedasMissing}
     />

@@ -100,6 +100,7 @@ export const AMEDAS_ELEMENTS = {
   },
   snow: {
     id: "snow", key: "snow", label: "積雪", unit: "cm", decimals: 0,
+    hourlyOnly: true, // 毎時00分のコマにしか値が無い(10分コマには含まれない)
     stops: [[0, "#eef2f6"], [1, "#b3e5fc"], [10, "#4fc3f7"], [30, "#1976d2"], [100, "#6a1b9a"], [200, "#311b92"]],
     legend: [0, 10, 30, 100, 200],
     priority: (v) => v,
@@ -265,6 +266,9 @@ export function loadAmedasFrame(timeMs, { cacheable = true } = {}) {
   }
   return p;
 }
+
+// 毎正時にしか値が無い要素用: 時刻を正時に切り下げる
+export function floorToHourMs(ms) { return Math.floor(ms / 3600000) * 3600000; }
 
 export function clearAmedasFrameCache() { frameCache.clear(); }
 
