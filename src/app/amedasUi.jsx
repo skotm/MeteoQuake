@@ -2,7 +2,7 @@ import { useContext, useEffect, useRef, useState } from "react";
 import { Glass } from "./glass";
 import { ThemeContext } from "./theme";
 import {
-  AMEDAS_ELEMENTS, amedasDateTimeLabel, amedasTimeLabel, buildAmedasDetailRows,
+  AMEDAS_ELEMENTS, amedasDateTimeLabel, amedasTimeLabel, buildAmedasDetailModel,
   formatAmedasValue, loadAmedasSeries,
 } from "./weather/amedas";
 
@@ -69,6 +69,8 @@ export function AmedasTimeSlider({ frames, frameIndex, onChangeFrameIndex, hourl
 /* ─────────────────────────────────────────────────────
    凡例(縦のカラーバー)。他の気象凡例と同じ右上に出す。
    ───────────────────────────────────────────────────── */
+// 要素によらず同じ横幅(題名は短い名前+単位の2行にして、長い題名で幅が変わらないようにする)。
+export const AMEDAS_LEGEND_WIDTH = 68;
 export function AmedasLegend({ elementId }) {
   const { tokens } = useContext(ThemeContext);
   const el = AMEDAS_ELEMENTS[elementId];
@@ -80,14 +82,15 @@ export function AmedasLegend({ elementId }) {
   const gradient = `linear-gradient(to top, ${el.stops.map(([, c], i) => `${c} ${pos(i)}%`).join(", ")})`;
   const BAR_H = Math.max(110, (n - 1) * 20);
   return (
-    <Glass radius={12} style={{ width: "fit-content", flexShrink: 0 }}>
-      <div style={{ padding: "8px 10px", fontSize: 10.5, color: tokens.text }}>
-        <div style={{ fontWeight: 700, marginBottom: 6, whiteSpace: "nowrap" }}>{el.label} <span style={{ opacity: 0.6, fontWeight: 600 }}>{el.unit}</span></div>
+    <Glass radius={12} style={{ width: AMEDAS_LEGEND_WIDTH, flexShrink: 0 }}>
+      <div style={{ padding: "8px 8px", boxSizing: "border-box", width: AMEDAS_LEGEND_WIDTH, fontSize: 10.5, color: tokens.text }}>
+        <div style={{ fontWeight: 800, lineHeight: 1.15, whiteSpace: "nowrap" }}>{el.legendTitle || el.label}</div>
+        <div style={{ fontSize: 9.5, fontWeight: 600, lineHeight: 1.2, opacity: 0.6, marginBottom: 6, whiteSpace: "nowrap" }}>{el.unit}</div>
         <div style={{ display: "flex", gap: 6, padding: "6px 0" }}>
           <div style={{ width: 10, height: BAR_H, flexShrink: 0, borderRadius: 3, background: gradient, border: `0.5px solid rgba(${tokens.ink},0.3)` }}/>
-          <div style={{ position: "relative", height: BAR_H, minWidth: 24, fontVariantNumeric: "tabular-nums" }}>
+          <div style={{ position: "relative", height: BAR_H, flex: 1, minWidth: 0, fontVariantNumeric: "tabular-nums" }}>
             {el.stops.map(([v], i) => (
-              <span key={v} style={{
+              <span key={i} style={{
                 position: "absolute", left: 0, bottom: `${pos(i)}%`,
                 transform: "translateY(50%)", whiteSpace: "nowrap", lineHeight: 1,
               }}>{v}</span>
@@ -106,7 +109,7 @@ export function AmedasLegend({ elementId }) {
    グラフは、タッチ/カーソルで動かした位置の時刻と値を読み取れる。3つのグラフで
    位置を共有する(同じ時刻の気温・降水量・風速を同時に見られる)。
    ───────────────────────────────────────────────────── */
-const CHART_W = 300, CHART_H = 76, CHART_PAD = 6;
+const CHART_W = 300, CHART_H = 58, CHART_PAD = 6, AXIS_H = 12;
 
 function MiniChart({ title, unit, decimals = 1, rows, pick, kind, color, tokens, hoverIdx, onHover }) {
   const svgRef = useRef(null);
@@ -119,10 +122,12 @@ function MiniChart({ title, unit, decimals = 1, rows, pick, kind, color, tokens,
   }
   let min = Math.min(...vals), max = Math.max(...vals);
   if (kind === "bar") min = 0;
+  const allZeroBar = kind === "bar" && max === 0;
   if (max === min) max = min + 1;
   const t0 = pts[0].t, t1 = pts[pts.length - 1].t > t0 ? pts[pts.length - 1].t : t0 + 1;
   const x = (t) => CHART_PAD + ((t - t0) / (t1 - t0)) * (CHART_W - CHART_PAD * 2);
   const y = (v) => CHART_H - CHART_PAD - ((v - min) / (max - min)) * (CHART_H - CHART_PAD * 2);
+  const TOTAL_H = CHART_H + AXIS_H;
   const bw = Math.max(3, (CHART_W - CHART_PAD * 2) / Math.max(1, pts.length) - 2);
   let path = "";
   let pen = false; // 欠測をはさんだら線を切る
@@ -145,18 +150,18 @@ function MiniChart({ title, unit, decimals = 1, rows, pick, kind, color, tokens,
   const handle = (e) => { const i = pickIdx(e); if (i != null) onHover(i); };
 
   return (
-    <div style={{ marginTop: 10 }}>
+    <div style={{ marginTop: 8 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 11, marginBottom: 3 }}>
         <span style={{ fontWeight: 700, color: tokens.text }}>{title}</span>
         <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: hp ? 800 : 500, color: hp ? tokens.text : `rgba(${tokens.ink},0.6)` }}>
           {hp
             ? `${amedasTimeLabel(hp.t)}  ${hp.v == null ? "--" : formatAmedasValue(hp.v, decimals)}${hp.v == null ? "" : unit}`
-            : `${formatAmedasValue(min, decimals)}〜${formatAmedasValue(max, decimals)}${unit}`}
+            : allZeroBar ? "降水なし" : `${formatAmedasValue(min, decimals)}〜${formatAmedasValue(max, decimals)}${unit}`}
         </span>
       </div>
       <svg
         ref={svgRef}
-        viewBox={`0 0 ${CHART_W} ${CHART_H}`} width="100%" style={{ display: "block", background: `rgba(${tokens.ink},0.05)`, borderRadius: 8, touchAction: "pan-y", cursor: "crosshair" }}
+        viewBox={`0 0 ${CHART_W} ${TOTAL_H}`} width="100%" style={{ display: "block", background: `rgba(${tokens.ink},0.05)`, borderRadius: 8, touchAction: "pan-y", cursor: "crosshair" }}
         onPointerDown={(e) => { e.stopPropagation(); handle(e); }}
         onPointerMove={handle}
       >
@@ -165,6 +170,8 @@ function MiniChart({ title, unit, decimals = 1, rows, pick, kind, color, tokens,
               <rect key={i} x={x(p.t) - bw / 2} y={y(p.v)} width={bw} height={Math.max(0, CHART_H - CHART_PAD - y(p.v))} fill={color} opacity={hoverIdx == null || hoverIdx === i ? 1 : 0.55} rx="1.5"/>
             ))
           : <path d={path} fill="none" stroke={color} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"/>}
+        <text x={CHART_PAD} y={TOTAL_H - 2} fontSize="8.5" fill={`rgba(${tokens.ink},0.5)`}>{amedasTimeLabel(t0)}</text>
+        <text x={CHART_W - CHART_PAD} y={TOTAL_H - 2} fontSize="8.5" textAnchor="end" fill={`rgba(${tokens.ink},0.5)`}>{amedasTimeLabel(t1)}</text>
         {hp && (
           <>
             <line x1={x(hp.t)} x2={x(hp.t)} y1={0} y2={CHART_H} stroke={`rgba(${tokens.ink},0.45)`} strokeWidth="1" strokeDasharray="3 3"/>
@@ -174,6 +181,30 @@ function MiniChart({ title, unit, decimals = 1, rows, pick, kind, color, tokens,
       </svg>
     </div>
   );
+}
+
+function WindMark({ rot, color }) {
+  // 風が吹いていく向きの矢印(静穏/不明は丸)
+  return (
+    <svg width="22" height="22" viewBox="-11 -11 22 22" aria-hidden="true" style={{ flexShrink: 0 }}>
+      {rot == null
+        ? <circle r="3.5" fill="none" stroke={color} strokeWidth="1.6"/>
+        : <path transform={`rotate(${rot})`} d="M0,-9 L5.5,6 L0,3 L-5.5,6 Z" fill={color}/>}
+    </svg>
+  );
+}
+
+function Tile({ label, text, tokens, small = false }) {
+  return (
+    <div style={{ background: `rgba(${tokens.ink},0.06)`, borderRadius: 10, padding: "7px 10px", minWidth: 0 }}>
+      <div style={{ fontSize: 10.5, color: `rgba(${tokens.ink},0.58)`, whiteSpace: "nowrap" }}>{label}</div>
+      <div style={{ fontSize: small ? 14 : 15, fontWeight: 800, fontVariantNumeric: "tabular-nums", marginTop: 1, whiteSpace: "nowrap" }}>{text}</div>
+    </div>
+  );
+}
+
+function SectionLabel({ children, tokens }) {
+  return <div style={{ margin: "14px 0 6px", fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.55)` }}>{children}</div>;
 }
 
 export function AmedasDetailPanel({ station, entry, timeMs, latestMs, onClose }) {
@@ -193,34 +224,67 @@ export function AmedasDetailPanel({ station, entry, timeMs, latestMs, onClose })
   }, [code, latestMs]);
 
   if (!station) return null;
-  const rows = buildAmedasDetailRows(entry);
+  const m = buildAmedasDetailModel(entry);
   const chartProps = { rows: series || [], tokens, hoverIdx, onHover: setHoverIdx };
   return (
-    <div style={{ color: tokens.text, padding: "2px 2px 8px" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+    <div style={{ color: tokens.text, padding: "0 2px 10px", textAlign: "left" }}>
+      {/* 見出し: 左寄せ。観測点名と観測時刻、右に閉じるボタン */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 17, fontWeight: 800, lineHeight: 1.2 }}>{station.name}</div>
+          <div style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{station.name}</div>
           <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, marginTop: 3 }}>
             アメダス {station.code} ・ {amedasDateTimeLabel(timeMs)} 観測
           </div>
         </div>
         <button onClick={onClose} aria-label="閉じる" style={{
-          flexShrink: 0, width: 28, height: 28, borderRadius: 999, color: tokens.text,
+          flexShrink: 0, width: 30, height: 30, borderRadius: 999, color: tokens.text,
           background: `rgba(${tokens.ink},0.1)`, fontSize: 16, lineHeight: 1,
         }}>×</button>
       </div>
-      <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 14px", fontSize: 13 }}>
-        {rows.length === 0 && <span style={{ gridColumn: "1 / -1", opacity: 0.6 }}>この時刻の観測値はありません</span>}
-        {rows.map(r => (
-          <span key={r.label} style={{ display: "contents" }}>
-            <span style={{ color: `rgba(${tokens.ink},0.6)` }}>{r.label}</span>
-            <span style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums", textAlign: "right" }}>{r.text}</span>
-          </span>
-        ))}
-      </div>
-      <div style={{ marginTop: 14, fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.55)` }}>
-        直近3時間の推移 <span style={{ fontWeight: 500 }}>(グラフをなぞると値を確認できます)</span>
-      </div>
+
+      {!m && <div style={{ marginTop: 12, fontSize: 12, opacity: 0.6 }}>この時刻の観測値はありません</div>}
+
+      {/* 主役: 気温と風 */}
+      {m && (m.temp || m.wind) && (
+        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, marginTop: 12 }}>
+          {m.temp && (
+            <div>
+              <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.58)` }}>気温</div>
+              <div style={{ fontSize: 38, fontWeight: 800, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>{m.temp.text}</div>
+            </div>
+          )}
+          {m.wind && (
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.58)` }}>風{m.wind.dirName ? `(${m.wind.dirName})` : ""}</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6 }}>
+                <WindMark rot={m.wind.rot} color="#26a69a"/>
+                <span style={{ fontSize: 24, fontWeight: 800, lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>{m.wind.speedText}</span>
+              </div>
+              {m.gust && <div style={{ fontSize: 10.5, color: `rgba(${tokens.ink},0.55)`, marginTop: 1 }}>最大瞬間 {m.gust.dirName ? m.gust.dirName + " " : ""}{m.gust.text}</div>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {m && m.precip.length > 0 && (
+        <>
+          <SectionLabel tokens={tokens}>降水量</SectionLabel>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${m.precip.length}, minmax(0, 1fr))`, gap: 6 }}>
+            {m.precip.map(r => <Tile key={r.label} label={r.label} text={r.text} tokens={tokens} small/>)}
+          </div>
+        </>
+      )}
+
+      {m && m.others.length > 0 && (
+        <>
+          <SectionLabel tokens={tokens}>その他</SectionLabel>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))", gap: 6 }}>
+            {m.others.map(r => <Tile key={r.label} label={r.label} text={r.text} tokens={tokens}/>)}
+          </div>
+        </>
+      )}
+
+      <SectionLabel tokens={tokens}>直近3時間の推移 <span style={{ fontWeight: 500 }}>(なぞると値を確認できます)</span></SectionLabel>
       {series == null && <div style={{ fontSize: 12, opacity: 0.6, padding: "8px 0" }}>読み込み中…</div>}
       {series && series.length === 0 && <div style={{ fontSize: 12, opacity: 0.6, padding: "8px 0" }}>推移データを取得できませんでした</div>}
       {series && series.length > 0 && (
