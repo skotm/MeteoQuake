@@ -123,3 +123,18 @@ test("詳細行: 観測している要素だけ", () => {
   assert.equal(rows[1].text, "北 3.2m/s");
   assert.equal(rows[2].text, "--");
 });
+
+test("詳細モデル: 主役・降水・風・その他に分け、未観測は含めない", () => {
+  const m = A.buildAmedasDetailModel({
+    temp: [6.44, 0], precipitation10m: [0, 0], precipitation1h: [0, 0], wind: [1.0, 0], windDirection: [14, 0],
+    humidity: [58, 0], sun1h: [0, 0],
+  });
+  assert.equal(m.temp.text, "6.4℃");
+  assert.deepEqual(m.precip.map((r: any) => r.label), ["10分", "1時間"]);
+  assert.equal(m.wind.dirName, "北西");
+  assert.equal(m.wind.speedText, "1.0m/s");
+  assert.equal(m.gust, null);
+  assert.deepEqual(m.others.map((r: any) => r.label), ["湿度", "日照(1時間)"]);
+  assert.equal(A.buildAmedasDetailModel(null), null);
+  assert.equal(A.buildAmedasDetailModel({ wind: [null, 0] }).wind.speedText, "--");
+});

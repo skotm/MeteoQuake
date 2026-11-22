@@ -74,39 +74,39 @@ export function buildAmedasFrames(latestMs) {
 // stops: [値, 色] の昇順。範囲外は端の色。
 export const AMEDAS_ELEMENTS = {
   temp: {
-    id: "temp", key: "temp", label: "気温", unit: "℃", decimals: 1,
+    id: "temp", legendTitle: "気温", key: "temp", label: "気温", unit: "℃", decimals: 1,
     stops: [[-15, "#1a237e"], [-5, "#1976d2"], [0, "#4fc3f7"], [10, "#a5d6a7"], [20, "#fff59d"], [25, "#ffb74d"], [30, "#ff7043"], [35, "#d32f2f"], [40, "#6a1b9a"]],
     legend: [-10, 0, 10, 20, 30, 35],
     priority: (v) => -Math.abs(v - 15), // 極端な値を優先して表示
   },
   precip: {
-    id: "precip", key: "precipitation1h", label: "降水量(1時間)", unit: "mm", decimals: 1,
+    id: "precip", legendTitle: "降水1h", key: "precipitation1h", label: "降水量(1時間)", unit: "mm", decimals: 1,
     stops: [[0, "#eef2f6"], [1, "#a0d2ff"], [5, "#2196f3"], [10, "#ffeb3b"], [20, "#ff9800"], [30, "#f44336"], [50, "#9c27b0"], [80, "#6a0080"]],
     legend: [0, 1, 5, 10, 20, 30, 50],
     priority: (v) => v,
   },
   wind: {
-    id: "wind", key: "wind", label: "風速", unit: "m/s", decimals: 1,
+    id: "wind", legendTitle: "風速", key: "wind", label: "風速", unit: "m/s", decimals: 1,
     stops: [[0, "#eef2f6"], [3, "#b3e5fc"], [6, "#4fc3f7"], [10, "#ffeb3b"], [15, "#ff9800"], [20, "#f44336"], [30, "#6a0080"]],
     legend: [0, 3, 6, 10, 15, 20],
     priority: (v) => v,
     hasDirection: true,
   },
   humidity: {
-    id: "humidity", key: "humidity", label: "湿度", unit: "%", decimals: 0,
+    id: "humidity", legendTitle: "湿度", key: "humidity", label: "湿度", unit: "%", decimals: 0,
     stops: [[0, "#ffb74d"], [30, "#fff176"], [50, "#c5e1a5"], [70, "#81d4fa"], [100, "#1976d2"]],
     legend: [20, 40, 60, 80, 100],
     priority: (v) => -Math.abs(v - 60),
   },
   snow: {
-    id: "snow", key: "snow", label: "積雪", unit: "cm", decimals: 0,
+    id: "snow", legendTitle: "積雪", key: "snow", label: "積雪", unit: "cm", decimals: 0,
     hourlyOnly: true, // 毎時00分のコマにしか値が無い(10分コマには含まれない)
     stops: [[0, "#eef2f6"], [1, "#b3e5fc"], [10, "#4fc3f7"], [30, "#1976d2"], [100, "#6a1b9a"], [200, "#311b92"]],
     legend: [0, 10, 30, 100, 200],
     priority: (v) => v,
   },
   sun: {
-    id: "sun", key: "sun1h", label: "日照(1時間)", unit: "h", decimals: 1,
+    id: "sun", legendTitle: "日照1h", key: "sun1h", label: "日照(1時間)", unit: "h", decimals: 1,
     stops: [[0, "#cfd8dc"], [0.5, "#fff59d"], [1, "#ffb300"]],
     legend: [0, 0.5, 1],
     priority: (v) => v,
@@ -346,4 +346,33 @@ export function buildAmedasDetailRows(entry) {
   add("最高気温", "maxTemp", "℃", 1);
   add("最低気温", "minTemp", "℃", 1);
   return rows;
+}
+
+
+/* ───────────── 詳細パネル用のまとまり ───────────── */
+// 観測点の最新値を「主役(気温)・降水・風・その他」に分けて返す。観測していない項目は含めない。
+export function buildAmedasDetailModel(entry) {
+  if (!entry) return null;
+  const txt = (key, unit, d) => (amedasObserves(entry, key) ? { has: true, v: amedasPick(entry, key), text: (() => { const v = amedasPick(entry, key); return v == null ? "--" : `${formatAmedasValue(v, d)}${unit}`; })() } : { has: false });
+  const temp = txt("temp", "℃", 1);
+  const precip = [
+    ["10分", "precipitation10m"], ["1時間", "precipitation1h"], ["3時間", "precipitation3h"], ["24時間", "precipitation24h"],
+  ].map(([label, key]) => ({ label, ...txt(key, "mm", 1) })).filter(r => r.has);
+  let wind = null;
+  if (amedasObserves(entry, "wind")) {
+    const w = amedasPick(entry, "wind");
+    const idx = amedasPick(entry, "windDirection");
+    wind = { speed: w, speedText: w == null ? "--" : `${formatAmedasValue(w, 1)}m/s`, dirName: windDirName(idx), rot: windArrowRotation(idx) };
+  }
+  let gust = null;
+  if (amedasObserves(entry, "gust")) {
+    const g = amedasPick(entry, "gust");
+    const dn = windDirName(amedasPick(entry, "gustDirection"));
+    gust = { text: g == null ? "--" : `${formatAmedasValue(g, 1)}m/s`, dirName: dn };
+  }
+  const others = [
+    ["湿度", "humidity", "%", 0], ["気圧", "pressure", "hPa", 1], ["日照(1時間)", "sun1h", "h", 1],
+    ["積雪", "snow", "cm", 0], ["最高気温", "maxTemp", "℃", 1], ["最低気温", "minTemp", "℃", 1],
+  ].map(([label, key, unit, d]) => ({ label, ...txt(key, unit, d) })).filter(r => r.has);
+  return { temp: temp.has ? temp : null, precip, wind, gust, others };
 }
