@@ -53,7 +53,7 @@ import { LongPeriodLegend, QuakeIntensityLegend, RealtimeIntensityThresholdBar, 
 import { CORNER_TAB_ATTACHED_RADIUS, CORNER_TAB_RIM_CLIP_WIDE, CORNER_TAB_STACK_HEIGHT, CornerTabButtons, CornerTabFillet, SideNavRail, WIDE_PANEL_RADIUS_ATTACHED, WIDE_RAIL_WIDTH, widePanelRimClip } from "./app/navUi";
 import { NowcastColorSchemeContext, loadStoredNowcastColorScheme, saveNowcastColorScheme } from "./app/weather/nowcast";
 import { NowcastLegend, PrecipLegend, RiskLegend, RiverLegend, WarningLegend, WdistLegend } from "./app/weatherLegends";
-import { AmedasDetailCard, AmedasLegend } from "./app/amedasUi";
+import { AmedasLegend } from "./app/amedasUi";
 import { fetchWarningLevelMap_combined, loadWarningAreaNameIndex } from "./app/warnings";
 import { BottomDock } from "./app/BottomDock";
 
@@ -2185,6 +2185,17 @@ export default function App() {
   const [selectedAmedasCode, setSelectedAmedasCode] = useState(null);
   const handleAmedasChange = useCallback((payload) => setAmedas(payload), []);
   const handleSelectAmedasStation = useCallback((code) => setSelectedAmedasCode(code), []);
+  const selectedAmedasStation = useMemo(() => (
+    amedas?.elementId && selectedAmedasCode && amedas.table?.[selectedAmedasCode]
+      ? {
+          station: amedas.table[selectedAmedasCode],
+          entry: amedas.data?.[selectedAmedasCode] ?? null,
+          timeMs: amedas.timeMs,
+          latestMs: amedas.latestMs,
+        }
+      : null
+  ), [amedas, selectedAmedasCode]);
+  const handleClearAmedasStation = useCallback(() => setSelectedAmedasCode(null), []);
   useEffect(() => {
     if (!amedas || !amedas.elementId) setSelectedAmedasCode(null);
   }, [amedas]);
@@ -3521,8 +3532,8 @@ export default function App() {
           </div>
         )}
 
-        {/* アメダスの凡例と観測点の詳細カード — 右上に縦に並べる。雨雲レーダーと併用中は
-            レーダー凡例の下に出す。 */}
+        {/* アメダスの凡例 — 右上。雨雲レーダーと併用中はレーダー凡例の下に出す。
+            観測点の詳細は下のフローティング(BottomDock)に出す。 */}
         {activeNav === "weather" && amedas?.elementId && (
           <div style={{
             position: "absolute",
@@ -3533,15 +3544,6 @@ export default function App() {
             maxWidth: "calc(100% - 32px)",
           }}>
             <AmedasLegend elementId={amedas.elementId}/>
-            {selectedAmedasCode && amedas.table?.[selectedAmedasCode] && (
-              <AmedasDetailCard
-                station={amedas.table[selectedAmedasCode]}
-                entry={amedas.data?.[selectedAmedasCode] ?? null}
-                timeMs={amedas.timeMs}
-                latestMs={amedas.latestMs}
-                onClose={() => setSelectedAmedasCode(null)}
-              />
-            )}
           </div>
         )}
 
@@ -3903,6 +3905,8 @@ export default function App() {
                       onPrecipChange={handlePrecipChange}
                       onWdistChange={handleWdistChange}
                       onAmedasChange={handleAmedasChange}
+                      selectedAmedasStation={selectedAmedasStation}
+                      onClearAmedasStation={handleClearAmedasStation}
                       onTyphoonChange={handleTyphoonChange}
                       onSelectTyphoon={handleSelectTyphoon}
                       selectedTyphoonInfo={selectedTyphoonInfo}
@@ -4095,6 +4099,8 @@ export default function App() {
               onPrecipChange={handlePrecipChange}
               onWdistChange={handleWdistChange}
                       onAmedasChange={handleAmedasChange}
+                      selectedAmedasStation={selectedAmedasStation}
+                      onClearAmedasStation={handleClearAmedasStation}
               onTyphoonChange={handleTyphoonChange}
               onSelectTyphoon={handleSelectTyphoon}
               selectedTyphoonInfo={selectedTyphoonInfo}
