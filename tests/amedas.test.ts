@@ -138,3 +138,24 @@ test("詳細モデル: 主役・降水・風・その他に分け、未観測は
   assert.equal(A.buildAmedasDetailModel(null), null);
   assert.equal(A.buildAmedasDetailModel({ wind: [null, 0] }).wind.speedText, "--");
 });
+
+test("グラフ目盛り: きりのよい刻みで範囲を覆う", () => {
+  const a = A.niceTicks(-0.6, 1.4, 3);
+  assert.deepEqual(a.ticks, [-1, 0, 1, 2]);
+  assert.equal(a.min, -1); assert.equal(a.max, 2); assert.equal(a.decimals, 0);
+  const b = A.niceTicks(0, 1, 3); // 降水量: 0〜1mm
+  assert.deepEqual(b.ticks, [0, 0.5, 1]); assert.equal(b.decimals, 1);
+  const c = A.niceTicks(5, 5, 3); // 一定値でも潰れない
+  assert.ok(c.max > c.min);
+  const d = A.niceTicks(0, 7.3, 3);
+  assert.ok(d.min <= 0 && d.max >= 7.3);
+  assert.ok(d.ticks.length >= 2 && d.ticks.length <= 6);
+});
+
+test("横軸の目盛り: 範囲内の正時だけ", () => {
+  const t0 = A.amedasKeyToMs("20261122194000")!, t1 = A.amedasKeyToMs("20261122224000")!;
+  const t = A.hourTicks(t0, t1);
+  assert.deepEqual(t.map((x: number) => A.amedasTimeLabel(x)), ["20:00", "21:00", "22:00"]);
+  const long = A.hourTicks(t0, t0 + 10 * 3600000);
+  assert.ok(long.length <= 5);
+});

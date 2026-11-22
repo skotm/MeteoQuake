@@ -376,3 +376,33 @@ export function buildAmedasDetailModel(entry) {
   ].map(([label, key, unit, d]) => ({ label, ...txt(key, unit, d) })).filter(r => r.has);
   return { temp: temp.has ? temp : null, precip, wind, gust, others };
 }
+
+
+/* ───────────── グラフの目盛り ───────────── */
+// 「きりのよい」刻み(1,2,5×10^n)を選ぶ
+function niceStep(rough) {
+  const pow = 10 ** Math.floor(Math.log10(rough));
+  const f = rough / pow;
+  const nice = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10;
+  return nice * pow;
+}
+
+// 値の範囲[min,max]を覆う縦軸の目盛り。目盛り数は2〜5本程度。
+// 戻り値: { ticks:[…昇順], min:目盛りの下端, max:目盛りの上端, decimals }
+export function niceTicks(min, max, target = 3) {
+  if (!(max > min)) { max = min + 1; }
+  const step = niceStep((max - min) / Math.max(1, target - 1));
+  const lo = Math.floor(min / step + 1e-9) * step;
+  const hi = Math.ceil(max / step - 1e-9) * step;
+  const ticks = [];
+  for (let v = lo; v <= hi + step * 1e-6; v += step) ticks.push(Math.round(v / step) * step);
+  const decimals = step >= 1 ? 0 : Math.min(3, Math.ceil(-Math.log10(step) - 1e-9));
+  return { ticks, min: ticks[0], max: ticks[ticks.length - 1], decimals };
+}
+
+// 横軸の目盛り: [t0,t1]に含まれる正時(JST)のms。長い範囲では間引く。
+export function hourTicks(t0, t1, maxCount = 5) {
+  const ticks = [];
+  for (let t = Math.ceil(t0 / 3600000) * 3600000; t <= t1; t += 3600000) ticks.push(t);
+  return ticks.length <= maxCount ? ticks : ticks.filter((_, i) => i % 2 === 0);
+}

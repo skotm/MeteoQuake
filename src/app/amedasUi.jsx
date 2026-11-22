@@ -2,8 +2,8 @@ import { useContext, useEffect, useRef, useState } from "react";
 import { Glass } from "./glass";
 import { ThemeContext } from "./theme";
 import {
-  AMEDAS_ELEMENTS, amedasDateTimeLabel, amedasTimeLabel, buildAmedasDetailModel,
-  formatAmedasValue, loadAmedasSeries,
+  AMEDAS_ELEMENTS, amedasColor, amedasDateTimeLabel, amedasTextColor, amedasTimeLabel, buildAmedasDetailModel,
+  formatAmedasValue, hourTicks, loadAmedasSeries, niceTicks,
 } from "./weather/amedas";
 
 /* ─────────────────────────────────────────────────────
@@ -109,36 +109,49 @@ export function AmedasLegend({ elementId }) {
    グラフは、タッチ/カーソルで動かした位置の時刻と値を読み取れる。3つのグラフで
    位置を共有する(同じ時刻の気温・降水量・風速を同時に見られる)。
    ───────────────────────────────────────────────────── */
-const CHART_W = 300, CHART_H = 58, CHART_PAD = 6, AXIS_H = 12;
+const CHART_W = 300, CHART_H = 132;
+const PAD_L = 32, PAD_R = 10, PAD_T = 12, PAD_B = 22;
 
+// 縦軸の目盛り・横軸(正時)の目盛り・格子線つきの小さなグラフ。なぞった位置の値は
+// 吹き出しで出す(3つのグラフで位置を共有)。
 function MiniChart({ title, unit, decimals = 1, rows, pick, kind, color, tokens, hoverIdx, onHover }) {
   const svgRef = useRef(null);
+  const gradId = useRef(`amedasGrad-${Math.random().toString(36).slice(2, 8)}`).current;
   const pts = rows.map(r => ({ t: r.timeMs, v: pick(r) }));
   const vals = pts.map(p => p.v).filter(v => v != null);
   if (vals.length === 0) {
-    return (
-      <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.5)`, padding: "6px 0" }}>{title}: データなし</div>
-    );
+    return <div style={{ fontSize: 11, color: `rgba(${tokens.ink},0.5)`, padding: "8px 0" }}>{title}: データなし</div>;
   }
-  let min = Math.min(...vals), max = Math.max(...vals);
-  if (kind === "bar") min = 0;
-  const allZeroBar = kind === "bar" && max === 0;
-  if (max === min) max = min + 1;
+  const rawMin = kind === "bar" ? 0 : Math.min(...vals);
+  const rawMax = Math.max(...vals);
+  const allZeroBar = kind === "bar" && rawMax === 0;
+  // 降水量は0〜1mmの目盛りを最低限確保(0.1mmの降水で棒が極端に伸びないように)
+  const axis = niceTicks(rawMin, kind === "bar" ? Math.max(rawMax, 1) : rawMax, 3);
   const t0 = pts[0].t, t1 = pts[pts.length - 1].t > t0 ? pts[pts.length - 1].t : t0 + 1;
-  const x = (t) => CHART_PAD + ((t - t0) / (t1 - t0)) * (CHART_W - CHART_PAD * 2);
-  const y = (v) => CHART_H - CHART_PAD - ((v - min) / (max - min)) * (CHART_H - CHART_PAD * 2);
-  const TOTAL_H = CHART_H + AXIS_H;
-  const bw = Math.max(3, (CHART_W - CHART_PAD * 2) / Math.max(1, pts.length) - 2);
-  let path = "";
-  let pen = false; // 欠測をはさんだら線を切る
-  pts.forEach(p => {
-    if (p.v == null) { pen = false; return; }
-    path += `${pen ? "L" : "M"}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)} `;
-    pen = true;
-  });
-  const hp = hoverIdx != null ? pts[hoverIdx] : null;
+  const plotW = CHART_W - PAD_L - PAD_R, plotH = CHART_H - PAD_T - PAD_B;
+  const x = (t) => PAD_L + ((t - t0) / (t1 - t0)) * plotW;
+  const y = (v) => PAD_T + plotH - ((v - axis.min) / (axis.max - axis.min)) * plotH;
+  const bw = Math.max(3, plotW / Math.max(1, pts.length) - 2.5);
+  const xTicks = hourTicks(t0, t1);
 
-  // 指/カーソルのx位置 → いちばん近い時刻のコマ
+  let path = "", area = "";
+  let pen = false, segStart = null, lastX = null;
+  pts.forEach(p => {
+    if (p.v == null) {
+      if (pen && lastX != null) area += `L${lastX.toFixed(1)},${(PAD_T + plotH).toFixed(1)} Z `;
+      pen = false; return;
+    }
+    const px = x(p.t).toFixed(1), py = y(p.v).toFixed(1);
+    path += `${pen ? "L" : "M"}${px},${py} `;
+    if (!pen) { area += `M${px},${(PAD_T + plotH).toFixed(1)} L${px},${py} `; segStart = px; }
+    else area += `L${px},${py} `;
+    pen = true; lastX = x(p.t);
+  });
+  if (pen && lastX != null) area += `L${lastX.toFixed(1)},${(PAD_T + plotH).toFixed(1)} Z`;
+
+  const hp = hoverIdx != null ? pts[hoverIdx] : null;
+  const lastPt = [...pts].reverse().find(p => p.v != null);
+
   const pickIdx = (e) => {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0) return null;
@@ -149,36 +162,81 @@ function MiniChart({ title, unit, decimals = 1, rows, pick, kind, color, tokens,
   };
   const handle = (e) => { const i = pickIdx(e); if (i != null) onHover(i); };
 
+  // 吹き出し(時刻+値)。点の上に出し、左右・上にはみ出さないよう寄せる。
+  let tip = null;
+  if (hp && hp.v != null) {
+    const label = `${amedasTimeLabel(hp.t)}  ${formatAmedasValue(hp.v, decimals)}${unit}`;
+    const w = label.length * 5.6 + 14, h = 18;
+    const cx = x(hp.t);
+    const tx = Math.min(Math.max(cx - w / 2, PAD_L), CHART_W - PAD_R - w);
+    const ty = Math.max(1, y(hp.v) - h - 8);
+    tip = { label, w, h, tx, ty };
+  }
+
   return (
-    <div style={{ marginTop: 8 }}>
+    <div style={{ marginTop: 10 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 11, marginBottom: 3 }}>
-        <span style={{ fontWeight: 700, color: tokens.text }}>{title}</span>
-        <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: hp ? 800 : 500, color: hp ? tokens.text : `rgba(${tokens.ink},0.6)` }}>
-          {hp
-            ? `${amedasTimeLabel(hp.t)}  ${hp.v == null ? "--" : formatAmedasValue(hp.v, decimals)}${hp.v == null ? "" : unit}`
-            : allZeroBar ? "降水なし" : `${formatAmedasValue(min, decimals)}〜${formatAmedasValue(max, decimals)}${unit}`}
+        <span style={{ fontWeight: 700, color: tokens.text }}>{title} <span style={{ fontWeight: 500, color: `rgba(${tokens.ink},0.5)` }}>{unit}</span></span>
+        <span style={{ fontVariantNumeric: "tabular-nums", color: `rgba(${tokens.ink},0.6)` }}>
+          {allZeroBar ? "降水なし" : `最小 ${formatAmedasValue(Math.min(...vals), decimals)} / 最大 ${formatAmedasValue(Math.max(...vals), decimals)}`}
         </span>
       </div>
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${CHART_W} ${TOTAL_H}`} width="100%" style={{ display: "block", background: `rgba(${tokens.ink},0.05)`, borderRadius: 8, touchAction: "pan-y", cursor: "crosshair" }}
-        onPointerDown={(e) => { e.stopPropagation(); handle(e); }}
-        onPointerMove={handle}
-      >
-        {kind === "bar"
-          ? pts.map((p, i) => p.v == null ? null : (
-              <rect key={i} x={x(p.t) - bw / 2} y={y(p.v)} width={bw} height={Math.max(0, CHART_H - CHART_PAD - y(p.v))} fill={color} opacity={hoverIdx == null || hoverIdx === i ? 1 : 0.55} rx="1.5"/>
-            ))
-          : <path d={path} fill="none" stroke={color} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"/>}
-        <text x={CHART_PAD} y={TOTAL_H - 2} fontSize="8.5" fill={`rgba(${tokens.ink},0.5)`}>{amedasTimeLabel(t0)}</text>
-        <text x={CHART_W - CHART_PAD} y={TOTAL_H - 2} fontSize="8.5" textAnchor="end" fill={`rgba(${tokens.ink},0.5)`}>{amedasTimeLabel(t1)}</text>
-        {hp && (
-          <>
-            <line x1={x(hp.t)} x2={x(hp.t)} y1={0} y2={CHART_H} stroke={`rgba(${tokens.ink},0.45)`} strokeWidth="1" strokeDasharray="3 3"/>
-            {hp.v != null && kind !== "bar" && <circle cx={x(hp.t)} cy={y(hp.v)} r="4" fill={color} stroke="#fff" strokeWidth="1.6"/>}
-          </>
-        )}
-      </svg>
+      <div style={{ background: `rgba(${tokens.ink},0.05)`, borderRadius: 10, padding: "2px 0" }}>
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${CHART_W} ${CHART_H}`} width="100%" style={{ display: "block", touchAction: "pan-y", cursor: "crosshair" }}
+          onPointerDown={(e) => { e.stopPropagation(); handle(e); }}
+          onPointerMove={handle}
+        >
+          <defs>
+            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity="0.30"/>
+              <stop offset="100%" stopColor={color} stopOpacity="0"/>
+            </linearGradient>
+          </defs>
+          {/* 縦軸: 格子線と目盛りの数値 */}
+          {axis.ticks.map(v => (
+            <g key={v}>
+              <line x1={PAD_L} x2={CHART_W - PAD_R} y1={y(v)} y2={y(v)} stroke={`rgba(${tokens.ink},${v === axis.min ? 0.28 : 0.1})`} strokeWidth="1"/>
+              <text x={PAD_L - 5} y={y(v) + 3} fontSize="9.5" textAnchor="end" fill={`rgba(${tokens.ink},0.55)`}>{formatAmedasValue(v, axis.decimals)}</text>
+            </g>
+          ))}
+          {/* 横軸: 正時の縦の格子線と時刻 */}
+          {xTicks.map(t => (
+            <g key={t}>
+              <line x1={x(t)} x2={x(t)} y1={PAD_T} y2={PAD_T + plotH} stroke={`rgba(${tokens.ink},0.08)`} strokeWidth="1"/>
+              <line x1={x(t)} x2={x(t)} y1={PAD_T + plotH} y2={PAD_T + plotH + 3} stroke={`rgba(${tokens.ink},0.35)`} strokeWidth="1"/>
+              <text x={x(t)} y={CHART_H - 6} fontSize="9.5" textAnchor="middle" fill={`rgba(${tokens.ink},0.55)`}>{amedasTimeLabel(t)}</text>
+            </g>
+          ))}
+          {kind === "bar"
+            ? pts.map((p, i) => p.v == null || p.v <= 0 ? null : (
+                <rect key={i} x={x(p.t) - bw / 2} y={y(p.v)} width={bw} height={Math.max(1, PAD_T + plotH - y(p.v))} fill={color} opacity={hoverIdx == null || hoverIdx === i ? 1 : 0.5} rx="1.5"/>
+              ))
+            : (
+              <>
+                <path d={area} fill={`url(#${gradId})`} stroke="none"/>
+                <path d={path} fill="none" stroke={color} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"/>
+                {!hp && lastPt && <circle cx={x(lastPt.t)} cy={y(lastPt.v)} r="3.6" fill={color} stroke="#fff" strokeWidth="1.5"/>}
+              </>
+            )}
+          {hp && (
+            <>
+              <line x1={x(hp.t)} x2={x(hp.t)} y1={PAD_T} y2={PAD_T + plotH} stroke={`rgba(${tokens.ink},0.5)`} strokeWidth="1" strokeDasharray="3 3"/>
+              {hp.v != null && kind !== "bar" && <circle cx={x(hp.t)} cy={y(hp.v)} r="4.2" fill={color} stroke="#fff" strokeWidth="1.6"/>}
+            </>
+          )}
+          {tip && (
+            <g pointerEvents="none">
+              <rect x={tip.tx} y={tip.ty} width={tip.w} height={tip.h} rx="7" fill="rgba(20,20,24,0.86)"/>
+              <text x={tip.tx + tip.w / 2} y={tip.ty + 12.4} fontSize="10.5" fontWeight="700" textAnchor="middle" fill="#fff">{tip.label}</text>
+            </g>
+          )}
+          {hp && hp.v == null && (
+            <text x={x(hp.t)} y={PAD_T + 10} fontSize="10" textAnchor="middle" fill={`rgba(${tokens.ink},0.6)`}>{amedasTimeLabel(hp.t)} 欠測</text>
+          )}
+        </svg>
+      </div>
     </div>
   );
 }
@@ -241,46 +299,62 @@ export function AmedasDetailPanel({ station, entry, timeMs, latestMs }) {
     ...(m?.others || []).map(r => ({ label: r.label.replace("(1時間)", "1h"), text: r.text })),
   ];
   const secondaryRows = [...chunk(precipStats, 4), ...chunk(otherStats, 4)];
+  // 主役の気温の色(地図の丸と同じスケール)で、カード全体を薄く色づける(地震カードの最大震度と同じ考え方)
+  const tempV = m?.temp?.v ?? null;
+  const heroColor = tempV != null ? amedasColor(AMEDAS_ELEMENTS.temp.stops, tempV) : null;
+  const heroText = heroColor ? amedasTextColor(heroColor) : tokens.text;
+  const tempParts = m?.temp && tempV != null ? formatAmedasValue(tempV, 1) : null;
   return (
     <div style={{ margin: "0 14px 2px", color: tokens.text, textAlign: "left" }}>
-      {/* 見出し: 名称の下に「観測点番号(左)+観測時刻(右)」を1行にまとめる(台風カードと同じ) */}
-      <div style={{ padding: "0 4px 4px" }}>
-        <div style={{ fontSize: 17, fontWeight: 800, color: tokens.text, lineHeight: 1.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {station.name}
+      <div style={{
+        margin: "2px 0 6px", borderRadius: 16, padding: "9px 16px",
+        display: "flex", alignItems: "center", gap: 14,
+        background: heroColor ? `linear-gradient(135deg, ${heroColor}38, ${heroColor}14)` : `rgba(${tokens.ink},0.05)`,
+        boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
+        animation: "appear 0.35s cubic-bezier(.25,1,.5,1) backwards",
+      }}>
+        {/* 気温バッジ(地震カードの最大震度バッジと同じ位置・大きさ) */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, lineHeight: 1.1 }}>気温</span>
+          <div style={{
+            width: 64, height: 64, borderRadius: 14,
+            background: heroColor || `rgba(${tokens.ink},0.12)`, color: heroText,
+            display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", lineHeight: 1,
+          }}>
+            <span className="mono" style={{ fontSize: tempParts && tempParts.length > 4 ? 22 : 26, fontWeight: 800 }}>{tempParts ?? "--"}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, marginTop: 2, opacity: 0.85 }}>℃</span>
+          </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4 }}>
-          <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.5)` }}>アメダス {station.code}</span>
-          <span style={{ flex: 1, minWidth: 4 }}/>
-          <span style={{ fontSize: 11, fontWeight: 500, color: `rgba(${tokens.ink},0.5)`, whiteSpace: "nowrap" }}>{amedasDateTimeLabel(timeMs)} 観測</span>
+
+        {/* 観測点名 / 風 / 観測時刻 — 地震カードの「震源地 / M・深さ / 発生時刻」と同じ3段 */}
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0, lineHeight: 1.1 }}>
+            <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0 }}>観測点</span>
+            <span style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{station.name}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, lineHeight: 1.1, minHeight: 24 }}>
+            <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0 }}>風{m?.wind?.dirName ? `(${m.wind.dirName})` : ""}</span>
+            {m?.wind ? (
+              <>
+                <WindMark rot={m.wind.rot} color="#26a69a"/>
+                <span className="mono" style={{ fontSize: 21, fontWeight: 800 }}>{m.wind.speedText}</span>
+              </>
+            ) : <span className="mono" style={{ fontSize: 14, opacity: 0.5 }}>--</span>}
+          </div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1 }}>
+            <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0 }}>観測時刻</span>
+            <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.85)` }}>{amedasDateTimeLabel(timeMs)}</span>
+            <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.45)` }}>アメダス {station.code}</span>
+          </div>
         </div>
       </div>
 
-      <Glass radius={16} style={{ padding: "6px 12px 6px" }}>
-        {!m && <div style={{ padding: "10px 0", fontSize: 12, opacity: 0.6, textAlign: "center" }}>この時刻の観測値はありません</div>}
-        {m && (m.temp || m.wind) && (
-          <div style={{
-            display: "grid", gridTemplateColumns: m.temp && m.wind ? "1fr 1fr" : "1fr", columnGap: 8,
-            paddingBottom: 4, borderBottom: secondaryRows.length ? `0.5px solid rgba(${tokens.ink},0.12)` : "none",
-          }}>
-            {m.temp && (
-              <div style={{ textAlign: "center" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>気温</div>
-                <span className="mono" style={{ fontSize: 28, fontWeight: 800, lineHeight: 1.15 }}>{m.temp.text}</span>
-              </div>
-            )}
-            {m.wind && (
-              <div style={{ textAlign: "center" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>風{m.wind.dirName ? `(${m.wind.dirName})` : ""}</div>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                  <WindMark rot={m.wind.rot} color="#26a69a"/>
-                  <span className="mono" style={{ fontSize: 28, fontWeight: 800, lineHeight: 1.15 }}>{m.wind.speedText}</span>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-        {secondaryRows.map((row, i) => <StatRow key={i} stats={row} tokens={tokens}/>)}
-      </Glass>
+      {!m && <div style={{ padding: "8px 0", fontSize: 12, opacity: 0.6, textAlign: "center" }}>この時刻の観測値はありません</div>}
+      {secondaryRows.length > 0 && (
+        <Glass radius={16} style={{ padding: "6px 12px 8px" }}>
+          {secondaryRows.map((row, i) => <StatRow key={i} stats={row} tokens={tokens}/>)}
+        </Glass>
+      )}
 
       <div style={{ padding: "8px 4px 4px", fontSize: 11.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}>
         直近3時間の推移 <span style={{ fontWeight: 500, opacity: 0.8 }}>なぞると値を確認</span>
