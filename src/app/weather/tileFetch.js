@@ -339,3 +339,40 @@ export function fetchJsonShared(url, { ttl = JSON_TTL_MS, timeoutMs = ATTEMPT_TI
 }
 
 export function clearSharedJson() { jsonCache.clear(); }
+
+
+/* ─────────────────────────────────────────────────────
+   キャッシュしない1回取得(タイムアウト+通信失敗/5xxの再試行付き)。
+   404 は null を返す(「その時刻のデータは無い」を正常系として扱うため)。
+   それ以外の失敗は例外。呼び出し側が自前のキャッシュを持つ用途(アメダス等)。
+   ───────────────────────────────────────────────────── */
+export async function fetchBodyOrNull(url, { text = false, timeoutMs = ATTEMPT_TIMEOUT_MS, retries = 1 } = {}) {
+  let lastErr;
+  for (let i = 0; i <= retries; i++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { cache: "no-store", signal: ctrl.signal });
+      if (res.status === 404) return null;
+      if (!res.ok) {
+        lastErr = new Error(`HTTP ${res.status}`);
+        if (res.status < 500 && res.status !== 429) break;
+      } else {
+        return text ? await res.text() : await res.json();
+      }
+    } catch (err) {
+      lastErr = err;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (i < retries) await new Promise(r => setTimeout(r, 600));
+  }
+  throw lastErr ?? new Error("fetch failed");
+}
+
+// 先読みしてよい回線か。通信節約設定・モバイル回線・低速回線では先読みしない。
+export function prefetchAllowed() {
+  const conn = typeof navigator !== "undefined" ? navigator.connection : null;
+  if (!conn) return true;
+  return !(conn.saveData || conn.type === "cellular" || /^(slow-2g|2g|3g)$/.test(conn.effectiveType || ""));
+}

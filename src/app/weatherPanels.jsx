@@ -41,6 +41,17 @@ const WEATHER_MENU_PAGE2_ITEMS = [
 ];
 
 
+// 3ページ目。アメダスの観測値(要素ごとに1つだけ選ぶ)。
+const WEATHER_MENU_PAGE3_ITEMS = [
+  { id: "amedas:temp", label: "アメダス 気温" },
+  { id: "amedas:precip", label: "アメダス 降水量" },
+  { id: "amedas:wind", label: "アメダス 風" },
+  { id: "amedas:humidity", label: "アメダス 湿度" },
+  { id: "amedas:snow", label: "アメダス 積雪" },
+  { id: "amedas:sun", label: "アメダス 日照" },
+];
+
+
 const WEATHER_MENU_BUTTON_SIZE = 44;
       // 閉じている時のトグルボタン(円)のサイズ
 const WEATHER_MENU_BUTTON_SIZE_OPEN = 34;
@@ -72,7 +83,7 @@ export function WeatherMenuFloating({
   // ページ送り。1ページ目=既存の項目一式、2ページ目=天気予報分布(ボタンのみ、
   // 今のところ機能は無い)。メニューを閉じて再度開いた時も、直前に見ていた
   // ページをそのまま維持する(あえてリセットしない)。
-  const pages = [items, WEATHER_MENU_PAGE2_ITEMS];
+  const pages = [items, WEATHER_MENU_PAGE2_ITEMS, WEATHER_MENU_PAGE3_ITEMS];
   const totalPages = pages.length;
   const [page, setPage] = useState(0);
   const pageItems = pages[page] || items;

@@ -31,7 +31,9 @@ import { RiverStationDetailCard, WarningAreaDetailCard, WarningAreaListPanel } f
 import { TyphoonDetailCard, TyphoonListPanel } from "./TyphoonPanel";
 import { WeatherLocationPanel } from "./WeatherLocationPanel";
 import { startVisiblePolling } from "./visiblePolling";
-import { getTileStatus, subscribeTileStatus } from "./weather/tileFetch";
+import { getTileStatus, prefetchAllowed, subscribeTileStatus } from "./weather/tileFetch";
+import { AMEDAS_ELEMENTS, buildAmedasFrames, buildAmedasGeoJson, loadAmedasFrame, loadAmedasLatestMs, loadAmedasTable } from "./weather/amedas";
+import { AmedasTimeSlider } from "./amedasUi";
 import { NowcastTimeSlider, PrecipTimeSlider } from "./weatherLegends";
 
 
@@ -57,7 +59,7 @@ export function BottomDock({
   // navActive はナビ行でハイライトするタブ(リアルタイムでも"quake")。
   // quakeViewMode("realtime" | "search")はApp側で保持する。
   // 気象タブ(雨雲レーダー・降水量・天気分布・台風・地点の天気予報)用。App側(地図レイヤー)へ伝えるコールバック。
-  onCurrentLocationChange, onNowcastChange, onPrecipChange, onWdistChange, onTyphoonChange,
+  onCurrentLocationChange, onNowcastChange, onPrecipChange, onWdistChange, onAmedasChange, onTyphoonChange,
   onSelectTyphoon, selectedTyphoonInfo, onClearSelectedTyphoon, onSelectTyphoonDetail,
   // 警報タブ(警報・注意報、キキクル、河川水位)用。
   warningLevelMap = {}, warningAreaByRegioncode = {}, selectedWarningArea, onSelectWarningAreaFromList, onBackFromWarningArea,
@@ -832,6 +834,135 @@ export function BottomDock({
   }, []);
   const closeKanaPicker = useCallback(() => setKanaPickerOpen(false), []);
 
+  /* ─────────────────────────────────────────────────────
+     アメダス観測値。amedasElement("temp"等|null)で表示する要素を選ぶ。
+     時刻は最新から3時間前まで10分刻み。amedasViewMs=null の間は最新に追従し、
+     スライダーで過去を選ぶと、その時刻に固定する(最新が進んでも勝手に動かない)。
+     全観測点の10分値は1ファイルなので、要素を切り替えても再取得しない。
+     気象タブにいる間だけ取得・更新する(最新時刻の確認は2分おき、非表示中は停止)。
+     ───────────────────────────────────────────────────── */
+  const [amedasElement, setAmedasElement] = useState(null);
+  const [amedasLatestMs, setAmedasLatestMs] = useState(null);
+  const [amedasViewMs, setAmedasViewMs] = useState(null);
+  const [amedasTable, setAmedasTable] = useState(null);
+  const [amedasLoaded, setAmedasLoaded] = useState(null); // { timeMs, data|null }
+  const [amedasLoading, setAmedasLoading] = useState(false);
+  const [amedasRetryTick, setAmedasRetryTick] = useState(0);
+  const amedasActive = !!amedasElement && active === "weather";
+
+  useEffect(() => {
+    if (!amedasActive || amedasTable) return undefined;
+    let cancelled = false;
+    loadAmedasTable()
+      .then(t => { if (!cancelled) setAmedasTable(t); })
+      .catch(err => console.warn("[アメダス] 観測点一覧の取得に失敗:", err));
+    return () => { cancelled = true; };
+  }, [amedasActive, amedasTable]);
+
+  useEffect(() => {
+    if (!amedasActive) return undefined;
+    let cancelled = false;
+    const check = () => {
+      loadAmedasLatestMs()
+        .then(ms => { if (!cancelled && ms != null) setAmedasLatestMs(prev => (prev === ms ? prev : ms)); })
+        .catch(err => console.warn("[アメダス] 最新時刻の取得に失敗:", err));
+    };
+    check();
+    const stop = startVisiblePolling(check, 2 * 60 * 1000);
+    return () => { cancelled = true; stop(); };
+  }, [amedasActive]);
+
+  const amedasFrames = useMemo(() => buildAmedasFrames(amedasLatestMs), [amedasLatestMs]);
+  // 表示する時刻。過去に固定していて、最新が進んで範囲(3時間)から外れたら一番古いコマに寄せる。
+  const amedasViewTimeMs = useMemo(() => {
+    if (amedasFrames.length === 0) return null;
+    const oldest = amedasFrames[0].timeMs;
+    if (amedasViewMs == null) return amedasLatestMs;
+    return Math.min(amedasLatestMs, Math.max(oldest, amedasViewMs));
+  }, [amedasFrames, amedasLatestMs, amedasViewMs]);
+  const amedasFrameIndex = amedasViewTimeMs == null ? 0
+    : Math.round((amedasViewTimeMs - amedasFrames[0].timeMs) / (10 * 60 * 1000));
+  const handleAmedasFrameIndex = useCallback((idx) => {
+    if (amedasFrames.length === 0) return;
+    setAmedasViewMs(idx >= amedasFrames.length - 1 ? null : amedasFrames[idx].timeMs);
+  }, [amedasFrames]);
+
+  const amedasLoadedRef = useRef(null);
+  useEffect(() => { amedasLoadedRef.current = amedasLoaded; }, [amedasLoaded]);
+  useEffect(() => {
+    if (!amedasActive || amedasViewTimeMs == null) return undefined;
+    let cancelled = false;
+    let retryTimer = null;
+    const timeMs = amedasViewTimeMs;
+    setAmedasLoading(true);
+    // スライダーを動かしている間は連続で取りに行かない(止まってから取得)。初回は即取得。
+    const timer = setTimeout(() => {
+      loadAmedasFrame(timeMs)
+        .then(data => {
+          if (cancelled) return;
+          setAmedasLoaded({ timeMs, data });
+          setAmedasLoading(false);
+          if (data == null) {
+            // 公開直後などで一時的に無いこともあるので、30秒後に1回取り直す
+            retryTimer = setTimeout(() => setAmedasRetryTick(n => n + 1), 30000);
+          } else if (prefetchAllowed()) {
+            // 落ち着いてから前後1コマだけ先読みする
+            [timeMs - 600000, timeMs + 600000].forEach(ms => {
+              if (ms >= amedasFrames[0].timeMs && ms <= amedasLatestMs) loadAmedasFrame(ms).catch(() => {});
+            });
+          }
+        })
+        .catch(err => {
+          if (cancelled) return;
+          console.warn("[アメダス] 観測データの取得に失敗:", err);
+          setAmedasLoaded({ timeMs, data: null });
+          setAmedasLoading(false);
+          retryTimer = setTimeout(() => setAmedasRetryTick(n => n + 1), 30000);
+        });
+    }, amedasLoadedRef.current ? 250 : 0);
+    return () => { cancelled = true; clearTimeout(timer); clearTimeout(retryTimer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [amedasActive, amedasViewTimeMs, amedasRetryTick]);
+
+  const amedasGeoJson = useMemo(
+    () => (amedasTable && amedasLoaded?.data && amedasElement
+      ? buildAmedasGeoJson(amedasTable, amedasLoaded.data, amedasElement) : null),
+    [amedasTable, amedasLoaded, amedasElement]
+  );
+  useEffect(() => {
+    onAmedasChange?.(
+      amedasActive
+        ? {
+            elementId: amedasElement,
+            geojson: amedasGeoJson,
+            timeMs: amedasLoaded?.timeMs ?? null,
+            latestMs: amedasLatestMs,
+            data: amedasLoaded?.data ?? null,
+            table: amedasTable,
+          }
+        : null
+    );
+  }, [amedasActive, amedasElement, amedasGeoJson, amedasLoaded, amedasLatestMs, amedasTable, onAmedasChange]);
+  // OFFにしたら、過去に固定した時刻・読み込み結果は引き継がない(次は最新から)。
+  useEffect(() => {
+    if (!amedasElement) { setAmedasViewMs(null); setAmedasLoaded(null); setAmedasLoading(false); }
+  }, [amedasElement]);
+
+  const amedasViewing = amedasViewTimeMs != null ? amedasLoaded?.timeMs === amedasViewTimeMs : false;
+  const amedasMissing = amedasViewing && !amedasLoaded?.data && !amedasLoading;
+  const amedasSliderEl = amedasActive && !weatherMenuOpen && amedasFrames.length > 0 ? (
+    <AmedasTimeSlider
+      frames={amedasFrames}
+      frameIndex={amedasFrameIndex}
+      onChangeFrameIndex={handleAmedasFrameIndex}
+      onBackToLatest={() => setAmedasViewMs(null)}
+      loading={amedasLoading}
+      missing={amedasMissing}
+    />
+  ) : null;
+  // 雨雲レーダーと併用している間は、スライダーが2本になるので、アメダス側を1段上に積む。
+  const amedasStacked = !!amedasSliderEl && nowcastEnabled;
+
   // 気象メニューの項目トグル共通ハンドラ。項目が増えるたびに個別のprops/分岐を
   // 増やさなくて済むよう、idで振り分ける形にしている。
   // 雨雲レーダー・1/3/24時間降水量・天気分布予報(天気分布/気温分布)は
@@ -840,7 +971,19 @@ export function BottomDock({
   // 排他選択(1/3/24時間降水量と同じ考え方)。台風情報だけはこのグループに
   // 含めず独立(重ねて表示できる)。
   function handleToggleWeatherMenuItem(id) {
+    if (id.startsWith("amedas:")) {
+      // アメダスは雨雲レーダーとは併用でき、降水量・天気分布とは排他。
+      const el = id.slice("amedas:".length);
+      if (!AMEDAS_ELEMENTS[el]) return;
+      setAmedasElement(prev => {
+        const next = prev === el ? null : el;
+        if (next) { setPrecipMode(null); setWdistMode(null); }
+        return next;
+      });
+      return;
+    }
     if (id === "precip1h" || id === "precip3h" || id === "precip24h") {
+      setAmedasElement(null);
       setPrecipMode(prev => {
         const next = prev === id ? null : id;
         if (next) { setNowcastEnabled(false); setWdistMode(null); }
@@ -856,6 +999,7 @@ export function BottomDock({
       });
     } else if (id === "weatherDistribution" || id === "temperatureDistribution") {
       const mode = id === "weatherDistribution" ? "weather" : "temperature";
+      setAmedasElement(null);
       setWdistMode(prev => {
         const next = prev === mode ? null : mode;
         if (next) { setPrecipMode(null); setNowcastEnabled(false); }
@@ -871,6 +1015,7 @@ export function BottomDock({
     rainRadar: nowcastEnabled,
     weatherDistribution: wdistMode === "weather",
     temperatureDistribution: wdistMode === "temperature",
+    ...Object.fromEntries(Object.keys(AMEDAS_ELEMENTS).map(k => [`amedas:${k}`, amedasElement === k])),
   };
 
   // 台風タブ版の「戻る」— 詳細カードから一覧表示に戻す。フローティング自体は
@@ -2342,6 +2487,17 @@ export function BottomDock({
             )}
             {hasActiveEew && <EewFabButton onClick={onOpenEewDetail}/>}
           </div>
+          {/* アメダスの時刻スライダー(横画面)。雨雲レーダーと併用中は1段上に積む。 */}
+          {amedasSliderEl && (
+            <div style={{
+              position: "fixed",
+              left: wideAnchorRect.right + wideBtnLeftExtra + 12,
+              right: 16,
+              bottom: amedasStacked ? 16 + 56 : 16,
+              zIndex: 50,
+              display: "flex",
+            }}>{amedasSliderEl}</div>
+          )}
           {/* 雨雲レーダーの時刻スライダー(横画面) — 縦画面の時と同じく、展開メニューが
               閉じている間だけ表示する。縦画面ではボタンのすぐ上に置いているが、
               横画面ではパネルの右側・画面下端に沿って横いっぱいに浮かべる。 */}
@@ -2413,6 +2569,10 @@ export function BottomDock({
           {/* 雨雲レーダーの時刻スライダー — 展開メニューが閉じている間だけ、
               ボタンの左側いっぱいに表示する。開いている間は簡易メニューと
               重なってしまうため隠す。 */}
+          {amedasSliderEl && !amedasStacked && amedasSliderEl}
+          {amedasStacked && (
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: 56, display: "flex" }}>{amedasSliderEl}</div>
+          )}
           {nowcastEnabled && !weatherMenuOpen && (
             <NowcastTimeSlider
               frames={nowcastFrames}
