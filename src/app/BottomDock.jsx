@@ -2500,14 +2500,16 @@ export function BottomDock({
           <>
           <div style={{
             position: "fixed",
-            left: wideAnchorRect.right + ((selectedTyphoonInfo) ? 0 : wideBtnLeftExtra) + 12,
-            top: (selectedTyphoonInfo) ? wideSmallBtnTop : wideBtnTop,
+            left: wideAnchorRect.right + ((selectedTyphoonInfo || amedasSelectedCode) ? 0 : wideBtnLeftExtra) + 12,
+            top: (selectedTyphoonInfo || amedasSelectedCode) ? wideSmallBtnTop : wideBtnTop,
             zIndex: 50,
             // 緊急地震速報の!ボタンは、気象・警報タブではこの枠の中に並べる
             // (メニューが開いて広がっても重ならないように)。
             display: "flex", alignItems: "flex-start", gap: 12,
           }}>
-            {selectedTyphoonInfo ? (
+            {amedasSelectedCode ? (
+              <BackToListButton onClick={onClearAmedasStation} label="アメダスの表示に戻る"/>
+            ) : selectedTyphoonInfo ? (
               <BackToListButton onClick={handleBackFromTyphoon} label="台風一覧に戻る"/>
             ) : (
               <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={false} itemStates={weatherMenuItemStates} onToggleItem={handleToggleWeatherMenuItem} hasActiveTyphoons={hasActiveTyphoons}/>
@@ -2626,7 +2628,9 @@ export function BottomDock({
           )}
           {/* 緊急地震速報の!ボタン — メニュー・スライダーと同じ行に並べて、重ならないようにする。 */}
           {hasActiveEew && <EewFabButton onClick={onOpenEewDetail}/>}
-          {selectedTyphoonInfo ? (
+          {amedasSelectedCode ? (
+            <BackToListButton onClick={onClearAmedasStation} label="アメダスの表示に戻る"/>
+          ) : selectedTyphoonInfo ? (
             <BackToListButton onClick={handleBackFromTyphoon} label="台風一覧に戻る"/>
           ) : (
             <WeatherMenuFloating open={weatherMenuOpen} onToggle={() => setWeatherMenuOpen(v => !v)} growUp={true} itemStates={weatherMenuItemStates} onToggleItem={handleToggleWeatherMenuItem} hasActiveTyphoons={hasActiveTyphoons}/>
@@ -3212,7 +3216,6 @@ export function BottomDock({
                     entry={selectedAmedasStation.entry}
                     timeMs={selectedAmedasStation.timeMs}
                     latestMs={selectedAmedasStation.latestMs}
-                    onClose={onClearAmedasStation}
                   />
                 ) : typhoonEnabled ? (
                   selectedTyphoonInfo ? (
