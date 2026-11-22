@@ -53,6 +53,7 @@ import { LongPeriodLegend, QuakeIntensityLegend, RealtimeIntensityThresholdBar, 
 import { CORNER_TAB_ATTACHED_RADIUS, CORNER_TAB_RIM_CLIP_WIDE, CORNER_TAB_STACK_HEIGHT, CornerTabButtons, CornerTabFillet, SideNavRail, WIDE_PANEL_RADIUS_ATTACHED, WIDE_RAIL_WIDTH, widePanelRimClip } from "./app/navUi";
 import { NowcastColorSchemeContext, loadStoredNowcastColorScheme, saveNowcastColorScheme } from "./app/weather/nowcast";
 import { NowcastLegend, PrecipLegend, RiskLegend, RiverLegend, WarningLegend, WdistLegend } from "./app/weatherLegends";
+import { AmedasDetailCard, AmedasLegend } from "./app/amedasUi";
 import { fetchWarningLevelMap_combined, loadWarningAreaNameIndex } from "./app/warnings";
 import { BottomDock } from "./app/BottomDock";
 
@@ -2178,6 +2179,15 @@ export default function App() {
     setWdistFrame(payload ? payload.frame : null);
     setWdistKnownValidtimes(payload ? payload.knownValidtimes : []);
   }, []);
+  // アメダス観測値がON中の状態({elementId, geojson, timeMs, latestMs, data, table})。
+  // BottomDock側から伝わってくる。OFFの間(または気象タブ以外)はnull。
+  const [amedas, setAmedas] = useState(null);
+  const [selectedAmedasCode, setSelectedAmedasCode] = useState(null);
+  const handleAmedasChange = useCallback((payload) => setAmedas(payload), []);
+  const handleSelectAmedasStation = useCallback((code) => setSelectedAmedasCode(code), []);
+  useEffect(() => {
+    if (!amedas || !amedas.elementId) setSelectedAmedasCode(null);
+  }, [amedas]);
   // 台風情報がON中の現在のgeojson。BottomDock側から伝わってくる。OFFの間はnull。
   const [typhoonGeojson, setTyphoonGeojson] = useState(null);
   const handleTyphoonChange = useCallback((geojson) => {
@@ -3344,6 +3354,11 @@ export default function App() {
           wdistMode={wdistMode}
           wdistFrame={wdistFrame}
           wdistKnownValidtimes={wdistKnownValidtimes}
+          amedasVisible={activeNav === "weather" && !!amedas?.geojson}
+          amedasGeoJson={amedas?.geojson ?? null}
+          amedasElementId={amedas?.elementId ?? null}
+          selectedAmedasCode={selectedAmedasCode}
+          onSelectAmedasStation={handleSelectAmedasStation}
           typhoonVisible={activeNav === "weather" && !!typhoonGeojson}
           typhoonGeojson={typhoonGeojson}
           onSelectTyphoonCenter={handleSelectTyphoonCenter}
@@ -3503,6 +3518,30 @@ export default function App() {
             zIndex: 30,
           }}>
             <WdistLegend mode={wdistMode}/>
+          </div>
+        )}
+
+        {/* アメダスの凡例と観測点の詳細カード — 右上に縦に並べる。雨雲レーダーと併用中は
+            レーダー凡例の下に出す。 */}
+        {activeNav === "weather" && amedas?.elementId && (
+          <div style={{
+            position: "absolute",
+            top: `calc(${nowcastFrame ? 150 : 16}px + env(safe-area-inset-top))`,
+            right: 16,
+            zIndex: 30,
+            display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8,
+            maxWidth: "calc(100% - 32px)",
+          }}>
+            <AmedasLegend elementId={amedas.elementId}/>
+            {selectedAmedasCode && amedas.table?.[selectedAmedasCode] && (
+              <AmedasDetailCard
+                station={amedas.table[selectedAmedasCode]}
+                entry={amedas.data?.[selectedAmedasCode] ?? null}
+                timeMs={amedas.timeMs}
+                latestMs={amedas.latestMs}
+                onClose={() => setSelectedAmedasCode(null)}
+              />
+            )}
           </div>
         )}
 
@@ -3863,6 +3902,7 @@ export default function App() {
                       onNowcastChange={handleNowcastChange}
                       onPrecipChange={handlePrecipChange}
                       onWdistChange={handleWdistChange}
+                      onAmedasChange={handleAmedasChange}
                       onTyphoonChange={handleTyphoonChange}
                       onSelectTyphoon={handleSelectTyphoon}
                       selectedTyphoonInfo={selectedTyphoonInfo}
@@ -4054,6 +4094,7 @@ export default function App() {
               onNowcastChange={handleNowcastChange}
               onPrecipChange={handlePrecipChange}
               onWdistChange={handleWdistChange}
+                      onAmedasChange={handleAmedasChange}
               onTyphoonChange={handleTyphoonChange}
               onSelectTyphoon={handleSelectTyphoon}
               selectedTyphoonInfo={selectedTyphoonInfo}

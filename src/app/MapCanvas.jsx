@@ -2,6 +2,7 @@ import { MIN_INTENSITY as SHINDO_MIN_INTENSITY, intensityToShindoColor } from ".
 import { NOWCAST_BOUNDS, nowcastProtocolUrl, precipProtocolUrl, wdistProtocolUrl } from "./weather/nowcast";
 import { registerNowcastProtocol, registerPrecipProtocol, registerWdistProtocol } from "./weather/typhoon";
 import { registerRiskProtocol, riskProtocolUrl } from "./weather/risk";
+import { AMEDAS_ARROW_ID, registerAmedasImages } from "./amedasIcons";
 import { getTileStatus, onTileRetry, retryAllTiles, subscribeTileStatus } from "./weather/tileFetch";
 import { buildWarningAreaColorExpr, buildWarningAreasGeoJson, loadWarningAreasFullGeoJson } from "./warnings";
 import { useRef, useState, useContext, useEffect } from "react";
@@ -113,6 +114,11 @@ export function MapCanvas({
   riverStations = null,         // GeoJSON FeatureCollection(river.go.jpのstg概観)| null
   selectedRiverStation = null,  // タップ中の観測所のproperties | null。地図上で強調表示に使う
   onSelectRiverStation,         // 河川水位観測所のピンをタップした時に呼ぶコールバック(propertiesを渡す)
+  amedasVisible = false,        // 気象タブ: アメダス観測値レイヤーを表示するか
+  amedasGeoJson = null,         // buildAmedasGeoJsonの結果 | null
+  amedasElementId = null,       // 表示中の要素("temp"等)。風の時だけ矢印を出す
+  selectedAmedasCode = null,    // タップ中の観測点コード | null
+  onSelectAmedasStation,        // アメダス観測点をタップした時に呼ぶコールバック(コードを渡す)
   showRealtimeMapLayers = false,
   realtimeStations = [],
   realtimeValues = EMPTY_REALTIME_VALUES,
@@ -210,6 +216,8 @@ export function MapCanvas({
   onSelectWarningAreaRef.current = onSelectWarningArea;
   const onSelectRiverStationRef = useRef(onSelectRiverStation);
   onSelectRiverStationRef.current = onSelectRiverStation;
+  const onSelectAmedasStationRef = useRef(onSelectAmedasStation);
+  onSelectAmedasStationRef.current = onSelectAmedasStation;
 
   // 津波予報区の「地図タップで選択」モード用。map.on("load")内の登録は初回のみなので、
   // 最新のモードON/OFF・コールバック・読み込み済みデータをrefで参照できるようにする。
@@ -694,6 +702,79 @@ export function MapCanvas({
               "circle-stroke-width": 3,
             },
           }, "station-points-symbol");
+
+          // 気象タブ: アメダス観測値。値の丸(全点・低ズームでも分布が分かる)+値ラベル
+          // (吹き出し画像。重なる分は優先度の低い方が自動で間引かれる)+風向き矢印。
+          // 吹き出し画像はtext-fieldが使えないため、styleimagemissingでその場で生成する。
+          registerAmedasImages(map);
+          map.addSource("amedas-stations", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "amedas-dot-layer",
+            type: "circle",
+            source: "amedas-stations",
+            layout: { visibility: "none" },
+            paint: {
+              "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 2.5, 8, 4, 12, 6],
+              "circle-color": ["get", "color"],
+              "circle-stroke-color": "#ffffff",
+              "circle-stroke-width": 1,
+            },
+          }, "station-points-symbol");
+          map.addLayer({
+            id: "amedas-label-layer",
+            type: "symbol",
+            source: "amedas-stations",
+            filter: ["!=", ["get", "label"], ""],
+            layout: {
+              visibility: "none",
+              "icon-image": ["concat", "am|", ["get", "label"], "|", ["get", "color"], "|", ["get", "textColor"]],
+              "icon-size": ["interpolate", ["linear"], ["zoom"], 4, 0.62, 8, 0.85, 12, 1],
+              "icon-allow-overlap": false,
+              "icon-padding": 1,
+              "symbol-sort-key": ["get", "sortKey"],
+            },
+          }, "station-points-symbol");
+          map.addLayer({
+            id: "amedas-arrow-layer",
+            type: "symbol",
+            source: "amedas-stations",
+            filter: [">=", ["get", "rot"], 0],
+            minzoom: 6,
+            layout: {
+              visibility: "none",
+              "icon-image": AMEDAS_ARROW_ID,
+              "icon-rotate": ["get", "rot"],
+              "icon-rotation-alignment": "map",
+              "icon-size": ["interpolate", ["linear"], ["zoom"], 6, 0.6, 12, 0.9],
+              "icon-offset": [0, -22],
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+            },
+          }, "station-points-symbol");
+          map.addLayer({
+            id: "amedas-highlight-layer",
+            type: "circle",
+            source: "amedas-stations",
+            layout: { visibility: "none" },
+            filter: ["==", ["get", "code"], "__none__"],
+            paint: {
+              "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 7, 8, 11, 12, 15],
+              "circle-color": "rgba(0,0,0,0)",
+              "circle-stroke-color": "#0A84FF",
+              "circle-stroke-width": 3,
+            },
+          }, "station-points-symbol");
+          ["amedas-label-layer", "amedas-dot-layer"].forEach(layerId => {
+            map.on("click", layerId, (e) => {
+              if (!e.features || !e.features.length) return;
+              onSelectAmedasStationRef.current?.(e.features[0].properties.code);
+            });
+            map.on("mouseenter", layerId, () => map.getCanvas().style.cursor = "pointer");
+            map.on("mouseleave", layerId, () => map.getCanvas().style.cursor = "");
+          });
 
           // 震央分布(P2P地震一覧・近傍地震検索・データベース検索の結果を、
           // 震度配色の丸として地図上に重ねて表示する)。
@@ -3045,6 +3126,28 @@ export function MapCanvas({
     const source = map.getSource("river-stations");
     if (source) source.setData(riverStations || { type: "FeatureCollection", features: [] });
   }, [riverVisible, riverStations, status]);
+
+  // 気象タブ: アメダス観測値。amedasGeoJson(BottomDock側で取得・変換済み)をsetDataし、
+  // amedasVisibleでON/OFFする。矢印は風の時だけ出す。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    if (!map.getLayer("amedas-dot-layer")) return;
+    const vis = amedasVisible ? "visible" : "none";
+    map.setLayoutProperty("amedas-dot-layer", "visibility", vis);
+    map.setLayoutProperty("amedas-label-layer", "visibility", vis);
+    map.setLayoutProperty("amedas-highlight-layer", "visibility", vis);
+    map.setLayoutProperty("amedas-arrow-layer", "visibility", amedasVisible && amedasElementId === "wind" ? "visible" : "none");
+    const source = map.getSource("amedas-stations");
+    if (source) source.setData(amedasVisible && amedasGeoJson ? amedasGeoJson : { type: "FeatureCollection", features: [] });
+  }, [amedasVisible, amedasGeoJson, amedasElementId, status]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    if (!map.getLayer("amedas-highlight-layer")) return;
+    map.setFilter("amedas-highlight-layer", ["==", ["get", "code"], selectedAmedasCode ?? "__none__"]);
+  }, [selectedAmedasCode, status]);
 
   // 警報タブ: タップ中の河川水位観測所を強調表示する。obs_fcdで絞り込む。
   useEffect(() => {
