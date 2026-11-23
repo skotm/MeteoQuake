@@ -9,7 +9,7 @@ import { APP_VERSION } from "./consent";
 import { BoundaryLineColorSettings, LicenseFileCard, LogViewerPanel, MapColorSettings, MarkdownFileCard, QuakeColorSchemeSettings, QuakeFetchLimitSettings } from "./settingsPanels";
 import { EewTestBroadcastPanel, QuakeTestBroadcastPanel, ShakeDetectionTestPanel, TsunamiTestBroadcastPanel } from "./testPanels";
 import { DEFAULT_CAMERA_SETTINGS, CITY_FILL_ZOOM_MIN, CITY_FILL_ZOOM_MAX, CITY_FILL_ZOOM_DEFAULT, clampCityFillZoom } from "./settingsStorage";
-import { NowcastColorSchemeSettings, TyphoonForecastIntervalSettings } from "./weatherSettings";
+import { AmedasRangeSettings, NowcastColorSchemeSettings, TyphoonForecastIntervalSettings } from "./weatherSettings";
 
 
 
@@ -38,6 +38,7 @@ export function SettingsBody({
   path, onNavigate, colorSchemeId, onChangeColorScheme,
   nowcastColorSchemeId, onChangeNowcastColorScheme,
   typhoonForecastIntervalHours, onChangeTyphoonForecastIntervalHours,
+  amedasSliderHours, onChangeAmedasSliderHours, amedasChartHours, onChangeAmedasChartHours,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
   cityFillZoom = 7.5, onChangeCityFillZoom = () => {},
@@ -344,6 +345,19 @@ export function SettingsBody({
     );
   }
 
+  // アメダスの取得時間の範囲
+  if (category === "display" && leaf === "amedasRange") {
+    return (
+      <>
+        <SettingsHeader title="アメダスの取得時間"/>
+        <AmedasRangeSettings
+          sliderHours={amedasSliderHours} onChangeSliderHours={onChangeAmedasSliderHours}
+          chartHours={amedasChartHours} onChangeChartHours={onChangeAmedasChartHours}
+        />
+      </>
+    );
+  }
+
   // 表示設定(トップ階層のカテゴリ)。地図・地震・気象の「見た目」に関する設定への入口を
   // まとめている。各項目の画面の中身は、以前の置き場所(地震・気象・詳細設定)から
   // そのまま移したもの(保存する値も同じ)。
@@ -390,6 +404,8 @@ export function SettingsBody({
           <SettingsMenuRow label="雨雲レーダー配色" onClick={() => onNavigate([...path, "nowcastColorScheme"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="台風予報円の表示間隔" onClick={() => onNavigate([...path, "typhoonForecastInterval"])}/>
+          <SettingsCardDivider/>
+          <SettingsMenuRow label="アメダスの取得時間" onClick={() => onNavigate([...path, "amedasRange"])}/>
         </SettingsCard>
       </>
     );

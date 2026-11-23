@@ -433,7 +433,7 @@ export function WarningLegend({ warningLevelMap }) {
    閉じている間だけ、ボタンバー(下部ナビ行)のすぐ上に浮かべる時刻スライダー。
    実況(過去)+予測(未来60分)を1本のタイムラインとしてドラッグで選べる。
    ───────────────────────────────────────────────────── */
-export function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
+export function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex, hidePlay = false }) {
   const { tokens } = useContext(ThemeContext);
   const [isPlaying, setIsPlaying] = useState(false);
 
@@ -441,12 +441,12 @@ export function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
   // コマが無くなった時は再生を止める。onChangeFrameIndexは実体が
   // useStateのsetterなので関数更新(prev => ...)を渡せる。
   useEffect(() => {
-    if (!isPlaying || !frames || frames.length < 2) return;
+    if (hidePlay || !isPlaying || !frames || frames.length < 2) return;
     const id = setInterval(() => {
       onChangeFrameIndex(prev => ((prev ?? 0) + 1) % frames.length);
     }, 700);
     return () => clearInterval(id);
-  }, [isPlaying, frames, onChangeFrameIndex]);
+  }, [hidePlay, isPlaying, frames, onChangeFrameIndex]);
 
   useEffect(() => {
     if (!frames || frames.length === 0) setIsPlaying(false);
@@ -472,7 +472,7 @@ export function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
       style={{ flex: 1, minWidth: 0, animation: "appear 0.3s cubic-bezier(.25,1,.5,1)" }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px" }}>
-        <button
+        {!hidePlay && <button
           onClick={() => setIsPlaying(v => !v)}
           aria-label={isPlaying ? "自動再生を止める" : "自動再生する"}
           style={{
@@ -491,7 +491,7 @@ export function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex }) {
               <path d="M6 4.2c0-1 1.1-1.7 2-1.1l12 7.8c.8.5.8 1.7 0 2.2l-12 7.8c-.9.6-2-.1-2-1.1z"/>
             </svg>
           )}
-        </button>
+        </button>}
         {/* 数値ラベル。プロポーショナルフォントだと数字ごとにグリフ幅が違い
             (「1」は「8」より細い等)、コマが変わるたびにこのラベルの実測幅が
             微妙に変わってスライダー本体の長さがガタつく原因になっていたため、

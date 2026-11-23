@@ -187,3 +187,12 @@ test("時系列: 24時間を取得でき、ブロックはキャッシュされ�
   assert.equal(calls, n24, "切り替えでは再取得しない");
   A.clearAmedasSeriesCache();
 });
+
+test("buildAmedasFrames: 範囲(時間)に応じたコマ数", async () => {
+  const { buildAmedasFrames } = await import("../src/app/weather/amedas.js");
+  const t = Date.UTC(2026, 10, 23, 3, 0);
+  assert.equal(buildAmedasFrames(t).length, 19);
+  assert.equal(buildAmedasFrames(t, 1).length, 7);
+  assert.equal(buildAmedasFrames(t, 24).length, 145);
+  assert.equal(buildAmedasFrames(t, 24).at(-1)!.timeMs, t);
+});

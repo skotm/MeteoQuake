@@ -21,7 +21,7 @@ import { SettingsBody } from "./SettingsBody";
 import { derivePrefFromEewAreaName } from "./eewUi";
 import { fastDist2 } from "./geo";
 import { shouldShowMechanismButton } from "./cmt";
-import { NowcastColorSchemeContext, formatWdistFrameLabel, loadNowcastFrames, loadPrecipFrames, loadStoredTyphoonForecastInterval, loadWdistFrames, nowcastNearestIndexToNow, saveTyphoonForecastInterval } from "./weather/nowcast";
+import { NowcastColorSchemeContext, formatWdistFrameLabel, loadNowcastFrames, loadPrecipFrames, nowcastValidtimeToMs, loadStoredTyphoonForecastInterval, loadWdistFrames, nowcastNearestIndexToNow, saveTyphoonForecastInterval } from "./weather/nowcast";
 import { fetchActiveTyphoonExists, fetchTyphoonData } from "./weather/typhoon";
 import { fetchAreaTimeSeries, fetchCurrentLocationForecast } from "./weather/location";
 import { findMunicipalityAtPoint, groupMunicipalitiesByKana, loadWarningAreaMunicipalities } from "./warnings";
@@ -32,7 +32,7 @@ import { TyphoonDetailCard, TyphoonListPanel } from "./TyphoonPanel";
 import { WeatherLocationPanel } from "./WeatherLocationPanel";
 import { startVisiblePolling } from "./visiblePolling";
 import { getTileStatus, prefetchAllowed, subscribeTileStatus } from "./weather/tileFetch";
-import { AMEDAS_ELEMENTS, buildAmedasFrames, buildAmedasGeoJson, floorToHourMs, loadAmedasFrame, loadAmedasLatestMs, loadAmedasTable } from "./weather/amedas";
+import { AMEDAS_ELEMENTS, buildAmedasFrames, buildAmedasGeoJson, floorToHourMs, loadAmedasFrame, loadAmedasLatestMs, loadAmedasTable, loadStoredAmedasChartRange, loadStoredAmedasSliderRange, saveAmedasChartRange, saveAmedasSliderRange } from "./weather/amedas";
 import { AmedasDetailPanel, AmedasTimeSlider } from "./amedasUi";
 import { NowcastTimeSlider, PrecipTimeSlider } from "./weatherLegends";
 
@@ -872,12 +872,22 @@ export function BottomDock({
     return () => { cancelled = true; stop(); };
   }, [amedasActive]);
 
+  // 取得時間の範囲(設定タブで変更、localStorageに保存)
+  const [amedasSliderHours, setAmedasSliderHoursState] = useState(loadStoredAmedasSliderRange);
+  const [amedasChartHours, setAmedasChartHoursState] = useState(loadStoredAmedasChartRange);
+  const handleChangeAmedasSliderHours = useCallback((h) => { setAmedasSliderHoursState(h); saveAmedasSliderRange(h); }, []);
+  const handleChangeAmedasChartHours = useCallback((h) => { setAmedasChartHoursState(h); saveAmedasChartRange(h); }, []);
+  // 範囲を狭めて、見ていた時刻が範囲外になったら最新に戻す
+  useEffect(() => {
+    setAmedasViewMs(v => (v != null && amedasLatestMs != null && v < amedasLatestMs - amedasSliderHours * 3600000) ? null : v);
+  }, [amedasSliderHours]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // 積雪など毎正時にしか値が無い要素は、スライダーも正時のコマだけにする。
   const amedasHourly = !!AMEDAS_ELEMENTS[amedasElement]?.hourlyOnly;
   const amedasFrames = useMemo(() => {
-    const all = buildAmedasFrames(amedasLatestMs);
+    const all = buildAmedasFrames(amedasLatestMs, amedasSliderHours);
     return amedasHourly ? all.filter(f => f.timeMs % 3600000 === 0) : all;
-  }, [amedasLatestMs, amedasHourly]);
+  }, [amedasLatestMs, amedasHourly, amedasSliderHours]);
   const amedasStepMs = amedasHourly ? 3600000 : 600000;
   // 表示する時刻。範囲(3時間)から外れたら端のコマに寄せる。最新に追従中は最後のコマ。
   const amedasViewTimeMs = useMemo(() => {
@@ -958,7 +968,23 @@ export function BottomDock({
 
   const amedasViewing = amedasViewTimeMs != null ? amedasLoaded?.timeMs === amedasViewTimeMs : false;
   const amedasMissing = amedasViewing && !amedasLoaded?.data && !amedasLoading;
-  const amedasSliderEl = amedasActive && !weatherMenuOpen && amedasFrames.length > 0 ? (
+  // 雨雲レーダーと併用中は、雨雲側のスライダー1本で両方を動かす(予報コマと再生ボタンは出さない)。
+  // アメダスは雨雲の実況コマの時刻(10分に切り捨て)を表示する。最新の実況なら最新に追従。
+  const amedasLinked = amedasActive && nowcastEnabled;
+  const nowcastLinkedFrames = useMemo(
+    () => (amedasLinked && nowcastFrames ? nowcastFrames.filter(f => f.kind === "obs") : nowcastFrames),
+    [amedasLinked, nowcastFrames]
+  );
+  useEffect(() => {
+    if (!amedasLinked || !nowcastFrames || nowcastFrameIndex == null) return;
+    const lastObs = nowcastLinkedFrames.length - 1;
+    if (lastObs < 0) return;
+    // 予報コマを見ていたら、最新の実況に寄せる
+    if (nowcastFrameIndex > lastObs) { setNowcastFrameIndex(lastObs); return; }
+    const ms = nowcastValidtimeToMs(nowcastFrames[nowcastFrameIndex]?.validtime);
+    setAmedasViewMs(nowcastFrameIndex === lastObs || ms == null ? null : Math.floor(ms / 600000) * 600000);
+  }, [amedasLinked, nowcastFrames, nowcastFrameIndex, nowcastLinkedFrames]);
+  const amedasSliderEl = amedasActive && !amedasLinked && !weatherMenuOpen && amedasFrames.length > 0 ? (
     <AmedasTimeSlider
       frames={amedasFrames}
       frameIndex={amedasFrameIndex}
@@ -2539,9 +2565,10 @@ export function BottomDock({
               zIndex: 50,
             }}>
               <NowcastTimeSlider
-                frames={nowcastFrames}
+                frames={nowcastLinkedFrames}
                 frameIndex={nowcastFrameIndex ?? 0}
                 onChangeFrameIndex={setNowcastFrameIndex}
+                hidePlay={amedasLinked}
               />
             </div>
           )}
@@ -2604,9 +2631,10 @@ export function BottomDock({
           )}
           {nowcastEnabled && !weatherMenuOpen && (
             <NowcastTimeSlider
-              frames={nowcastFrames}
+              frames={nowcastLinkedFrames}
               frameIndex={nowcastFrameIndex ?? 0}
               onChangeFrameIndex={setNowcastFrameIndex}
+              hidePlay={amedasLinked}
             />
           )}
           {/* 1/3/24時間降水量の時刻スライダー。雨雲レーダーとは排他。 */}
@@ -3091,6 +3119,10 @@ export function BottomDock({
                   onChangeNowcastColorScheme={onChangeNowcastColorScheme}
                   typhoonForecastIntervalHours={typhoonForecastIntervalHours}
                   onChangeTyphoonForecastIntervalHours={handleChangeTyphoonForecastIntervalHours}
+                  amedasSliderHours={amedasSliderHours}
+                  onChangeAmedasSliderHours={handleChangeAmedasSliderHours}
+                  amedasChartHours={amedasChartHours}
+                  onChangeAmedasChartHours={handleChangeAmedasChartHours}
                   estIntensityEnabled={estIntensityEnabled}
                   onChangeEstIntensityEnabled={onChangeEstIntensityEnabled}
                   areaFillEnabled={areaFillEnabled}
@@ -3216,6 +3248,7 @@ export function BottomDock({
                     entry={selectedAmedasStation.entry}
                     timeMs={selectedAmedasStation.timeMs}
                     latestMs={selectedAmedasStation.latestMs}
+                    defaultRangeHours={amedasChartHours}
                   />
                 ) : typhoonEnabled ? (
                   selectedTyphoonInfo ? (

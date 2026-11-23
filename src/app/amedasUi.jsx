@@ -42,6 +42,8 @@ export function AmedasTimeSlider({ frames, frameIndex, onChangeFrameIndex, hourl
           `}</style>
           <div style={{ position: "absolute", left: 5, right: 5, top: "50%", transform: "translateY(-50%)", height: 22, pointerEvents: "none" }}>
             {frames.map((f, i) => {
+              // コマが多い(長い範囲)ときは、細かすぎないよう正時の目盛りだけにする
+              if (frames.length > 37 && i !== last && f.timeMs % 3600000 !== 0) return null;
               const pct = last > 0 ? (i / last) * 100 : 0;
               const hour = f.timeMs % 3600000 === 0; // 正時
               return (
@@ -273,11 +275,12 @@ function StatRow({ stats, tokens, loose = false }) {
 
 const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
 
-export function AmedasDetailPanel({ station, entry, timeMs, latestMs }) {
+export function AmedasDetailPanel({ station, entry, timeMs, latestMs, defaultRangeHours = 6 }) {
   const { tokens } = useContext(ThemeContext);
   const [series, setSeries] = useState(null); // null=読み込み中, []=取得不可
   const [hoverIdx, setHoverIdx] = useState(null);
-  const [rangeHours, setRangeHours] = useState(6);
+  const [rangeHours, setRangeHours] = useState(defaultRangeHours);
+  useEffect(() => { setRangeHours(defaultRangeHours); }, [defaultRangeHours]);
   const code = station?.code;
   useEffect(() => {
     if (!code || latestMs == null) return undefined;

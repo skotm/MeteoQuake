@@ -59,10 +59,11 @@ export function parseAmedasLatestTime(text) {
 }
 
 // 最新から古い順に並べたコマ(古い→新しい)。index 最後 = 最新。
-export function buildAmedasFrames(latestMs) {
+export function buildAmedasFrames(latestMs, rangeHours = AMEDAS_RANGE_MIN / 60) {
   if (latestMs == null) return [];
   const frames = [];
-  for (let i = AMEDAS_STEPS; i >= 0; i--) {
+  const steps = Math.max(1, Math.round((rangeHours * 60) / AMEDAS_STEP_MIN));
+  for (let i = steps; i >= 0; i--) {
     const timeMs = latestMs - i * STEP_MS;
     frames.push({ timeMs, validtime: amedasTimeKey(timeMs) });
   }
@@ -432,3 +433,26 @@ export function hourTicks(t0, t1, maxCount = 5) {
   }
   return [];
 }
+
+
+/* ───────────── 設定(取得時間の範囲) ─────────────
+   スライダーの範囲(時間)と、詳細グラフの初期範囲(時間)。localStorageに保存する。 */
+export const AMEDAS_SLIDER_RANGE_OPTIONS = [1, 3, 6, 12, 24];
+export const AMEDAS_CHART_RANGE_OPTIONS = [3, 6, 12, 24];
+const SLIDER_RANGE_KEY = "amedasSliderRangeHours";
+const CHART_RANGE_KEY = "amedasChartRangeHours";
+
+function loadStoredHours(key, valid, fallback) {
+  try {
+    const v = Number(localStorage.getItem(key));
+    if (valid.includes(v)) return v;
+  } catch {}
+  return fallback;
+}
+function saveStoredHours(key, hours) {
+  try { localStorage.setItem(key, String(hours)); } catch {}
+}
+export const loadStoredAmedasSliderRange = () => loadStoredHours(SLIDER_RANGE_KEY, AMEDAS_SLIDER_RANGE_OPTIONS, 3);
+export const saveAmedasSliderRange = (h) => saveStoredHours(SLIDER_RANGE_KEY, h);
+export const loadStoredAmedasChartRange = () => loadStoredHours(CHART_RANGE_KEY, AMEDAS_CHART_RANGE_OPTIONS, 6);
+export const saveAmedasChartRange = (h) => saveStoredHours(CHART_RANGE_KEY, h);
