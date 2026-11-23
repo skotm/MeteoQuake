@@ -9,7 +9,7 @@ import { APP_VERSION } from "./consent";
 import { BoundaryLineColorSettings, LicenseFileCard, LogViewerPanel, MapColorSettings, MarkdownFileCard, QuakeColorSchemeSettings, QuakeFetchLimitSettings } from "./settingsPanels";
 import { EewTestBroadcastPanel, QuakeTestBroadcastPanel, ShakeDetectionTestPanel, TsunamiTestBroadcastPanel } from "./testPanels";
 import { DEFAULT_CAMERA_SETTINGS, CITY_FILL_ZOOM_MIN, CITY_FILL_ZOOM_MAX, CITY_FILL_ZOOM_DEFAULT, clampCityFillZoom } from "./settingsStorage";
-import { AmedasRangeSettings, NowcastColorSchemeSettings, TyphoonForecastIntervalSettings } from "./weatherSettings";
+import { AmedasRangeSettings, MaxZoomSettings, NowcastColorSchemeSettings, TyphoonForecastIntervalSettings } from "./weatherSettings";
 
 
 
@@ -38,6 +38,7 @@ export function SettingsBody({
   path, onNavigate, colorSchemeId, onChangeColorScheme,
   nowcastColorSchemeId, onChangeNowcastColorScheme,
   typhoonForecastIntervalHours, onChangeTyphoonForecastIntervalHours,
+  maxZoom, onChangeMaxZoom,
   amedasSliderHours, onChangeAmedasSliderHours, amedasChartHours, onChangeAmedasChartHours,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
@@ -345,6 +346,16 @@ export function SettingsBody({
     );
   }
 
+  // 地図の最大ズームレベル
+  if (category === "display" && leaf === "maxZoom") {
+    return (
+      <>
+        <SettingsHeader title="最大ズームレベル"/>
+        <MaxZoomSettings value={maxZoom} onChange={onChangeMaxZoom}/>
+      </>
+    );
+  }
+
   // アメダスの取得時間の範囲
   if (category === "display" && leaf === "amedasRange") {
     return (
@@ -404,6 +415,8 @@ export function SettingsBody({
           <SettingsMenuRow label="雨雲レーダー配色" onClick={() => onNavigate([...path, "nowcastColorScheme"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="台風予報円の表示間隔" onClick={() => onNavigate([...path, "typhoonForecastInterval"])}/>
+          <SettingsCardDivider/>
+          <SettingsMenuRow label="最大ズームレベル" onClick={() => onNavigate([...path, "maxZoom"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="アメダスの取得時間" onClick={() => onNavigate([...path, "amedasRange"])}/>
         </SettingsCard>

@@ -65,7 +65,7 @@ export function BottomDock({
   warningLevelMap = {}, warningAreaByRegioncode = {}, selectedWarningArea, onSelectWarningAreaFromList, onBackFromWarningArea,
   onAlertLayerChange, onAlertModeChange, onRiverLayerChange, selectedRiverStation = null, onSelectRiverStation,
   active, navActive = active, quakeViewMode, onQuakeViewModeChange, onNav, navCollapseSignal, navDoubleTapSignal, layerOpen, layers, onToggleLayer, onLayerOpenChange,
-  quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [], onFocusStation,
+  quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [], onFocusStation, maxZoom, onChangeMaxZoom,
   tsunamis = [], tsunamiStatus = "loading", selectedTsunamiId, onSelectTsunami,
   isViewingPastTsunami = false,
   tsunamiHistory, onLoadMoreTsunamiHistory, onCausingQuakeChange,
@@ -3148,6 +3148,8 @@ export function BottomDock({
                   onChangeNowcastColorScheme={onChangeNowcastColorScheme}
                   typhoonForecastIntervalHours={typhoonForecastIntervalHours}
                   onChangeTyphoonForecastIntervalHours={handleChangeTyphoonForecastIntervalHours}
+                  maxZoom={maxZoom}
+                  onChangeMaxZoom={onChangeMaxZoom}
                   amedasSliderHours={amedasSliderHours}
                   onChangeAmedasSliderHours={handleChangeAmedasSliderHours}
                   amedasChartHours={amedasChartHours}

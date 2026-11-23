@@ -68,7 +68,7 @@ function stationChipSub(p) {
 }
 
 export function MapCanvas({
-  onReady, stationPoints, stationFocusRequest, hypocenters, isWide,
+  onReady, stationPoints, stationFocusRequest, maxZoom = 12, hypocenters, isWide,
   quakeTimeStr, maxIntensityKey, estIntensityEnabled, areaFillEnabled,
   // 市区町村単位の震度塗り(ズームを上げると細分区域塗りから切り替わる)。
   // quakeCityFillEligibleは、旧震度階級の地震・テスト配信ではfalse(従来どおり細分区域塗りのまま)。
@@ -178,6 +178,8 @@ export function MapCanvas({
   // 震央分布(circleレイヤー)は map.on("load") 内(初回マウント時のみ実行)で
   // 作るため、生成時点の最新配色をrefで参照できるようにしておく
   // (切り替え時の反映は別のuseEffectでsetPaintPropertyする。下方)。
+  const maxZoomRef = useRef(maxZoom);
+  maxZoomRef.current = maxZoom;
   const colorSchemeRef = useRef(colorScheme);
   colorSchemeRef.current = colorScheme;
 
@@ -298,6 +300,7 @@ export function MapCanvas({
             style: buildMapStyle(geo, themeTokensRef.current),
             center: [138.0, 38.0], // 日本全体が収まる中心付近
             zoom: 4.5,
+            maxZoom: maxZoomRef.current,
             pitch: 0,
             attributionControl: false,
             // ナビゲーション操作はLiquid Glassの自前ボタンで行うため
@@ -1633,6 +1636,12 @@ export function MapCanvas({
     stationSource.setData({ type: "FeatureCollection", features: stationFeatures });
     areaSource.setData({ type: "FeatureCollection", features: areaFeatures });
   }, [stationPoints, status, stationMarkersVisible]);
+
+  // 最大ズームレベルの設定。現在のズームが上限を超えていたら、MapLibreが上限まで戻す。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map && status === "ready") map.setMaxZoom(maxZoom);
+  }, [maxZoom, status]);
 
   // 表示中の地震が変わったら、観測点チップは消す
   useEffect(() => { setStationChip(null); }, [stationPoints]);

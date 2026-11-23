@@ -2,6 +2,7 @@ import { useContext } from "react";
 import { PressableButton } from "./glass";
 import { ThemeContext } from "./theme";
 import { SettingsCard, SettingsCardDivider } from "./settingsPrimitives";
+import { MAX_ZOOM_OPTIONS } from "./settingsStorage";
 import { AMEDAS_CHART_RANGE_OPTIONS, AMEDAS_SLIDER_RANGE_OPTIONS } from "./weather/amedas";
 import { JMA_NOWCAST_SOURCE_PALETTE, NOWCAST_COLOR_SCHEMES } from "./weather/nowcast";
 
@@ -97,7 +98,7 @@ export function TyphoonForecastIntervalSettings({ intervalHours, onChangeInterva
 
 
 // アメダスの取得時間の範囲。地図のスライダーでさかのぼれる範囲と、観測点の推移グラフの初期範囲。
-function AmedasRangeGroup({ title, note, options, value, onChange }) {
+function AmedasRangeGroup({ title, note, options, value, onChange, formatOption = (h) => `${h}時間` }) {
   const { tokens } = useContext(ThemeContext);
   return (
     <>
@@ -116,7 +117,7 @@ function AmedasRangeGroup({ title, note, options, value, onChange }) {
                   border: "none", cursor: "pointer", textAlign: "left",
                 }}
               >
-                <span style={{ fontSize: 13, fontWeight: 600, color: tokens.text, flex: 1 }}>{h}時間</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: tokens.text, flex: 1 }}>{formatOption(h)}</span>
                 {selected && <span style={{ fontSize: 13, color: `rgba(${tokens.ink},0.85)` }}>✓</span>}
               </PressableButton>
             </div>
@@ -142,5 +143,18 @@ export function AmedasRangeSettings({ sliderHours, onChangeSliderHours, chartHou
         note="観測点を開いたときに最初に表示する範囲です。グラフ上のボタンでいつでも切り替えられます。"
       />
     </>
+  );
+}
+
+
+// 地図の最大ズームレベル。
+export function MaxZoomSettings({ value, onChange }) {
+  return (
+    <AmedasRangeGroup
+      title="これ以上は拡大できません" options={MAX_ZOOM_OPTIONS}
+      value={value} onChange={onChange}
+      formatOption={(z) => (z >= 22 ? "制限なし" : `ズーム ${z}`)}
+      note="数字が小さいほど、拡大できる限度が低くなります。"
+    />
   );
 }
