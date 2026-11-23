@@ -1627,12 +1627,17 @@ export class ShakeDetectionEngine {
 
   // 観測点の位置情報から近傍点リストを事前計算する(SetupNearPoints相当)。
   // 観測点マスタが変わった時だけ呼び直せばよい(毎tick呼ぶ必要はない)。
-  initialize(stations) {
+  // options.includeOceanBottom: trueなら海底観測点(id 5000以上、S-net等)も検知の対象に含める
+  // (緊急地震速報連動の検知テスト用。通常はfalseで、従来通り除外する)。
+  initialize(stations, options = {}) {
     const { neighborRadiusKm, maxNeighbors } = this.params;
     // 海底観測点(id 5000以上、S-net等)は検知の対象外とする。マスタの時点で
     // 除外しておくことで、自身がトリガーになることはもちろん、他の観測点の
     // 近傍裏付けとして使われることも無くなる。
-    const targetStations = stations.filter((s) => !isOceanBottomStationId(s.id));
+    // 例外: options.includeOceanBottomがtrueの間(緊急地震速報連動のテスト)は、除外しない。
+    const targetStations = options.includeOceanBottom
+      ? stations
+      : stations.filter((s) => !isOceanBottomStationId(s.id));
     const prevPoints = this.points;
     this.points = new Map();
     for (const s of targetStations) {

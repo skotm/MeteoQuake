@@ -28,7 +28,7 @@ export function attachWorkerHandler(port: WorkerPort): AnalysisPipeline {
           setJmaTravelTimeTable(tableFromJSON(msg.json));
           break;
         case "setStations":
-          pipeline.setStations(msg.stations, msg.weakArrayEnabled);
+          pipeline.setStations(msg.stations, msg.weakArrayEnabled, msg.includeOceanBottom === true);
           break;
         case "setWeakArrayEnabled":
           pipeline.setWeakArrayEnabled(msg.enabled);

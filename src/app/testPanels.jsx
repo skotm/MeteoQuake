@@ -712,6 +712,15 @@ export function ShakeDetectionTestPanel({ shakeTests = [], onAction, shakeTestFo
 
       <SettingsCard>
         <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12.5, fontWeight: 600, color: tokens.text }}>
+            <input
+              type="checkbox"
+              checked={f.showTrueEpicenter !== false}
+              onChange={e => patchForm({ showTrueEpicenter: e.target.checked })}
+              style={{ accentColor: "#30D158" }}
+            />
+            設定した震源のマークを地図に表示する
+          </label>
           <PressableButton
             type="button"
             onClick={() => onAction?.("start")}
