@@ -729,14 +729,16 @@ export function MapCanvas({
             id: "amedas-dot-layer",
             type: "circle",
             source: "amedas-stations",
-            layout: { visibility: "none" },
+            layout: {
+              visibility: "none",
+              // 観測値が大きい(気温は0℃からの絶対値が大きい)点ほど前面に重ねる(circle-sort-keyはlayout側)
+              "circle-sort-key": ["get", "zKey"],
+            },
             paint: {
               "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 2.5, 8, 4, 12, 6],
               "circle-color": ["get", "color"],
               "circle-stroke-color": "#ffffff",
               "circle-stroke-width": 1,
-              // 観測値が大きい(気温は0℃からの絶対値が大きい)点ほど前面に重ねる
-              "circle-sort-key": ["get", "zKey"],
             },
           }, "station-points-symbol");
           map.addLayer({
