@@ -244,7 +244,7 @@ function MiniChart({ title, unit, decimals = 1, rows, pick, kind, color, tokens,
 function WindMark({ rot, color }) {
   // 風が吹いていく向きの矢印(静穏/不明は丸)
   return (
-    <svg width="20" height="20" viewBox="-11 -11 22 22" aria-hidden="true" style={{ flexShrink: 0 }}>
+    <svg width="16" height="16" viewBox="-11 -11 22 22" aria-hidden="true" style={{ flexShrink: 0 }}>
       {rot == null
         ? <circle r="3.5" fill="none" stroke={color} strokeWidth="1.6"/>
         : <path transform={`rotate(${rot})`} d="M0,-9 L5.5,6 L0,3 L-5.5,6 Z" fill={color}/>}
@@ -307,31 +307,40 @@ export function AmedasDetailPanel({ station, entry, timeMs, latestMs }) {
   const hair = `0.5px solid rgba(${tokens.ink},0.12)`;
   return (
     <div style={{ margin: "0 14px 2px", color: tokens.text, textAlign: "left" }}>
-      {/* 見出し: カードで囲まず、紙面のように素直に並べる */}
-      <div style={{ padding: "0 4px 8px" }}>
+      {/* 見出し: カードで囲まず、名称の下に「観測点番号(左)+観測時刻(右)」を1行で(台風カードと同じ) */}
+      <div style={{ padding: "0 4px 6px" }}>
         <div style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{station.name}</div>
-        <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.5)`, marginTop: 3 }}>
-          アメダス {station.code} ・ {amedasDateTimeLabel(timeMs)} 観測
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
+          <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.5)` }}>アメダス {station.code}</span>
+          <span style={{ flex: 1, minWidth: 4 }}/>
+          <span style={{ fontSize: 11.5, color: `rgba(${tokens.ink},0.5)`, whiteSpace: "nowrap" }}>{amedasDateTimeLabel(timeMs)} 観測</span>
         </div>
       </div>
 
-      {/* 主役: 気温(左)と風(右)。大きな数字だけで見せる */}
-      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, padding: "6px 4px 12px", borderBottom: hair }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>
+      {/* 主役: 気温と風を同じ大きさ・同じ作り(ラベル行+大きな数字+小さな単位)で2列に並べ、
+          真ん中の細線で区切って1つのまとまりにする */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "1fr 1fr", padding: "8px 0 10px",
+        borderTop: hair, borderBottom: hair,
+      }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, height: 16, fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>
             {heroColor && <span style={{ width: 8, height: 8, borderRadius: 4, background: heroColor, boxShadow: `0 0 0 1px rgba(${tokens.ink},0.15)` }}/>}
             気温
           </div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
-            <span className="mono" style={{ fontSize: 44, fontWeight: 800, lineHeight: 1.05 }}>{tempText}</span>
-            <span style={{ fontSize: 16, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>℃</span>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 3 }}>
+            <span className="mono" style={{ fontSize: 34, fontWeight: 800, lineHeight: 1.15 }}>{tempText}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: `rgba(${tokens.ink},0.55)` }}>℃</span>
           </div>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>風{m?.wind?.dirName ? `(${m.wind.dirName})` : ""}</div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 5 }}>
+        <div style={{ textAlign: "center", borderLeft: hair }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, height: 16, fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>
             {m?.wind && <WindMark rot={m.wind.rot} color="#26a69a"/>}
-            <span className="mono" style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.1 }}>{m?.wind ? m.wind.speedText : "--"}</span>
+            風{m?.wind?.dirName ? ` ${m.wind.dirName}` : ""}
+          </div>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 3 }}>
+            <span className="mono" style={{ fontSize: 34, fontWeight: 800, lineHeight: 1.15 }}>{m?.wind && m.wind.speed != null ? formatAmedasValue(m.wind.speed, 1) : "--"}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: `rgba(${tokens.ink},0.55)` }}>m/s</span>
           </div>
         </div>
       </div>
