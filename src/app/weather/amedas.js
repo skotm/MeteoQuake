@@ -215,6 +215,40 @@ export function loadAmedasTable() {
 
 /* ───────────── GeoJSON化 ───────────── */
 // table: loadAmedasTable()の結果 / frame: map/{時刻}.json / elementId: AMEDAS_ELEMENTSのキー
+// 風の矢印を「どのズームから出すか」(mz)を決める。ズームが小さい間は代表的な観測点だけ、
+// 拡大するほど増やす。風速の強い地点を優先して残す(矢印を出す地点だけが対象)。
+// ズームzのとき、約ARROW_CELL_PX四方に1本までになるよう、強い順に貪欲に採用する。
+export const ARROW_TIER_ZOOMS = [4, 5, 6, 7, 8, 9];
+const ARROW_CELL_PX = 60;
+export function assignArrowTiers(features) {
+  const cand = features
+    .filter(f => f.properties.rot >= 0)
+    .sort((a, b) => a.properties.sortKey - b.properties.sortKey);
+  const taken = new Set();
+  const cellOf = (f, z) => {
+    const deg = (ARROW_CELL_PX * 360) / (512 * Math.pow(2, z));
+    const [lon, lat] = f.geometry.coordinates;
+    return `${z}:${Math.floor(lon / deg)}:${Math.floor(lat / deg)}`;
+  };
+  const left = new Set(cand);
+  for (const z of ARROW_TIER_ZOOMS) {
+    for (const f of cand) {
+      if (!left.has(f)) continue;
+      // すでに採用済みの地点が同じマス(このzでの)にあれば採用しない
+      const key = cellOf(f, z);
+      if (taken.has(key)) continue;
+      taken.add(key);
+      f.properties.mz = z;
+      left.delete(f);
+    }
+    // 次のズームでは、これまでに採用した地点のマスも使用済みとして引き継ぐ必要がある
+    // (細かいマスに載せ替える)
+    const placed = cand.filter(f => !left.has(f));
+    for (const f of placed) taken.add(cellOf(f, z + 1));
+  }
+  for (const f of left) f.properties.mz = ARROW_TIER_ZOOMS[ARROW_TIER_ZOOMS.length - 1] + 1;
+}
+
 export function buildAmedasGeoJson(table, frame, elementId) {
   const el = AMEDAS_ELEMENTS[elementId];
   const features = [];
@@ -238,9 +272,14 @@ export function buildAmedasGeoJson(table, frame, elementId) {
     features.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: [st.lon, st.lat] },
-      properties: { code, name: st.name, v, label, color, textColor, sortKey, rot: rot ?? -1 },
+      properties: {
+        code, name: st.name, v, label, color, textColor, sortKey, rot: rot ?? -1,
+        wb: v == null ? 0 : Math.min(30, Math.round(v)), // 風矢印の画像を選ぶ風速の段階
+        mz: 99,
+      },
     });
   }
+  if (el.hasDirection) assignArrowTiers(features);
   return { type: "FeatureCollection", features };
 }
 

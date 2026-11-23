@@ -582,17 +582,17 @@ export function NowcastTimeSlider({ frames, frameIndex, onChangeFrameIndex, hide
 // 操作感だが、フレームに"kind"(実況/予測)の区別が無い(データ形式が未確認の
 // ため)ので、「現在」の位置は現在時刻に一番近いコマ(nowcastNearestIndexToNow)
 // から求める。
-export function PrecipTimeSlider({ frames, frameIndex, onChangeFrameIndex, formatLabel = formatPrecipFrameLabel }) {
+export function PrecipTimeSlider({ frames, frameIndex, onChangeFrameIndex, formatLabel = formatPrecipFrameLabel, hidePlay = false }) {
   const { tokens } = useContext(ThemeContext);
   const [isPlaying, setIsPlaying] = useState(false);
 
   useEffect(() => {
-    if (!isPlaying || !frames || frames.length < 2) return;
+    if (hidePlay || !isPlaying || !frames || frames.length < 2) return;
     const id = setInterval(() => {
       onChangeFrameIndex(prev => ((prev ?? 0) + 1) % frames.length);
     }, 700);
     return () => clearInterval(id);
-  }, [isPlaying, frames, onChangeFrameIndex]);
+  }, [hidePlay, isPlaying, frames, onChangeFrameIndex]);
 
   useEffect(() => {
     if (!frames || frames.length === 0) setIsPlaying(false);
@@ -610,7 +610,7 @@ export function PrecipTimeSlider({ frames, frameIndex, onChangeFrameIndex, forma
       style={{ flex: 1, minWidth: 0, animation: "appear 0.3s cubic-bezier(.25,1,.5,1)" }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px" }}>
-        <button
+        {!hidePlay && <button
           onClick={() => setIsPlaying(v => !v)}
           aria-label={isPlaying ? "自動再生を止める" : "自動再生する"}
           style={{
@@ -629,7 +629,7 @@ export function PrecipTimeSlider({ frames, frameIndex, onChangeFrameIndex, forma
               <path d="M6 4.2c0-1 1.1-1.7 2-1.1l12 7.8c.8.5.8 1.7 0 2.2l-12 7.8c-.9.6-2-.1-2-1.1z"/>
             </svg>
           )}
-        </button>
+        </button>}
         <span style={{
           fontSize: 12.5, fontWeight: 700, color: tokens.text, flexShrink: 0,
           whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums",

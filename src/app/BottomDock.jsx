@@ -65,7 +65,7 @@ export function BottomDock({
   warningLevelMap = {}, warningAreaByRegioncode = {}, selectedWarningArea, onSelectWarningAreaFromList, onBackFromWarningArea,
   onAlertLayerChange, onAlertModeChange, onRiverLayerChange, selectedRiverStation = null, onSelectRiverStation,
   active, navActive = active, quakeViewMode, onQuakeViewModeChange, onNav, navCollapseSignal, navDoubleTapSignal, layerOpen, layers, onToggleLayer, onLayerOpenChange,
-  quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [],
+  quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [], onFocusStation,
   tsunamis = [], tsunamiStatus = "loading", selectedTsunamiId, onSelectTsunami,
   isViewingPastTsunami = false,
   tsunamiHistory, onLoadMoreTsunamiHistory, onCausingQuakeChange,
@@ -970,20 +970,31 @@ export function BottomDock({
   const amedasMissing = amedasViewing && !amedasLoaded?.data && !amedasLoading;
   // 雨雲レーダーと併用中は、雨雲側のスライダー1本で両方を動かす(予報コマと再生ボタンは出さない)。
   // アメダスは雨雲の実況コマの時刻(10分に切り捨て)を表示する。最新の実況なら最新に追従。
-  const amedasLinked = amedasActive && nowcastEnabled;
+  const amedasLinked = amedasActive && (nowcastEnabled || !!precipMode);
   const nowcastLinkedFrames = useMemo(
     () => (amedasLinked && nowcastFrames ? nowcastFrames.filter(f => f.kind === "obs") : nowcastFrames),
     [amedasLinked, nowcastFrames]
   );
+  // 1/3/24時間降水量のコマは実況/予報の区別が無いので、現在に一番近いコマまでを「過去側」とみなす。
+  const precipLinkedFrames = useMemo(() => {
+    if (!(amedasLinked && precipFrames)) return precipFrames;
+    const nowIdx = nowcastNearestIndexToNow(precipFrames);
+    return nowIdx == null ? precipFrames : precipFrames.slice(0, nowIdx + 1);
+  }, [amedasLinked, precipFrames]);
   useEffect(() => {
-    if (!amedasLinked || !nowcastFrames || nowcastFrameIndex == null) return;
-    const lastObs = nowcastLinkedFrames.length - 1;
-    if (lastObs < 0) return;
-    // 予報コマを見ていたら、最新の実況に寄せる
-    if (nowcastFrameIndex > lastObs) { setNowcastFrameIndex(lastObs); return; }
-    const ms = nowcastValidtimeToMs(nowcastFrames[nowcastFrameIndex]?.validtime);
-    setAmedasViewMs(nowcastFrameIndex === lastObs || ms == null ? null : Math.floor(ms / 600000) * 600000);
-  }, [amedasLinked, nowcastFrames, nowcastFrameIndex, nowcastLinkedFrames]);
+    if (!amedasLinked) return;
+    const frames = nowcastEnabled ? nowcastFrames : precipFrames;
+    const linked = nowcastEnabled ? nowcastLinkedFrames : precipLinkedFrames;
+    const idx = nowcastEnabled ? nowcastFrameIndex : precipFrameIndex;
+    const setIdx = nowcastEnabled ? setNowcastFrameIndex : setPrecipFrameIndex;
+    if (!frames || !linked || idx == null) return;
+    const last = linked.length - 1;
+    if (last < 0) return;
+    // 予報側のコマを見ていたら、最新(現在)に寄せる
+    if (idx > last) { setIdx(last); return; }
+    const ms = nowcastValidtimeToMs(frames[idx]?.validtime);
+    setAmedasViewMs(idx === last || ms == null ? null : Math.floor(ms / 600000) * 600000);
+  }, [amedasLinked, nowcastEnabled, nowcastFrames, nowcastLinkedFrames, nowcastFrameIndex, precipFrames, precipLinkedFrames, precipFrameIndex]);
   const amedasSliderEl = amedasActive && !amedasLinked && !weatherMenuOpen && amedasFrames.length > 0 ? (
     <AmedasTimeSlider
       frames={amedasFrames}
@@ -1006,18 +1017,17 @@ export function BottomDock({
   // 含めず独立(重ねて表示できる)。
   function handleToggleWeatherMenuItem(id) {
     if (id.startsWith("amedas:")) {
-      // アメダスは雨雲レーダーとは併用でき、降水量・天気分布とは排他。
+      // アメダスは雨雲レーダー・1/3/24時間降水量とは併用でき、天気分布とは排他。
       const el = id.slice("amedas:".length);
       if (!AMEDAS_ELEMENTS[el]) return;
       setAmedasElement(prev => {
         const next = prev === el ? null : el;
-        if (next) { setPrecipMode(null); setWdistMode(null); }
+        if (next) setWdistMode(null);
         return next;
       });
       return;
     }
     if (id === "precip1h" || id === "precip3h" || id === "precip24h") {
-      setAmedasElement(null);
       setPrecipMode(prev => {
         const next = prev === id ? null : id;
         if (next) { setNowcastEnabled(false); setWdistMode(null); }
@@ -1051,6 +1061,17 @@ export function BottomDock({
     temperatureDistribution: wdistMode === "temperature",
     ...Object.fromEntries(Object.keys(AMEDAS_ELEMENTS).map(k => [`amedas:${k}`, amedasElement === k])),
   };
+
+  // 各地の震度の表で観測点名をタッチした時。縦画面ではシートが地図を隠すので、
+  // 見える高さまで下げてから(アニメーションが落ち着いた頃に)地図を観測点へ寄せる。
+  function handleSelectStationFromList(point) {
+    if (!isWide && snapIndex > 2) {
+      setSnapIndex(2);
+      setTimeout(() => onFocusStation?.(point), 420);
+    } else {
+      onFocusStation?.(point);
+    }
+  }
 
   // 台風タブ版の「戻る」— 詳細カードから一覧表示に戻す。フローティング自体は
   // 閉じない(閉じた時の選択解除は別のuseEffectで扱う)。
@@ -2584,9 +2605,10 @@ export function BottomDock({
               zIndex: 50,
             }}>
               <PrecipTimeSlider
-                frames={precipFrames}
+                frames={precipLinkedFrames}
                 frameIndex={precipFrameIndex ?? 0}
                 onChangeFrameIndex={setPrecipFrameIndex}
+                hidePlay={amedasLinked}
               />
             </div>
           )}
@@ -2640,9 +2662,10 @@ export function BottomDock({
           {/* 1/3/24時間降水量の時刻スライダー。雨雲レーダーとは排他。 */}
           {precipMode && !weatherMenuOpen && (
             <PrecipTimeSlider
-              frames={precipFrames}
+              frames={precipLinkedFrames}
               frameIndex={precipFrameIndex ?? 0}
               onChangeFrameIndex={setPrecipFrameIndex}
+              hidePlay={amedasLinked}
             />
           )}
           {/* 天気分布予報の時刻スライダー。他とは全て排他。 */}
@@ -2990,7 +3013,7 @@ export function BottomDock({
                         {stationPoints.length > 0 && (
                           <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
                             showHeader={!(selected.longPeriodInfo && (selected.longPeriodInfo.areas || []).length > 0 && onSetLpMapView)}
-                            openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>
+                            openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey} onSelectStation={handleSelectStationFromList}/>
                         )}
                         {!selected.isEqdb && <QuakeMessageCard quake={selected} part="bottom"/>}
                         {shouldShowNearbyQuakeButton(selected) && (
@@ -3372,7 +3395,7 @@ export function BottomDock({
                       {stationPoints.length > 0 && (
                         <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
                             showHeader={!(selected.longPeriodInfo && (selected.longPeriodInfo.areas || []).length > 0 && onSetLpMapView)}
-                          openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>
+                          openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey} onSelectStation={handleSelectStationFromList}/>
                       )}
                       {!selected.isEqdb && <QuakeMessageCard quake={selected} part="bottom"/>}
                       {shouldShowNearbyQuakeButton(selected) && (

@@ -493,7 +493,7 @@ export function QuakeMessageCard({ quake, part = "all" }) {
    要約画面の最下部にまとめて表示する(詳細画面では表示しない)。
    ───────────────────────────────────────────────────── */
 // 各地の震度は階層表示(震度→都道府県→市区町村)のみ。displayModeは互換のため受け取るだけで使わない。
-export function StationPointsList({ points, displayMode: _unusedDisplayMode, openKey, onOpenKeyChange, showHeader = false }) {
+export function StationPointsList({ points, displayMode: _unusedDisplayMode, openKey, onOpenKeyChange, showHeader = false, onSelectStation }) {
   const { tokens } = useContext(ThemeContext);
 
   const [expanded, setExpanded] = useState(false); // 一覧表示(list)用の「すべて表示」
@@ -572,7 +572,7 @@ export function StationPointsList({ points, displayMode: _unusedDisplayMode, ope
         prefEntry.cityIndexOf.set(cityKey, prefEntry.cities.length);
         prefEntry.cities.push({ city: p.city, addrs: [] });
       }
-      prefEntry.cities[prefEntry.cityIndexOf.get(cityKey)].addrs.push(stripStationMark(p.addr));
+      prefEntry.cities[prefEntry.cityIndexOf.get(cityKey)].addrs.push({ text: stripStationMark(p.addr), point: p });
     }
     return byPref;
   }
@@ -664,7 +664,28 @@ export function StationPointsList({ points, displayMode: _unusedDisplayMode, ope
                               {entry.cities.map((c, ci) => (
                                 <div key={ci} style={{ marginTop: ci > 0 ? 6 : 0, fontSize: 14, lineHeight: 1.7 }}>
                                   {c.city && <span style={{ fontWeight: 700, color: tokens.text }}>{c.city} </span>}
-                                  <span style={{ color: `rgba(${tokens.ink},0.88)` }}>{c.addrs.join(" ")}</span>
+                                  <span style={{ color: `rgba(${tokens.ink},0.88)` }}>
+                                    {c.addrs.map((a, ai) => {
+                                      const canFocus = !!onSelectStation && !a.point.isArea && a.point.latitude != null && a.point.longitude != null;
+                                      return (
+                                        <span key={ai}>
+                                          {ai > 0 && " "}
+                                          {canFocus ? (
+                                            // タッチすると、その観測点へ地図をズームして名前のチップを出す
+                                            <span
+                                              role="button" tabIndex={0}
+                                              onClick={() => onSelectStation(a.point)}
+                                              style={{
+                                                cursor: "pointer", borderRadius: 4, padding: "0 1px",
+                                                textDecoration: "underline", textDecorationStyle: "dotted",
+                                                textDecorationColor: `rgba(${tokens.ink},0.35)`, textUnderlineOffset: 3,
+                                              }}
+                                            >{a.text}</span>
+                                          ) : a.text}
+                                        </span>
+                                      );
+                                    })}
+                                  </span>
                                 </div>
                               ))}
                             </div>
