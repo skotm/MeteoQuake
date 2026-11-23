@@ -158,4 +158,32 @@ test("横軸の目盛り: 範囲内の正時だけ", () => {
   assert.deepEqual(t.map((x: number) => A.amedasTimeLabel(x)), ["20:00", "21:00", "22:00"]);
   const long = A.hourTicks(t0, t0 + 10 * 3600000);
   assert.ok(long.length <= 5);
+  const day = A.hourTicks(t0, t0 + 24 * 3600000);
+  assert.ok(day.length >= 3 && day.length <= 5, `24h: ${day.length}本`);
+  assert.ok(day.every((x: number, i: number) => i === 0 || x - day[i - 1] === day[1] - day[0]), "等間隔");
+});
+
+
+test("時系列: 24時間を取得でき、ブロックはキャッシュされて範囲切替で再取得しない", async () => {
+  A.clearAmedasSeriesCache();
+  let calls = 0;
+  globalThis.fetch = (async (u: any) => {
+    calls++;
+    const m = /(\d{8})_(\d{2})\.json/.exec(String(u))!;
+    const body: any = {};
+    for (let k = 0; k < 18; k++) {
+      const mins = Number(m[2]) * 60 + k * 10;
+      body[`${m[1]}${String(Math.floor(mins / 60)).padStart(2, "0")}${String(mins % 60).padStart(2, "0")}00`] = { temp: [1, 0] };
+    }
+    return { ok: true, status: 200, json: async () => body };
+  }) as any;
+  const latest = A.parseAmedasLatestTime("2026-11-23T10:00:00+09:00")!;
+  const s24 = await A.loadAmedasSeries("44132", latest, 24);
+  assert.ok(s24.length >= 140 && s24.length <= 145, `n=${s24.length}`);
+  const n24 = calls;
+  assert.ok(n24 >= 8 && n24 <= 10);
+  const s6 = await A.loadAmedasSeries("44132", latest, 6);
+  assert.ok(s6.length >= 35 && s6.length <= 37);
+  assert.equal(calls, n24, "切り替えでは再取得しない");
+  A.clearAmedasSeriesCache();
 });

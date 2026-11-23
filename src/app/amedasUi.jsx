@@ -1,9 +1,9 @@
 import { useContext, useEffect, useRef, useState } from "react";
-import { Glass } from "./glass";
+import { Glass, PressableButton } from "./glass";
 import { ThemeContext } from "./theme";
 import {
   AMEDAS_ELEMENTS, amedasColor, amedasDateTimeLabel, amedasTextColor, amedasTimeLabel, buildAmedasDetailModel,
-  formatAmedasValue, hourTicks, loadAmedasSeries, niceTicks,
+  AMEDAS_SERIES_HOURS, formatAmedasValue, hourTicks, loadAmedasSeries, niceTicks,
 } from "./weather/amedas";
 
 /* ─────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ function MiniChart({ title, unit, decimals = 1, rows, pick, kind, color, tokens,
   const plotW = CHART_W - PAD_L - PAD_R, plotH = CHART_H - PAD_T - PAD_B;
   const x = (t) => PAD_L + ((t - t0) / (t1 - t0)) * plotW;
   const y = (v) => PAD_T + plotH - ((v - axis.min) / (axis.max - axis.min)) * plotH;
-  const bw = Math.max(3, plotW / Math.max(1, pts.length) - 2.5);
+  const bw = Math.max(1.5, (plotW / Math.max(1, pts.length)) * (pts.length > 40 ? 0.8 : 0.7));
   const xTicks = hourTicks(t0, t1);
 
   let path = "", area = "";
@@ -175,7 +175,7 @@ function MiniChart({ title, unit, decimals = 1, rows, pick, kind, color, tokens,
 
   return (
     <div style={{ marginTop: 10 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 11, marginBottom: 3 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 11.5, marginBottom: 3 }}>
         <span style={{ fontWeight: 700, color: tokens.text }}>{title} <span style={{ fontWeight: 500, color: `rgba(${tokens.ink},0.5)` }}>{unit}</span></span>
         <span style={{ fontVariantNumeric: "tabular-nums", color: `rgba(${tokens.ink},0.6)` }}>
           {allZeroBar ? "降水なし" : `最小 ${formatAmedasValue(Math.min(...vals), decimals)} / 最大 ${formatAmedasValue(Math.max(...vals), decimals)}`}
@@ -253,10 +253,10 @@ function WindMark({ rot, color }) {
 }
 
 // 台風カードと同じ作り: 項目を最大4列の1行にし、隣同士を縦の細線で区切る。
-function StatRow({ stats, tokens }) {
+function StatRow({ stats, tokens, loose = false }) {
   if (stats.length === 0) return null;
   return (
-    <div style={{ display: "grid", gridTemplateColumns: `repeat(${stats.length}, 1fr)`, columnGap: 6, marginTop: 5 }}>
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(${stats.length}, 1fr)`, columnGap: 6, marginTop: loose ? 10 : 5 }}>
       {stats.map((s, i) => (
         <div key={s.label} style={{
           textAlign: "center", minWidth: 0,
@@ -264,7 +264,7 @@ function StatRow({ stats, tokens }) {
           paddingLeft: i > 0 ? 6 : 0,
         }}>
           <div style={{ fontSize: 9.5, fontWeight: 700, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>{s.label}</div>
-          <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: tokens.text, whiteSpace: "nowrap" }}>{s.text}</div>
+          <div className="mono" style={{ fontSize: 16, fontWeight: 700, color: tokens.text, whiteSpace: "nowrap" }}>{s.text}</div>
         </div>
       ))}
     </div>
@@ -277,17 +277,18 @@ export function AmedasDetailPanel({ station, entry, timeMs, latestMs }) {
   const { tokens } = useContext(ThemeContext);
   const [series, setSeries] = useState(null); // null=読み込み中, []=取得不可
   const [hoverIdx, setHoverIdx] = useState(null);
+  const [rangeHours, setRangeHours] = useState(6);
   const code = station?.code;
   useEffect(() => {
     if (!code || latestMs == null) return undefined;
     let cancelled = false;
     setSeries(null);
     setHoverIdx(null);
-    loadAmedasSeries(code, latestMs)
+    loadAmedasSeries(code, latestMs, rangeHours)
       .then(rows => { if (!cancelled) setSeries(rows); })
       .catch(() => { if (!cancelled) setSeries([]); });
     return () => { cancelled = true; };
-  }, [code, latestMs]);
+  }, [code, latestMs, rangeHours]);
 
   if (!station) return null;
   const m = buildAmedasDetailModel(entry);
@@ -299,65 +300,68 @@ export function AmedasDetailPanel({ station, entry, timeMs, latestMs }) {
     ...(m?.others || []).map(r => ({ label: r.label.replace("(1時間)", "1h"), text: r.text })),
   ];
   const secondaryRows = [...chunk(precipStats, 4), ...chunk(otherStats, 4)];
-  // 主役の気温の色(地図の丸と同じスケール)で、カード全体を薄く色づける(地震カードの最大震度と同じ考え方)
+  // 気温の色(地図の丸と同じスケール)は、小さな色ドットで示す
   const tempV = m?.temp?.v ?? null;
   const heroColor = tempV != null ? amedasColor(AMEDAS_ELEMENTS.temp.stops, tempV) : null;
-  const heroText = heroColor ? amedasTextColor(heroColor) : tokens.text;
-  const tempParts = m?.temp && tempV != null ? formatAmedasValue(tempV, 1) : null;
+  const tempText = tempV != null ? formatAmedasValue(tempV, 1) : "--";
+  const hair = `0.5px solid rgba(${tokens.ink},0.12)`;
   return (
     <div style={{ margin: "0 14px 2px", color: tokens.text, textAlign: "left" }}>
-      <div style={{
-        margin: "2px 0 6px", borderRadius: 16, padding: "9px 16px",
-        display: "flex", alignItems: "center", gap: 14,
-        background: heroColor ? `linear-gradient(135deg, ${heroColor}38, ${heroColor}14)` : `rgba(${tokens.ink},0.05)`,
-        boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
-        animation: "appear 0.35s cubic-bezier(.25,1,.5,1) backwards",
-      }}>
-        {/* 気温バッジ(地震カードの最大震度バッジと同じ位置・大きさ) */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0 }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, lineHeight: 1.1 }}>気温</span>
-          <div style={{
-            width: 64, height: 64, borderRadius: 14,
-            background: heroColor || `rgba(${tokens.ink},0.12)`, color: heroText,
-            display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", lineHeight: 1,
-          }}>
-            <span className="mono" style={{ fontSize: tempParts && tempParts.length > 4 ? 22 : 26, fontWeight: 800 }}>{tempParts ?? "--"}</span>
-            <span style={{ fontSize: 11, fontWeight: 700, marginTop: 2, opacity: 0.85 }}>℃</span>
+      {/* 見出し: カードで囲まず、紙面のように素直に並べる */}
+      <div style={{ padding: "0 4px 8px" }}>
+        <div style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{station.name}</div>
+        <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.5)`, marginTop: 3 }}>
+          アメダス {station.code} ・ {amedasDateTimeLabel(timeMs)} 観測
+        </div>
+      </div>
+
+      {/* 主役: 気温(左)と風(右)。大きな数字だけで見せる */}
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, padding: "6px 4px 12px", borderBottom: hair }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>
+            {heroColor && <span style={{ width: 8, height: 8, borderRadius: 4, background: heroColor, boxShadow: `0 0 0 1px rgba(${tokens.ink},0.15)` }}/>}
+            気温
+          </div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
+            <span className="mono" style={{ fontSize: 44, fontWeight: 800, lineHeight: 1.05 }}>{tempText}</span>
+            <span style={{ fontSize: 16, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>℃</span>
           </div>
         </div>
-
-        {/* 観測点名 / 風 / 観測時刻 — 地震カードの「震源地 / M・深さ / 発生時刻」と同じ3段 */}
-        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0, lineHeight: 1.1 }}>
-            <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0 }}>観測点</span>
-            <span style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{station.name}</span>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, lineHeight: 1.1, minHeight: 24 }}>
-            <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0 }}>風{m?.wind?.dirName ? `(${m.wind.dirName})` : ""}</span>
-            {m?.wind ? (
-              <>
-                <WindMark rot={m.wind.rot} color="#26a69a"/>
-                <span className="mono" style={{ fontSize: 21, fontWeight: 800 }}>{m.wind.speedText}</span>
-              </>
-            ) : <span className="mono" style={{ fontSize: 14, opacity: 0.5 }}>--</span>}
-          </div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1 }}>
-            <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0 }}>観測時刻</span>
-            <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.85)` }}>{amedasDateTimeLabel(timeMs)}</span>
-            <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.45)` }}>アメダス {station.code}</span>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: `rgba(${tokens.ink},0.6)` }}>風{m?.wind?.dirName ? `(${m.wind.dirName})` : ""}</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 5 }}>
+            {m?.wind && <WindMark rot={m.wind.rot} color="#26a69a"/>}
+            <span className="mono" style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.1 }}>{m?.wind ? m.wind.speedText : "--"}</span>
           </div>
         </div>
       </div>
 
       {!m && <div style={{ padding: "8px 0", fontSize: 12, opacity: 0.6, textAlign: "center" }}>この時刻の観測値はありません</div>}
       {secondaryRows.length > 0 && (
-        <Glass radius={16} style={{ padding: "6px 12px 8px" }}>
+        <Glass radius={16} style={{ margin: "12px 0 0", padding: "6px 12px 8px" }}>
           {secondaryRows.map((row, i) => <StatRow key={i} stats={row} tokens={tokens}/>)}
         </Glass>
       )}
 
-      <div style={{ padding: "8px 4px 4px", fontSize: 11.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}>
-        直近3時間の推移 <span style={{ fontWeight: 500, opacity: 0.8 }}>なぞると値を確認</span>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 4px 4px" }}>
+        <span style={{ fontSize: 11.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}>
+          直近{rangeHours}時間の推移 <span style={{ fontWeight: 500, opacity: 0.8 }}>なぞると値を確認</span>
+        </span>
+        <div style={{ display: "flex", gap: 4 }}>
+          {AMEDAS_SERIES_HOURS.map(h => (
+            <PressableButton
+              key={h}
+              onClick={() => setRangeHours(h)}
+              style={{
+                fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 999,
+                background: rangeHours === h ? "#0A84FF" : `rgba(${tokens.ink},0.06)`,
+                color: rangeHours === h ? "#fff" : tokens.text,
+              }}
+            >
+              {h}h
+            </PressableButton>
+          ))}
+        </div>
       </div>
       <Glass radius={16} style={{ padding: "4px 12px 12px" }}>
         {series == null && <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.5)`, padding: "16px 4px", textAlign: "center" }}>読み込み中...</div>}
