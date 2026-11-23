@@ -219,7 +219,7 @@ export function loadAmedasTable() {
 // 拡大するほど増やす。風速の強い地点を優先して残す(矢印を出す地点だけが対象)。
 // ズームzのとき、約ARROW_CELL_PX四方に1本までになるよう、強い順に貪欲に採用する。
 export const ARROW_TIER_ZOOMS = [4, 5, 6, 7, 8, 9];
-const ARROW_CELL_PX = 60;
+const ARROW_CELL_PX = 26; // 画面上でこの間隔(px)に1本まで(矢印の大きさより詰めて、全国でも十分な数を出す)
 export function assignArrowTiers(features) {
   const cand = features
     .filter(f => f.properties.rot >= 0)
@@ -279,7 +279,6 @@ export function buildAmedasGeoJson(table, frame, elementId) {
       },
     });
   }
-  if (el.hasDirection) assignArrowTiers(features);
   return { type: "FeatureCollection", features };
 }
 
