@@ -766,3 +766,30 @@ export function saveCityFillZoom(zoom) {
     console.warn("市区町村塗りの切替ズームを保存できませんでした:", err);
   }
 }
+
+
+/* ─────────────────────────────────────────────────────
+   地図の最大ズームレベル。これ以上は拡大できない(ボタン・ピンチ・ダブルタップのすべて)。
+   観測点や区域の表示は、極端に拡大しても情報が増えないため、既定で12に制限する。
+   ───────────────────────────────────────────────────── */
+export const MAX_ZOOM_OPTIONS = [8, 10, 12, 14, 16, 22]; // 22 = 制限なし
+export const MAX_ZOOM_DEFAULT = 12;
+const MAX_ZOOM_STORAGE_KEY = "mapMaxZoom";
+
+export function loadStoredMaxZoom() {
+  try {
+    const v = Number(localStorage.getItem(MAX_ZOOM_STORAGE_KEY));
+    if (MAX_ZOOM_OPTIONS.includes(v)) return v;
+  } catch (err) {
+    console.warn("最大ズームレベルの設定を読み込めませんでした:", err);
+  }
+  return MAX_ZOOM_DEFAULT;
+}
+
+export function saveMaxZoom(v) {
+  try {
+    localStorage.setItem(MAX_ZOOM_STORAGE_KEY, String(v));
+  } catch (err) {
+    console.warn("最大ズームレベルの設定を保存できませんでした:", err);
+  }
+}

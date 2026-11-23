@@ -8,6 +8,7 @@ import { setJmaTravelTimeTable, tableFromJSON } from "./engines/jmaTravelTime";
 import { APP_VERSION, CONSENT_DOCS, isConsentUpToDate, loadStoredConsent, saveConsent } from "./app/consent";
 import { loadMarkdownFile } from "./app/settingsPanels";
 import { QUAKE_COLOR_SCHEMES, getLongPeriodStyleFromScheme, QuakeColorSchemeContext, REALTIME_API_BASE_URL, loadStoredQuakeColorScheme, saveQuakeColorScheme } from "./app/colorSchemes";
+import { loadStoredMaxZoom, saveMaxZoom } from "./app/settingsStorage";
 import { Filters, LAYERS } from "./app/navigation";
 import { useIsStandalonePwa, useIsWideLayout, useWideUIScale } from "./app/layoutHooks";
 import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilterBreakage, loadGlassOpaqueOverride, saveGlassOpaqueOverride } from "./app/glass";
@@ -269,6 +270,8 @@ export default function App() {
   // 選択したスキームはlocalStorageに保存し、次回起動時も復元する。
   const [quakeColorScheme, setQuakeColorScheme] = useState(loadStoredQuakeColorScheme); // "legacy" | "jma" | "fill"
 
+  const [mapMaxZoom, setMapMaxZoom] = useState(loadStoredMaxZoom);
+  const handleChangeMaxZoom = useCallback((z) => { setMapMaxZoom(z); saveMaxZoom(z); }, []);
   function handleChangeQuakeColorScheme(schemeId) {
     setQuakeColorScheme(schemeId);
     saveQuakeColorScheme(schemeId);
@@ -3393,6 +3396,7 @@ export default function App() {
           stationPoints={showQuakeMapLayers && !lpViewActive ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
           stationFocusRequest={stationFocusRequest}
+          maxZoom={mapMaxZoom}
           tideStationPoints={
             showTideGaugeLayer ? tideStationsForMap
             : showActiveTsunamiTideStations ? warnedTideStationsForMap
@@ -3957,6 +3961,8 @@ export default function App() {
                   onToggleTideStationMarkersVisible={() => setTideStationMarkersVisible(v => !v)}
                   stationPoints={selectedQuakePoints}
                   onFocusStation={handleFocusStation}
+                  maxZoom={mapMaxZoom}
+                  onChangeMaxZoom={handleChangeMaxZoom}
                   onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
                   estIntensityEnabled={estIntensityEnabled}
                   onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
@@ -4151,6 +4157,8 @@ export default function App() {
               onToggleTideStationMarkersVisible={() => setTideStationMarkersVisible(v => !v)}
               stationPoints={selectedQuakePoints}
               onFocusStation={handleFocusStation}
+                  maxZoom={mapMaxZoom}
+                  onChangeMaxZoom={handleChangeMaxZoom}
               onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
               estIntensityEnabled={estIntensityEnabled}
               onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
