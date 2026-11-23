@@ -766,6 +766,8 @@ export function MapCanvas({
               "symbol-sort-key": ["get", "sortKey"],
             },
           }, "station-points-symbol");
+          // 数値ラベルは矢印より前面に重ねる(矢印の後ろに隠れないように)
+          map.moveLayer("amedas-label-layer", "station-points-symbol");
           map.addLayer({
             id: "amedas-highlight-layer",
             type: "circle",
