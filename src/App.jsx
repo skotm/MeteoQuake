@@ -3956,7 +3956,6 @@ export default function App() {
                   tideStationMarkersVisible={tideStationMarkersVisible}
                   onToggleTideStationMarkersVisible={() => setTideStationMarkersVisible(v => !v)}
                   stationPoints={selectedQuakePoints}
-              onFocusStation={handleFocusStation}
                   onFocusStation={handleFocusStation}
                   onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
                   estIntensityEnabled={estIntensityEnabled}
@@ -4151,6 +4150,7 @@ export default function App() {
               tideStationMarkersVisible={tideStationMarkersVisible}
               onToggleTideStationMarkersVisible={() => setTideStationMarkersVisible(v => !v)}
               stationPoints={selectedQuakePoints}
+              onFocusStation={handleFocusStation}
               onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
               estIntensityEnabled={estIntensityEnabled}
               onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
