@@ -732,6 +732,8 @@ export function MapCanvas({
               "circle-color": ["get", "color"],
               "circle-stroke-color": "#ffffff",
               "circle-stroke-width": 1,
+              // 観測値が大きい(気温は0℃からの絶対値が大きい)点ほど前面に重ねる
+              "circle-sort-key": ["get", "zKey"],
             },
           }, "station-points-symbol");
           map.addLayer({
@@ -763,7 +765,8 @@ export function MapCanvas({
               "icon-size": ["interpolate", ["linear"], ["zoom"], 4, 0.45, 6, 0.6, 8, 0.85, 10, 1],
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
-              "symbol-sort-key": ["get", "sortKey"],
+              // 重なる時は風速の大きい矢印を前面に(昇順に描くので、大きい値ほど後=手前)
+              "symbol-sort-key": ["get", "zKey"],
             },
           }, "station-points-symbol");
           // 数値ラベルは矢印より前面に重ねる(矢印の後ろに隠れないように)

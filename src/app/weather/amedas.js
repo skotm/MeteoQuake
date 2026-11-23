@@ -78,7 +78,7 @@ export const AMEDAS_ELEMENTS = {
     id: "temp", legendTitle: "気温", key: "temp", label: "気温", unit: "℃", decimals: 1,
     stops: [[-15, "#1a237e"], [-5, "#1976d2"], [0, "#4fc3f7"], [10, "#a5d6a7"], [20, "#fff59d"], [25, "#ffb74d"], [30, "#ff7043"], [35, "#d32f2f"], [40, "#6a1b9a"]],
     legend: [-10, 0, 10, 20, 30, 35],
-    priority: (v) => -Math.abs(v - 15), // 極端な値を優先して表示
+    priority: (v) => Math.abs(v), // 0℃からの絶対値が大きい(猛暑・厳寒)ほど優先して前面に
   },
   precip: {
     id: "precip", legendTitle: "降水1h", key: "precipitation1h", label: "降水量(1時間)", unit: "mm", decimals: 1,
@@ -97,7 +97,7 @@ export const AMEDAS_ELEMENTS = {
     id: "humidity", legendTitle: "湿度", key: "humidity", label: "湿度", unit: "%", decimals: 0,
     stops: [[0, "#ffb74d"], [30, "#fff176"], [50, "#c5e1a5"], [70, "#81d4fa"], [100, "#1976d2"]],
     legend: [20, 40, 60, 80, 100],
-    priority: (v) => -Math.abs(v - 60),
+    priority: (v) => Math.abs(v - 50), // 50%から離れている(乾燥・多湿)ほど優先して前面に
   },
   snow: {
     id: "snow", legendTitle: "積雪", key: "snow", label: "積雪", unit: "cm", decimals: 0,
@@ -257,13 +257,13 @@ export function buildAmedasGeoJson(table, frame, elementId) {
     const st = table[code];
     if (!st || !amedasObserves(entry, el.key)) continue;
     const v = amedasPick(entry, el.key);
-    let label = "", color = "#9aa0a6", textColor = "#ffffff", sortKey = 1e6, rot = null;
+    let label = "", color = "#9aa0a6", textColor = "#ffffff", sortKey = 1e6, zKey = -1e6, rot = null;
     if (v != null) {
       const raw = amedasColor(el.stops, v);
       color = quantizeHex(raw);
       textColor = amedasTextColor(color);
       label = formatAmedasValue(v, el.decimals);
-      sortKey = -el.priority(v);
+      sortKey = -el.priority(v); zKey = el.priority(v);
       if (el.hasDirection) {
         const dir = amedasPick(entry, "windDirection");
         rot = windArrowRotation(dir);
@@ -273,7 +273,7 @@ export function buildAmedasGeoJson(table, frame, elementId) {
       type: "Feature",
       geometry: { type: "Point", coordinates: [st.lon, st.lat] },
       properties: {
-        code, name: st.name, v, label, color, textColor, sortKey, rot: rot ?? -1,
+        code, name: st.name, v, label, color, textColor, sortKey, zKey, rot: rot ?? -1,
         wb: v == null ? 0 : Math.min(30, Math.round(v)), // 風矢印の画像を選ぶ風速の段階
         mz: 99,
       },
