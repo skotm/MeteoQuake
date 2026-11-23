@@ -3214,7 +3214,7 @@ export function MapCanvas({
     map.setLayoutProperty("amedas-arrow-layer", "visibility", windMode ? "visible" : "none");
     // 風のとき: 点は静穏/風向なしの地点だけ。数値ラベルは矢印の下に添え、重なるものは間引く。
     map.setFilter("amedas-dot-layer", windMode ? ["<", ["get", "rot"], 0] : null);
-    map.setLayerZoomRange("amedas-label-layer", windMode ? 6 : 0, 24);
+    map.setLayerZoomRange("amedas-label-layer", windMode ? 0 : 0, 24);
     map.setLayoutProperty("amedas-label-layer", "icon-offset", windMode ? [0, 34] : [0, 0]);
     const source = map.getSource("amedas-stations");
     if (source) source.setData(amedasVisible && amedasGeoJson ? amedasGeoJson : { type: "FeatureCollection", features: [] });
