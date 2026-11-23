@@ -196,3 +196,17 @@ test("buildAmedasFrames: 範囲(時間)に応じたコマ数", async () => {
   assert.equal(buildAmedasFrames(t, 24).length, 145);
   assert.equal(buildAmedasFrames(t, 24).at(-1)!.timeMs, t);
 });
+
+test("assignArrowTiers: 強い地点が先に出て、近接地点は後のズームになる", () => {
+  const mk = (lon: number, lat: number, v: number) => ({
+    geometry: { coordinates: [lon, lat] },
+    properties: { rot: 0, sortKey: -v, mz: 99 },
+  });
+  const a = mk(135, 35, 20), b = mk(135.01, 35.01, 5), c = mk(140, 40, 3);
+  const nodir = { geometry: { coordinates: [130, 33] }, properties: { rot: -1, sortKey: 0, mz: 99 } };
+  A.assignArrowTiers([a, b, c, nodir]);
+  assert.equal(a.properties.mz, 4);
+  assert.equal(c.properties.mz, 4);
+  assert.ok(b.properties.mz > 4);
+  assert.equal(nodir.properties.mz, 99);
+});

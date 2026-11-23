@@ -2414,6 +2414,9 @@ export default function App() {
   // 次のタスクにずらして計算することで、その間に「観測点データを処理中…」を描画させる。
   const [selectedQuakePoints, setSelectedQuakePoints] = useState([]);
   const [stationPointsProcessing, setStationPointsProcessing] = useState(false);
+  // 各地の震度の表で観測点名をタッチした時の、地図への視点移動+名前チップ表示の依頼
+  const [stationFocusRequest, setStationFocusRequest] = useState(null);
+  const handleFocusStation = useCallback((point) => setStationFocusRequest({ point, nonce: Date.now() }), []);
   useEffect(() => {
     if (!selectedQuake) {
       setSelectedQuakePoints([]);
@@ -3389,6 +3392,7 @@ export default function App() {
           onSelectRiverStation={handleSelectRiverStation}
           stationPoints={showQuakeMapLayers && !lpViewActive ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
+          stationFocusRequest={stationFocusRequest}
           tideStationPoints={
             showTideGaugeLayer ? tideStationsForMap
             : showActiveTsunamiTideStations ? warnedTideStationsForMap
@@ -3952,6 +3956,8 @@ export default function App() {
                   tideStationMarkersVisible={tideStationMarkersVisible}
                   onToggleTideStationMarkersVisible={() => setTideStationMarkersVisible(v => !v)}
                   stationPoints={selectedQuakePoints}
+              onFocusStation={handleFocusStation}
+                  onFocusStation={handleFocusStation}
                   onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
                   estIntensityEnabled={estIntensityEnabled}
                   onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}

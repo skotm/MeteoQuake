@@ -2,7 +2,8 @@ import { MIN_INTENSITY as SHINDO_MIN_INTENSITY, intensityToShindoColor } from ".
 import { NOWCAST_BOUNDS, nowcastProtocolUrl, precipProtocolUrl, wdistProtocolUrl } from "./weather/nowcast";
 import { registerNowcastProtocol, registerPrecipProtocol, registerWdistProtocol } from "./weather/typhoon";
 import { registerRiskProtocol, riskProtocolUrl } from "./weather/risk";
-import { AMEDAS_ARROW_ID, registerAmedasImages } from "./amedasIcons";
+import { registerAmedasImages } from "./amedasIcons";
+import { ARROW_TIER_ZOOMS as AMEDAS_ARROW_TIERS } from "./weather/amedas";
 import { getTileStatus, onTileRetry, retryAllTiles, subscribeTileStatus } from "./weather/tileFetch";
 import { buildWarningAreaColorExpr, buildWarningAreasGeoJson, loadWarningAreasFullGeoJson } from "./warnings";
 import { useRef, useState, useContext, useEffect } from "react";
@@ -10,7 +11,7 @@ import { AnalysisRunner, shouldUseAnalysisWorker } from "../analysis/analysisRun
 import { AreaFillCoordinator } from "./areaFillState";
 import { P_WAVE_SPEED_KM_S as EPICENTER_ESTIMATE_P_WAVE_SPEED_KM_S, S_WAVE_SPEED_KM_S as EPICENTER_ESTIMATE_S_WAVE_SPEED_KM_S } from "../engines/shakeTestSimulation";
 import { pickEewsToFocus } from "../eewCameraFocus";
-import { focusMapOnPoints } from "./mapFocus";
+import { focusMapOnPoints, getFloatingInsets } from "./mapFocus";
 import { ShakeCameraFollower, SHAKE_RESUME_MS } from "./shakeCameraFollow";
 import { DEFAULT_CAMERA_SETTINGS } from "./settingsStorage";
 import { EMPTY_REALTIME_VALUES, QUAKE_COLOR_SCHEMES, QuakeColorSchemeContext, getLongPeriodStyleFromScheme, intensityValueToKey, replayJmaSubthresholdColor } from "./colorSchemes";
@@ -59,8 +60,16 @@ function enforceFrameCap(map, prefix, keepKeys, cap) {
   } catch { /* ignore */ }
 }
 
+// 観測点チップの2行目。「震度5弱 ・ 東京都 千代田区」の形。
+function stationChipSub(p) {
+  const key = p.intensityKey;
+  const label = key === "5u" ? "震度 未入電" : `震度${INTENSITY_LABEL[key] ?? key}`;
+  const place = [p.pref, p.city].filter(Boolean).join(" ");
+  return place ? `${label} ・ ${place}` : label;
+}
+
 export function MapCanvas({
-  onReady, stationPoints, hypocenters, isWide,
+  onReady, stationPoints, stationFocusRequest, hypocenters, isWide,
   quakeTimeStr, maxIntensityKey, estIntensityEnabled, areaFillEnabled,
   // 市区町村単位の震度塗り(ズームを上げると細分区域塗りから切り替わる)。
   // quakeCityFillEligibleは、旧震度階級の地震・テスト配信ではfalse(従来どおり細分区域塗りのまま)。
@@ -177,6 +186,9 @@ export function MapCanvas({
   // { x, y, title, text } | null。x,yは地図コンテナ基準のスクリーン座標
   // (MapLibreのe.pointがそのままその座標系なので、変換不要で使える)。
   const [epicenterTooltip, setEpicenterTooltip] = useState(null);
+  // 観測点をクリックした時に出す名前チップ。位置は地図の動きに追従させる(画面座標をposに持つ)。
+  const [stationChip, setStationChip] = useState(null); // { lng, lat, title, sub, intensityKey }
+  const [stationChipPos, setStationChipPos] = useState(null);
 
   // リアルタイムタブで観測点をタップした時に選択される観測点(id/name/intensity等)。
   // BottomDock側の詳細カード表示に使う。onSelectEpicenterPoint等とは異なり、
@@ -737,23 +749,28 @@ export function MapCanvas({
               "symbol-sort-key": ["get", "sortKey"],
             },
           }, "station-points-symbol");
-          map.addLayer({
-            id: "amedas-arrow-layer",
-            type: "symbol",
-            source: "amedas-stations",
-            filter: [">=", ["get", "rot"], 0],
-            minzoom: 6,
-            layout: {
-              visibility: "none",
-              "icon-image": AMEDAS_ARROW_ID,
-              "icon-rotate": ["get", "rot"],
-              "icon-rotation-alignment": "map",
-              "icon-size": ["interpolate", ["linear"], ["zoom"], 6, 0.6, 12, 0.9],
-              "icon-offset": [0, -22],
-              "icon-allow-overlap": true,
-              "icon-ignore-placement": true,
-            },
-          }, "station-points-symbol");
+          // 風の矢印: 代表的な観測点はズームが小さくても出し、拡大するほど増やす(mz=出し始めるズーム)。
+          // フィルタに["zoom"]は使えないので、段(mz)ごとにレイヤーを分けてminzoomで切り替える。
+          AMEDAS_ARROW_TIERS.forEach((z, i) => {
+            const last = i === AMEDAS_ARROW_TIERS.length - 1;
+            map.addLayer({
+              id: `amedas-arrow-layer-${z}`,
+              type: "symbol",
+              source: "amedas-stations",
+              filter: last ? [">=", ["get", "mz"], z] : ["==", ["get", "mz"], z],
+              minzoom: z,
+              layout: {
+                visibility: "none",
+                "icon-image": ["concat", "am|W|", ["to-string", ["get", "wb"]], "|", ["get", "color"]],
+                "icon-rotate": ["get", "rot"],
+                "icon-rotation-alignment": "map",
+                "icon-size": ["interpolate", ["linear"], ["zoom"], 4, 0.7, 10, 1],
+                "icon-allow-overlap": true,
+                "icon-ignore-placement": true,
+                "symbol-sort-key": ["get", "sortKey"],
+              },
+            }, "station-points-symbol");
+          });
           map.addLayer({
             id: "amedas-highlight-layer",
             type: "circle",
@@ -767,7 +784,7 @@ export function MapCanvas({
               "circle-stroke-width": 3,
             },
           }, "station-points-symbol");
-          ["amedas-label-layer", "amedas-dot-layer"].forEach(layerId => {
+          [...AMEDAS_ARROW_TIERS.map(z => `amedas-arrow-layer-${z}`), "amedas-label-layer", "amedas-dot-layer"].forEach(layerId => {
             map.on("click", layerId, (e) => {
               if (!e.features || !e.features.length) return;
               onSelectAmedasStationRef.current?.(e.features[0].properties.code);
@@ -1272,6 +1289,22 @@ export function MapCanvas({
             onSelectEpicenterPointRef.current?.(e.features[0].properties.id);
           });
 
+          // 地震タブ: 観測点(震度アイコン)をクリックしたら名前のチップを出す。別の場所をクリックしたら消す。
+          // レイヤー側のclickではなく地図全体のclickで判定する(出す/消すを1か所で決めるため)。
+          map.on("click", (e) => {
+            const r = 8; // 指でも当てやすいよう、少し広めの当たり判定
+            const hits = map.queryRenderedFeatures(
+              [[e.point.x - r, e.point.y - r], [e.point.x + r, e.point.y + r]],
+              { layers: ["station-points-symbol"] }
+            );
+            if (!hits.length) { setStationChip(null); return; }
+            // 重なっていたら、震度の大きい(前面の)ものを優先
+            const top = hits.reduce((a, b) => ((b.properties.sortOrder ?? 0) > (a.properties.sortOrder ?? 0) ? b : a));
+            const p = top.properties;
+            const [lng, lat] = top.geometry.coordinates;
+            setStationChip({ lng, lat, title: p.name, sub: stationChipSub(p), intensityKey: p.intensityKey });
+          });
+
           // 警報タブ: 塗り分けられた市区町村をタップした時、regioncodeを親(App)に
           // 伝える。名称・警報種別は親側でwarningLevelMap/エリア名マスタから
           // 引くため、ここではregioncodeだけ渡せば十分。
@@ -1585,6 +1618,9 @@ export function MapCanvas({
       properties: {
         intensityKey: STATION_ICON_KEYS.includes(p.intensityKey) ? p.intensityKey : "0",
         sortOrder: STATION_ICON_KEYS.indexOf(p.intensityKey),
+        name: String(p.addr || "").replace(/[*＊]/g, "").trim(),
+        pref: p.pref || "",
+        city: p.city || "",
       },
     });
 
@@ -1597,6 +1633,48 @@ export function MapCanvas({
     stationSource.setData({ type: "FeatureCollection", features: stationFeatures });
     areaSource.setData({ type: "FeatureCollection", features: areaFeatures });
   }, [stationPoints, status, stationMarkersVisible]);
+
+  // 表示中の地震が変わったら、観測点チップは消す
+  useEffect(() => { setStationChip(null); }, [stationPoints]);
+
+  // チップは地図の動き(パン・ズーム)に追従させる
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready" || !stationChip) { setStationChipPos(null); return undefined; }
+    const update = () => {
+      const pt = map.project([stationChip.lng, stationChip.lat]);
+      setStationChipPos({ x: pt.x, y: pt.y });
+    };
+    update();
+    map.on("move", update);
+    return () => { map.off("move", update); };
+  }, [stationChip, status]);
+
+  // 各地の震度の表で観測点名をタッチした時: その観測点へズームして、名前のチップを出す。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready" || !stationFocusRequest?.point) return;
+    const t = stationFocusRequest.point;
+    const hit = (stationPoints || []).find(p => !p.isArea && p.pref === t.pref && p.addr === t.addr && p.latitude != null && p.longitude != null)
+      || (t.latitude != null && t.longitude != null ? t : null);
+    if (!hit) return;
+    const lng = hit.longitude, lat = hit.latitude;
+    const ins = getFloatingInsets(map, isWide);
+    const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // フローティングに隠れていない部分の中心に来るよう、オフセットで寄せる
+    map.easeTo({
+      center: [lng, lat],
+      zoom: Math.max(map.getZoom(), 9.5),
+      offset: [(ins.left - ins.right) / 2, (ins.top - ins.bottom) / 2],
+      duration: reduced ? 0 : 800,
+    });
+    const name = String(hit.addr || "").replace(/[*＊]/g, "").trim();
+    setStationChip({
+      lng, lat, title: name,
+      sub: stationChipSub({ intensityKey: STATION_ICON_KEYS.includes(hit.intensityKey) ? hit.intensityKey : "0", pref: hit.pref, city: hit.city }),
+      intensityKey: hit.intensityKey,
+    });
+  }, [stationFocusRequest]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // リアルタイムタブ(強震モニタ/S-net)の表示/非表示切り替え。
   useEffect(() => {
@@ -3137,7 +3215,14 @@ export function MapCanvas({
     map.setLayoutProperty("amedas-dot-layer", "visibility", vis);
     map.setLayoutProperty("amedas-label-layer", "visibility", vis);
     map.setLayoutProperty("amedas-highlight-layer", "visibility", vis);
-    map.setLayoutProperty("amedas-arrow-layer", "visibility", amedasVisible && amedasElementId === "wind" ? "visible" : "none");
+    const windMode = amedasVisible && amedasElementId === "wind";
+    AMEDAS_ARROW_TIERS.forEach(z => {
+      if (map.getLayer(`amedas-arrow-layer-${z}`)) map.setLayoutProperty(`amedas-arrow-layer-${z}`, "visibility", windMode ? "visible" : "none");
+    });
+    // 風のとき: 点は静穏/風向なしの地点だけ。数値ラベルは拡大時のみ、矢印の下に添える。
+    map.setFilter("amedas-dot-layer", windMode ? ["<", ["get", "rot"], 0] : null);
+    map.setLayerZoomRange("amedas-label-layer", windMode ? 9 : 0, 24);
+    map.setLayoutProperty("amedas-label-layer", "icon-offset", windMode ? [0, 30] : [0, 0]);
     const source = map.getSource("amedas-stations");
     if (source) source.setData(amedasVisible && amedasGeoJson ? amedasGeoJson : { type: "FeatureCollection", features: [] });
   }, [amedasVisible, amedasGeoJson, amedasElementId, status]);
@@ -3665,6 +3750,30 @@ export function MapCanvas({
           }}/>
           <span style={{ fontSize: 12 }}>地図を読み込み中…</span>
         </div>
+      )}
+
+      {/* 観測点をクリックした時の名前チップ(観測点の真上)。選んだ点には白い輪も付ける。 */}
+      {stationChip && stationChipPos && (
+        <>
+          <div style={{
+            position: "absolute", left: stationChipPos.x, top: stationChipPos.y,
+            width: 30, height: 30, borderRadius: 15, transform: "translate(-50%, -50%)",
+            border: "2px solid rgba(255,255,255,0.95)", boxShadow: "0 0 0 1px rgba(0,0,0,0.35)",
+            pointerEvents: "none", zIndex: 19,
+          }}/>
+          <div style={{
+            position: "absolute", left: stationChipPos.x, top: stationChipPos.y,
+            transform: "translate(-50%, -100%) translateY(-22px)",
+            pointerEvents: "none", zIndex: 20,
+            padding: "6px 10px", borderRadius: 10,
+            background: mode === "dark" ? "rgba(28,28,30,0.92)" : "rgba(255,255,255,0.95)",
+            boxShadow: "0 2px 10px rgba(0,0,0,0.35)",
+            color: tokens.text, fontSize: 11, lineHeight: 1.4, whiteSpace: "nowrap", maxWidth: 240,
+          }}>
+            <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis" }}>{stationChip.title}</div>
+            <div style={{ opacity: 0.8 }}>{stationChip.sub}</div>
+          </div>
+        </>
       )}
 
       {/* 震央分布の丸をホバー/タッチした時に出る簡易ツールチップ */}

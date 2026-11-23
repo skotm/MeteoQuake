@@ -62,11 +62,44 @@ function addArrow(map) {
   map.addImage(AMEDAS_ARROW_ID, ctx.getImageData(0, 0, s, s), { pixelRatio: SCALE });
 }
 
+// 風の矢印。画像id "am|W|{風速段階}|{色}"。上向きに描き、icon-rotateで風向きへ回す。
+// 風速が強いほど長く・太くする(上限あり)。中心が観測点の位置になるよう正方形のキャンバスにする。
+function addWindArrow(map, id) {
+  const [, , bStr, color] = id.split("|");
+  const b = Math.max(0, Math.min(30, Number(bStr) || 0));
+  const len = (16 + Math.min(b, 20) * 1.5) * SCALE;       // 16〜46px
+  const shaftW = (2.2 + Math.min(b, 20) * 0.12) * SCALE;  // 2.2〜4.6px
+  const headW = shaftW * 2.6, headL = Math.min(len * 0.45, 14 * SCALE);
+  const s = Math.ceil(len + 8 * SCALE);
+  const canvas = document.createElement("canvas");
+  canvas.width = s; canvas.height = s;
+  const ctx = canvas.getContext("2d");
+  ctx.translate(s / 2, s / 2);
+  const top = -len / 2, bottom = len / 2;
+  ctx.beginPath();
+  ctx.moveTo(0, top);
+  ctx.lineTo(headW / 2, top + headL);
+  ctx.lineTo(shaftW / 2, top + headL);
+  ctx.lineTo(shaftW / 2, bottom);
+  ctx.lineTo(-shaftW / 2, bottom);
+  ctx.lineTo(-shaftW / 2, top + headL);
+  ctx.lineTo(-headW / 2, top + headL);
+  ctx.closePath();
+  ctx.fillStyle = color || "#0A84FF";
+  ctx.fill();
+  ctx.lineWidth = 1.5 * SCALE; ctx.strokeStyle = "rgba(255,255,255,0.95)"; ctx.lineJoin = "round"; ctx.stroke();
+  // 観測点の位置(中心)に濃い点
+  ctx.beginPath(); ctx.arc(0, 0, 2.6 * SCALE, 0, Math.PI * 2);
+  ctx.fillStyle = "#263238"; ctx.fill();
+  ctx.lineWidth = 1.2 * SCALE; ctx.strokeStyle = "#ffffff"; ctx.stroke();
+  map.addImage(id, ctx.getImageData(0, 0, s, s), { pixelRatio: SCALE });
+}
+
 // 地図作成直後に1回だけ呼ぶ。
 export function registerAmedasImages(map) {
   addArrow(map);
   map.on("styleimagemissing", (e) => {
     if (!e.id || !e.id.startsWith(AMEDAS_ICON_PREFIX)) return;
-    try { if (!map.hasImage(e.id)) addPill(map, e.id); } catch { /* ignore */ }
+    try { if (!map.hasImage(e.id)) (e.id.startsWith("am|W|") ? addWindArrow(map, e.id) : addPill(map, e.id)); } catch { /* ignore */ }
   });
 }
