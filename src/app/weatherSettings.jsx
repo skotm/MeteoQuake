@@ -2,6 +2,7 @@ import { useContext } from "react";
 import { PressableButton } from "./glass";
 import { ThemeContext } from "./theme";
 import { SettingsCard, SettingsCardDivider } from "./settingsPrimitives";
+import { AMEDAS_CHART_RANGE_OPTIONS, AMEDAS_SLIDER_RANGE_OPTIONS } from "./weather/amedas";
 import { JMA_NOWCAST_SOURCE_PALETTE, NOWCAST_COLOR_SCHEMES } from "./weather/nowcast";
 
 // 雨雲レーダー配色の一覧選択画面(震度配色ピッカーと全く同じ見た目・作り)。
@@ -91,5 +92,55 @@ export function TyphoonForecastIntervalSettings({ intervalHours, onChangeInterva
         );
       })}
     </SettingsCard>
+  );
+}
+
+
+// アメダスの取得時間の範囲。地図のスライダーでさかのぼれる範囲と、観測点の推移グラフの初期範囲。
+function AmedasRangeGroup({ title, note, options, value, onChange }) {
+  const { tokens } = useContext(ThemeContext);
+  return (
+    <>
+      <div style={{ padding: "6px 16px 6px", fontSize: 11.5, fontWeight: 600, color: `rgba(${tokens.ink},0.55)` }}>{title}</div>
+      <SettingsCard>
+        {options.map((h, i) => {
+          const selected = value === h;
+          return (
+            <div key={h}>
+              {i > 0 && <SettingsCardDivider/>}
+              <PressableButton
+                onClick={() => onChange(h)}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "11px 12px",
+                  background: selected ? `rgba(${tokens.ink},0.07)` : "transparent",
+                  border: "none", cursor: "pointer", textAlign: "left",
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 600, color: tokens.text, flex: 1 }}>{h}時間</span>
+                {selected && <span style={{ fontSize: 13, color: `rgba(${tokens.ink},0.85)` }}>✓</span>}
+              </PressableButton>
+            </div>
+          );
+        })}
+      </SettingsCard>
+      {note && <div style={{ padding: "6px 16px 12px", fontSize: 11.5, color: `rgba(${tokens.ink},0.5)` }}>{note}</div>}
+    </>
+  );
+}
+
+export function AmedasRangeSettings({ sliderHours, onChangeSliderHours, chartHours, onChangeChartHours }) {
+  return (
+    <>
+      <AmedasRangeGroup
+        title="地図のスライダー" options={AMEDAS_SLIDER_RANGE_OPTIONS}
+        value={sliderHours} onChange={onChangeSliderHours}
+        note="さかのぼれる時間です。長くすると、時刻を動かしたときの通信量が増えます。"
+      />
+      <AmedasRangeGroup
+        title="観測点の推移グラフ(初期値)" options={AMEDAS_CHART_RANGE_OPTIONS}
+        value={chartHours} onChange={onChangeChartHours}
+        note="観測点を開いたときに最初に表示する範囲です。グラフ上のボタンでいつでも切り替えられます。"
+      />
+    </>
   );
 }

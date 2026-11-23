@@ -32,7 +32,7 @@ import { TyphoonDetailCard, TyphoonListPanel } from "./TyphoonPanel";
 import { WeatherLocationPanel } from "./WeatherLocationPanel";
 import { startVisiblePolling } from "./visiblePolling";
 import { getTileStatus, prefetchAllowed, subscribeTileStatus } from "./weather/tileFetch";
-import { AMEDAS_ELEMENTS, buildAmedasFrames, buildAmedasGeoJson, floorToHourMs, loadAmedasFrame, loadAmedasLatestMs, loadAmedasTable } from "./weather/amedas";
+import { AMEDAS_ELEMENTS, buildAmedasFrames, buildAmedasGeoJson, floorToHourMs, loadAmedasFrame, loadAmedasLatestMs, loadAmedasTable, loadStoredAmedasChartRange, loadStoredAmedasSliderRange, saveAmedasChartRange, saveAmedasSliderRange } from "./weather/amedas";
 import { AmedasDetailPanel, AmedasTimeSlider } from "./amedasUi";
 import { NowcastTimeSlider, PrecipTimeSlider } from "./weatherLegends";
 
@@ -872,12 +872,22 @@ export function BottomDock({
     return () => { cancelled = true; stop(); };
   }, [amedasActive]);
 
+  // 取得時間の範囲(設定タブで変更、localStorageに保存)
+  const [amedasSliderHours, setAmedasSliderHoursState] = useState(loadStoredAmedasSliderRange);
+  const [amedasChartHours, setAmedasChartHoursState] = useState(loadStoredAmedasChartRange);
+  const handleChangeAmedasSliderHours = useCallback((h) => { setAmedasSliderHoursState(h); saveAmedasSliderRange(h); }, []);
+  const handleChangeAmedasChartHours = useCallback((h) => { setAmedasChartHoursState(h); saveAmedasChartRange(h); }, []);
+  // 範囲を狭めて、見ていた時刻が範囲外になったら最新に戻す
+  useEffect(() => {
+    setAmedasViewMs(v => (v != null && amedasLatestMs != null && v < amedasLatestMs - amedasSliderHours * 3600000) ? null : v);
+  }, [amedasSliderHours]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // 積雪など毎正時にしか値が無い要素は、スライダーも正時のコマだけにする。
   const amedasHourly = !!AMEDAS_ELEMENTS[amedasElement]?.hourlyOnly;
   const amedasFrames = useMemo(() => {
-    const all = buildAmedasFrames(amedasLatestMs);
+    const all = buildAmedasFrames(amedasLatestMs, amedasSliderHours);
     return amedasHourly ? all.filter(f => f.timeMs % 3600000 === 0) : all;
-  }, [amedasLatestMs, amedasHourly]);
+  }, [amedasLatestMs, amedasHourly, amedasSliderHours]);
   const amedasStepMs = amedasHourly ? 3600000 : 600000;
   // 表示する時刻。範囲(3時間)から外れたら端のコマに寄せる。最新に追従中は最後のコマ。
   const amedasViewTimeMs = useMemo(() => {
@@ -3091,6 +3101,10 @@ export function BottomDock({
                   onChangeNowcastColorScheme={onChangeNowcastColorScheme}
                   typhoonForecastIntervalHours={typhoonForecastIntervalHours}
                   onChangeTyphoonForecastIntervalHours={handleChangeTyphoonForecastIntervalHours}
+                  amedasSliderHours={amedasSliderHours}
+                  onChangeAmedasSliderHours={handleChangeAmedasSliderHours}
+                  amedasChartHours={amedasChartHours}
+                  onChangeAmedasChartHours={handleChangeAmedasChartHours}
                   estIntensityEnabled={estIntensityEnabled}
                   onChangeEstIntensityEnabled={onChangeEstIntensityEnabled}
                   areaFillEnabled={areaFillEnabled}
@@ -3216,6 +3230,7 @@ export function BottomDock({
                     entry={selectedAmedasStation.entry}
                     timeMs={selectedAmedasStation.timeMs}
                     latestMs={selectedAmedasStation.latestMs}
+                    defaultRangeHours={amedasChartHours}
                   />
                 ) : typhoonEnabled ? (
                   selectedTyphoonInfo ? (
