@@ -2,7 +2,7 @@ import { useContext } from "react";
 import { PressableButton } from "./glass";
 import { ThemeContext } from "./theme";
 import { SettingsCard, SettingsCardDivider } from "./settingsPrimitives";
-import { MAX_ZOOM_OPTIONS } from "./settingsStorage";
+import { MAX_ZOOM_DEFAULT, MAX_ZOOM_MAX, MAX_ZOOM_MIN, clampMaxZoom } from "./settingsStorage";
 import { AMEDAS_CHART_RANGE_OPTIONS, AMEDAS_SLIDER_RANGE_OPTIONS } from "./weather/amedas";
 import { JMA_NOWCAST_SOURCE_PALETTE, NOWCAST_COLOR_SCHEMES } from "./weather/nowcast";
 
@@ -147,14 +147,37 @@ export function AmedasRangeSettings({ sliderHours, onChangeSliderHours, chartHou
 }
 
 
-// 地図の最大ズームレベル。
+// 地図の最大ズームレベル(スライダーで調節)。
 export function MaxZoomSettings({ value, onChange }) {
+  const { tokens } = useContext(ThemeContext);
   return (
-    <AmedasRangeGroup
-      title="これ以上は拡大できません" options={MAX_ZOOM_OPTIONS}
-      value={value} onChange={onChange}
-      formatOption={(z) => (z >= 22 ? "制限なし" : `ズーム ${z}`)}
-      note="数字が小さいほど、拡大できる限度が低くなります。"
-    />
+    <>
+      <SettingsCard>
+        <div style={{ padding: "12px 16px 14px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+            <span style={{ fontSize: 15, fontWeight: 500, color: `rgba(${tokens.ink},0.9)` }}>最大ズームレベル</span>
+            <span style={{ fontSize: 14, fontVariantNumeric: "tabular-nums", color: `rgba(${tokens.ink},0.6)` }}>{value.toFixed(1)}</span>
+          </div>
+          {value !== MAX_ZOOM_DEFAULT && (
+            <button
+              type="button"
+              onClick={() => onChange(MAX_ZOOM_DEFAULT)}
+              style={{ marginTop: 6, padding: "4px 10px", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 12, fontFamily: "inherit",
+                color: `rgba(${tokens.ink},0.7)`, background: `rgba(${tokens.ink},0.08)` }}
+            >初期値({MAX_ZOOM_DEFAULT.toFixed(1)})に戻す</button>
+          )}
+          <input
+            type="range"
+            min={MAX_ZOOM_MIN} max={MAX_ZOOM_MAX} step={0.5}
+            value={value}
+            onChange={(e) => onChange(clampMaxZoom(e.target.value))}
+            style={{ width: "100%", marginTop: 8 }}
+          />
+          <div style={{ fontSize: 12, lineHeight: 1.6, color: `rgba(${tokens.ink},0.45)`, marginTop: 4 }}>
+            地図をこれ以上は拡大できません(ボタン・ピンチ・ダブルタップのすべて)。数字が小さいほど、拡大できる限度が低くなります。
+          </div>
+        </div>
+      </SettingsCard>
+    </>
   );
 }

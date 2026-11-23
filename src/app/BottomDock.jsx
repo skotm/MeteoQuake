@@ -970,7 +970,9 @@ export function BottomDock({
   const amedasMissing = amedasViewing && !amedasLoaded?.data && !amedasLoading;
   // 雨雲レーダーと併用中は、雨雲側のスライダー1本で両方を動かす(予報コマと再生ボタンは出さない)。
   // アメダスは雨雲の実況コマの時刻(10分に切り捨て)を表示する。最新の実況なら最新に追従。
-  const amedasLinked = amedasActive && (nowcastEnabled || !!precipMode);
+  // 連動(スライダー1本)するのは「アメダス降水量 × 雨雲レーダー」の組み合わせだけ。
+  // それ以外の要素(気温・風など)は、雨雲レーダーと併用しても別々のスライダーのまま。
+  const amedasLinked = amedasActive && amedasElement === "precip" && nowcastEnabled;
   const nowcastLinkedFrames = useMemo(
     () => (amedasLinked && nowcastFrames ? nowcastFrames.filter(f => f.kind === "obs") : nowcastFrames),
     [amedasLinked, nowcastFrames]
@@ -1010,45 +1012,56 @@ export function BottomDock({
 
   // 気象メニューの項目トグル共通ハンドラ。項目が増えるたびに個別のprops/分岐を
   // 増やさなくて済むよう、idで振り分ける形にしている。
-  // 雨雲レーダー・1/3/24時間降水量・天気分布予報(天気分布/気温分布)は
-  // 「地図に重ねる面情報」という意味で互いに全て排他にする(常にこのグループの
-  // 中でどれか1つだけが表示される)。天気分布/気温分布同士もラジオボタン的な
-  // 排他選択(1/3/24時間降水量と同じ考え方)。台風情報だけはこのグループに
-  // 含めず独立(重ねて表示できる)。
+  // 選べるのは基本的に1つだけ。併用できるのは次の2組だけで、それ以外を選ぶと他は外れる。
+  //   ・台風情報 × 雨雲レーダー
+  //   ・アメダス降水量 × 雨雲レーダー(スライダー1本で連動する)
+  const weatherKindsCompatible = (a, b) =>
+    (a === "nowcast" && (b === "typhoon" || b === "amedasPrecip")) ||
+    (b === "nowcast" && (a === "typhoon" || a === "amedasPrecip"));
+  // `kind`を選んだ時、それと併用できない他の項目を外す
+  function deselectIncompatible(kind) {
+    const out = (k) => k !== kind && !weatherKindsCompatible(kind, k);
+    if (out("typhoon")) setTyphoonEnabled(false);
+    if (out("nowcast")) setNowcastEnabled(false);
+    if (out("precip")) setPrecipMode(null);
+    if (out("wdist")) setWdistMode(null);
+    const amedasKind = amedasElement === "precip" ? "amedasPrecip" : "amedasOther";
+    if (amedasElement && out(amedasKind) && !(kind.startsWith("amedas") && amedasKind === kind)) setAmedasElement(null);
+  }
   function handleToggleWeatherMenuItem(id) {
     if (id.startsWith("amedas:")) {
-      // アメダスは雨雲レーダー・1/3/24時間降水量とは併用でき、天気分布とは排他。
       const el = id.slice("amedas:".length);
       if (!AMEDAS_ELEMENTS[el]) return;
-      setAmedasElement(prev => {
-        const next = prev === el ? null : el;
-        if (next) setWdistMode(null);
-        return next;
-      });
+      const turningOn = amedasElement !== el;
+      if (turningOn) {
+        // アメダス同士は、要素の切り替え(下のsetAmedasElementで置き換わる)なので外さない
+        const kind = el === "precip" ? "amedasPrecip" : "amedasOther";
+        const out = (k) => k !== kind && !weatherKindsCompatible(kind, k);
+        if (out("typhoon")) setTyphoonEnabled(false);
+        if (out("nowcast")) setNowcastEnabled(false);
+        if (out("precip")) setPrecipMode(null);
+        if (out("wdist")) setWdistMode(null);
+      }
+      setAmedasElement(turningOn ? el : null);
       return;
     }
     if (id === "precip1h" || id === "precip3h" || id === "precip24h") {
-      setPrecipMode(prev => {
-        const next = prev === id ? null : id;
-        if (next) { setNowcastEnabled(false); setWdistMode(null); }
-        return next;
-      });
+      const turningOn = precipMode !== id;
+      if (turningOn) deselectIncompatible("precip");
+      setPrecipMode(turningOn ? id : null);
     } else if (id === "typhoonInfo") {
-      setTyphoonEnabled(v => !v);
+      const turningOn = !typhoonEnabled;
+      if (turningOn) deselectIncompatible("typhoon");
+      setTyphoonEnabled(turningOn);
     } else if (id === "rainRadar") {
-      setNowcastEnabled(prev => {
-        const next = !prev;
-        if (next) { setPrecipMode(null); setWdistMode(null); }
-        return next;
-      });
+      const turningOn = !nowcastEnabled;
+      if (turningOn) deselectIncompatible("nowcast");
+      setNowcastEnabled(turningOn);
     } else if (id === "weatherDistribution" || id === "temperatureDistribution") {
       const mode = id === "weatherDistribution" ? "weather" : "temperature";
-      setAmedasElement(null);
-      setWdistMode(prev => {
-        const next = prev === mode ? null : mode;
-        if (next) { setPrecipMode(null); setNowcastEnabled(false); }
-        return next;
-      });
+      const turningOn = wdistMode !== mode;
+      if (turningOn) deselectIncompatible("wdist");
+      setWdistMode(turningOn ? mode : null);
     }
   }
   const weatherMenuItemStates = {

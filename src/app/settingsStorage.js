@@ -770,16 +770,23 @@ export function saveCityFillZoom(zoom) {
 
 /* ─────────────────────────────────────────────────────
    地図の最大ズームレベル。これ以上は拡大できない(ボタン・ピンチ・ダブルタップのすべて)。
-   観測点や区域の表示は、極端に拡大しても情報が増えないため、既定で12に制限する。
+   観測点や区域の表示は、極端に拡大しても情報が増えないため、既定で9に制限する。スライダーで調節できる。
    ───────────────────────────────────────────────────── */
-export const MAX_ZOOM_OPTIONS = [8, 10, 12, 14, 16, 22]; // 22 = 制限なし
-export const MAX_ZOOM_DEFAULT = 12;
-const MAX_ZOOM_STORAGE_KEY = "mapMaxZoom";
+export const MAX_ZOOM_MIN = 5;
+export const MAX_ZOOM_MAX = 18;
+export const MAX_ZOOM_DEFAULT = 9;
+const MAX_ZOOM_STORAGE_KEY = "mapMaxZoomLevel";
+
+export function clampMaxZoom(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return MAX_ZOOM_DEFAULT;
+  return Math.min(MAX_ZOOM_MAX, Math.max(MAX_ZOOM_MIN, Math.round(n * 2) / 2)); // 0.5刻み
+}
 
 export function loadStoredMaxZoom() {
   try {
-    const v = Number(localStorage.getItem(MAX_ZOOM_STORAGE_KEY));
-    if (MAX_ZOOM_OPTIONS.includes(v)) return v;
+    const raw = localStorage.getItem(MAX_ZOOM_STORAGE_KEY);
+    if (raw != null) return clampMaxZoom(raw);
   } catch (err) {
     console.warn("最大ズームレベルの設定を読み込めませんでした:", err);
   }
