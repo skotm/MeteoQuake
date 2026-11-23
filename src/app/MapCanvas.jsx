@@ -3,7 +3,6 @@ import { NOWCAST_BOUNDS, nowcastProtocolUrl, precipProtocolUrl, wdistProtocolUrl
 import { registerNowcastProtocol, registerPrecipProtocol, registerWdistProtocol } from "./weather/typhoon";
 import { registerRiskProtocol, riskProtocolUrl } from "./weather/risk";
 import { registerAmedasImages } from "./amedasIcons";
-import { ARROW_TIER_ZOOMS as AMEDAS_ARROW_TIERS } from "./weather/amedas";
 import { getTileStatus, onTileRetry, retryAllTiles, subscribeTileStatus } from "./weather/tileFetch";
 import { buildWarningAreaColorExpr, buildWarningAreasGeoJson, loadWarningAreasFullGeoJson } from "./warnings";
 import { useRef, useState, useContext, useEffect } from "react";
@@ -749,28 +748,24 @@ export function MapCanvas({
               "symbol-sort-key": ["get", "sortKey"],
             },
           }, "station-points-symbol");
-          // 風の矢印: 代表的な観測点はズームが小さくても出し、拡大するほど増やす(mz=出し始めるズーム)。
-          // フィルタに["zoom"]は使えないので、段(mz)ごとにレイヤーを分けてminzoomで切り替える。
-          AMEDAS_ARROW_TIERS.forEach((z, i) => {
-            const last = i === AMEDAS_ARROW_TIERS.length - 1;
-            map.addLayer({
-              id: `amedas-arrow-layer-${z}`,
-              type: "symbol",
-              source: "amedas-stations",
-              filter: last ? [">=", ["get", "mz"], z] : ["==", ["get", "mz"], z],
-              minzoom: z,
-              layout: {
-                visibility: "none",
-                "icon-image": ["concat", "am|W|", ["to-string", ["get", "wb"]], "|", ["get", "color"]],
-                "icon-rotate": ["get", "rot"],
-                "icon-rotation-alignment": "map",
-                "icon-size": ["interpolate", ["linear"], ["zoom"], 4, 0.7, 10, 1],
-                "icon-allow-overlap": true,
-                "icon-ignore-placement": true,
-                "symbol-sort-key": ["get", "sortKey"],
-              },
-            }, "station-points-symbol");
-          });
+          // 風の矢印: 間引かず、風向きのある全観測点・全ズームで出す(間引くのは数値ラベルだけ)。
+          map.addLayer({
+            id: "amedas-arrow-layer",
+            type: "symbol",
+            source: "amedas-stations",
+            filter: [">=", ["get", "rot"], 0],
+            layout: {
+              visibility: "none",
+              "icon-image": ["concat", "am|W|", ["to-string", ["get", "wb"]], "|", ["get", "color"]],
+              "icon-rotate": ["get", "rot"],
+              "icon-rotation-alignment": "map",
+              // 全部出すので、広域では小さくして重なりを抑える
+              "icon-size": ["interpolate", ["linear"], ["zoom"], 4, 0.4, 6, 0.55, 8, 0.8, 10, 1],
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+              "symbol-sort-key": ["get", "sortKey"],
+            },
+          }, "station-points-symbol");
           map.addLayer({
             id: "amedas-highlight-layer",
             type: "circle",
@@ -784,7 +779,7 @@ export function MapCanvas({
               "circle-stroke-width": 3,
             },
           }, "station-points-symbol");
-          [...AMEDAS_ARROW_TIERS.map(z => `amedas-arrow-layer-${z}`), "amedas-label-layer", "amedas-dot-layer"].forEach(layerId => {
+          ["amedas-arrow-layer", "amedas-label-layer", "amedas-dot-layer"].forEach(layerId => {
             map.on("click", layerId, (e) => {
               if (!e.features || !e.features.length) return;
               onSelectAmedasStationRef.current?.(e.features[0].properties.code);
@@ -3216,12 +3211,10 @@ export function MapCanvas({
     map.setLayoutProperty("amedas-label-layer", "visibility", vis);
     map.setLayoutProperty("amedas-highlight-layer", "visibility", vis);
     const windMode = amedasVisible && amedasElementId === "wind";
-    AMEDAS_ARROW_TIERS.forEach(z => {
-      if (map.getLayer(`amedas-arrow-layer-${z}`)) map.setLayoutProperty(`amedas-arrow-layer-${z}`, "visibility", windMode ? "visible" : "none");
-    });
-    // 風のとき: 点は静穏/風向なしの地点だけ。数値ラベルは拡大時のみ、矢印の下に添える。
+    map.setLayoutProperty("amedas-arrow-layer", "visibility", windMode ? "visible" : "none");
+    // 風のとき: 点は静穏/風向なしの地点だけ。数値ラベルは矢印の下に添え、重なるものは間引く。
     map.setFilter("amedas-dot-layer", windMode ? ["<", ["get", "rot"], 0] : null);
-    map.setLayerZoomRange("amedas-label-layer", windMode ? 9 : 0, 24);
+    map.setLayerZoomRange("amedas-label-layer", windMode ? 6 : 0, 24);
     map.setLayoutProperty("amedas-label-layer", "icon-offset", windMode ? [0, 30] : [0, 0]);
     const source = map.getSource("amedas-stations");
     if (source) source.setData(amedasVisible && amedasGeoJson ? amedasGeoJson : { type: "FeatureCollection", features: [] });
