@@ -169,8 +169,13 @@ export function MapCanvas({
   shakeTestTrueEpicenters = [],
   // 地震検知テスト連動の緊急地震速報シミュレーション実行中はtrue。
   // 緊急地震速報のP波/S波の予報円は出したまま、震源推定(地震検知用)の
-  // P波/S波到達円だけを隠す(マーカー・ラベルは従来通り表示する)。
+  // 震源推定のマーカー・P波/S波到達円・推定深さ/Mのラベルを、まとめて隠す。
   hideEstimateWaveCircles = false,
+  // 緊急地震速報連動の検知テスト中はtrue。海底観測点(S-net等、id 5000以上)も、
+  // 揺れ検知・震源推定の計算に含める(通常は除外)。
+  includeOceanBottomStations = false,
+  // 検知テストで設定した震源(正解の震源)の菱形マークを表示するか(テストパネルの切り替え)。
+  showTrueEpicenterMark = true,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -1713,19 +1718,21 @@ export function MapCanvas({
       );
     }
     // 震源推定マーカーも、強震モニタ本体+震源推定機能自体がONの間だけ出す。
+    // ただし緊急地震速報連動のテスト中(hideEstimateWaveCircles)は、EEWと紛らわしいので出さない。
     if (map.getLayer("epicenter-estimates-layer")) {
       map.setLayoutProperty(
         "epicenter-estimates-layer",
         "visibility",
-        showRealtimeMapLayers && epicenterEstimationEnabled ? "visible" : "none"
+        showRealtimeMapLayers && epicenterEstimationEnabled && !hideEstimateWaveCircles ? "visible" : "none"
       );
     }
     // 推定深さ・推定Mのラベルも、マーカー本体と同じ条件で表示する。
+    // ただし緊急地震速報連動のテスト中(hideEstimateWaveCircles)は、EEWのカードと紛らわしいので出さない。
     if (map.getLayer("epicenter-estimates-label-layer")) {
       map.setLayoutProperty(
         "epicenter-estimates-label-layer",
         "visibility",
-        showRealtimeMapLayers && epicenterEstimationEnabled ? "visible" : "none"
+        showRealtimeMapLayers && epicenterEstimationEnabled && !hideEstimateWaveCircles ? "visible" : "none"
       );
     }
     // 震源推定のP波・S波到達円も、マーカーと同じ条件(強震モニタ本体+
@@ -1751,14 +1758,14 @@ export function MapCanvas({
       map.setLayoutProperty(
         "shake-test-true-epicenter-fill-layer",
         "visibility",
-        showRealtimeMapLayers ? "visible" : "none"
+        showRealtimeMapLayers && showTrueEpicenterMark ? "visible" : "none"
       );
     }
     if (map.getLayer("shake-test-true-epicenter-outline-layer")) {
       map.setLayoutProperty(
         "shake-test-true-epicenter-outline-layer",
         "visibility",
-        showRealtimeMapLayers ? "visible" : "none"
+        showRealtimeMapLayers && showTrueEpicenterMark ? "visible" : "none"
       );
     }
     // グリッド方式の検知: セル枠は「グリッド検知」ON+「枠を表示」ON、震源推定マーカー・ラベルは
@@ -1775,7 +1782,7 @@ export function MapCanvas({
           showRealtimeMapLayers && gridDetectionEnabled && epicenterEstimationEnabled ? "visible" : "none");
       }
     }
-  }, [showRealtimeMapLayers, epicenterEstimationEnabled, gridDetectionEnabled, gridCellsVisible, hideEstimateWaveCircles, status]);
+  }, [showRealtimeMapLayers, epicenterEstimationEnabled, gridDetectionEnabled, gridCellsVisible, hideEstimateWaveCircles, showTrueEpicenterMark, status]);
 
   // 地震検知テストの「正解」の震源(shakeTestTrueEpicenters、複数同時実行に
   // 対応)が変わるたびに、菱形マーカー用のsourceを更新する。tickごとに
@@ -1847,11 +1854,12 @@ export function MapCanvas({
   // 変わった時(初回取得・更新時)だけ呼び直せば十分。
   const weakArrayDetectionEnabledRef = useRef(weakArrayDetectionEnabled);
   weakArrayDetectionEnabledRef.current = weakArrayDetectionEnabled;
+  // includeOceanBottomStationsが切り替わった時も再初期化する(海底観測点を検知の対象に含める/外す)。
   useEffect(() => {
     if (realtimeStations.length === 0) return;
     // 検知器の初期化(近傍点リストの再計算)。微弱検知の設定は、検知器を作る前に反映される。
-    analysisRef.current.setStations(realtimeStations, weakArrayDetectionEnabledRef.current);
-  }, [realtimeStations]);
+    analysisRef.current.setStations(realtimeStations, weakArrayDetectionEnabledRef.current, includeOceanBottomStations);
+  }, [realtimeStations, includeOceanBottomStations]);
   // 設定の切り替えを、実行中のエンジンへ反映する(グリッド検知の発火に必要な震度の水準も、微弱検知の設定に連動する)。
   useEffect(() => {
     analysisRef.current.setWeakArrayEnabled(weakArrayDetectionEnabled);

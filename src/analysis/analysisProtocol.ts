@@ -21,7 +21,7 @@ export interface TickItem {
 
 export type ToWorkerMessage =
   | { type: "setTravelTable"; json: TravelTableJson }
-  | { type: "setStations"; stations: Station[]; weakArrayEnabled: boolean }
+  | { type: "setStations"; stations: Station[]; weakArrayEnabled: boolean; includeOceanBottom?: boolean }
   | { type: "setWeakArrayEnabled"; enabled: boolean }
   /** 溜まったtickをまとめて送る。最後の1つ以外は、推定を省略して検知だけ進める。 */
   | { type: "ticks"; items: TickItem[] };

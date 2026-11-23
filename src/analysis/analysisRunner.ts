@@ -75,6 +75,7 @@ export class AnalysisRunner {
   // 同期モードへ切り替える時に、引き継ぐ設定
   private stations: Station[] | null = null;
   private weakArrayEnabled = false;
+  private includeOceanBottom = false;
 
   constructor(options: AnalysisRunnerOptions) {
     this.options = options;
@@ -87,11 +88,12 @@ export class AnalysisRunner {
   }
 
   /** 観測点マスタを(再)設定する。 */
-  setStations(stations: Station[], weakArrayEnabled: boolean): void {
+  setStations(stations: Station[], weakArrayEnabled: boolean, includeOceanBottom = false): void {
     this.stations = stations;
     this.weakArrayEnabled = weakArrayEnabled;
-    if (this.useWorkerNow()) this.client!.setStations(stations, weakArrayEnabled);
-    else this.pipeline!.setStations(stations, weakArrayEnabled);
+    this.includeOceanBottom = includeOceanBottom;
+    if (this.useWorkerNow()) this.client!.setStations(stations, weakArrayEnabled, includeOceanBottom);
+    else this.pipeline!.setStations(stations, weakArrayEnabled, includeOceanBottom);
   }
 
   /** 微弱検知の設定の切り替え。 */
@@ -143,7 +145,7 @@ export class AnalysisRunner {
     this.client?.terminate();
     this.client = null;
     this.pipeline = new AnalysisPipeline({ shakeParams: this.options.shakeParams });
-    if (this.stations) this.pipeline.setStations(this.stations, this.weakArrayEnabled);
+    if (this.stations) this.pipeline.setStations(this.stations, this.weakArrayEnabled, this.includeOceanBottom);
     else this.pipeline.setWeakArrayEnabled(this.weakArrayEnabled);
     this.options.onFallback?.(reason);
   }

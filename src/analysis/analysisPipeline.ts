@@ -94,7 +94,7 @@ export class AnalysisPipeline {
   }
 
   /** 観測点マスタを(再)設定する。観測点が空の間は何もしない。weakArrayEnabledは、検知器を作る前に反映する。 */
-  setStations(stations: Station[], weakArrayEnabled: boolean): void {
+  setStations(stations: Station[], weakArrayEnabled: boolean, includeOceanBottom = false): void {
     if (stations.length === 0) return;
     this.stations = stations;
     this.gridEngine.initialize(stations);
@@ -102,7 +102,8 @@ export class AnalysisPipeline {
     this.lastGridValues = null;
     // initializeが微弱検知器を作るので、その前に、設定を反映しておく
     this.shakeEngine.setWeakArrayEnabled(weakArrayEnabled);
-    this.shakeEngine.initialize(stations);
+    // includeOceanBottom: 緊急地震速報連動のテスト中だけ、海底観測点(S-net等)も検知・推定に含める。
+    this.shakeEngine.initialize(stations, { includeOceanBottom });
   }
 
   /** 微弱検知の設定の切り替えを、実行中のエンジンへ反映する(グリッド検知の発火水準も連動する)。 */

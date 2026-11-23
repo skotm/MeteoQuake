@@ -1184,6 +1184,8 @@ export default function App() {
       depth: 20,
       magnitude: 5.8,
       // 緊急地震速報との連動(非推奨・自己責任の実験的機能。既定OFF)。同意(eewConsent)は開始のたびに必要。
+      // 設定した震源(正解の震源)の菱形マークを地図に表示するか。既定ON。
+      showTrueEpicenter: true,
       eewLinked: false,
       eewConsent: false,
       // 断層の設定(M6.6以上で使う。震源=破壊の開始点)
@@ -3470,6 +3472,8 @@ export default function App() {
           onEpicenterEstimateChange={setEpicenterEstimates}
           shakeTestTrueEpicenters={shakeTestTrueEpicenters}
           hideEstimateWaveCircles={hasLinkedShakeTest}
+          includeOceanBottomStations={hasLinkedShakeTest}
+          showTrueEpicenterMark={shakeTestForm.showTrueEpicenter !== false}
         />
 
         {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ。

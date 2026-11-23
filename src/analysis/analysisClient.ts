@@ -42,8 +42,8 @@ export class AnalysisClient {
     this.transport.postMessage({ type: "setTravelTable", json });
   }
 
-  setStations(stations: Station[], weakArrayEnabled: boolean): void {
-    this.transport.postMessage({ type: "setStations", stations, weakArrayEnabled });
+  setStations(stations: Station[], weakArrayEnabled: boolean, includeOceanBottom = false): void {
+    this.transport.postMessage({ type: "setStations", stations, weakArrayEnabled, includeOceanBottom });
   }
 
   setWeakArrayEnabled(enabled: boolean): void {

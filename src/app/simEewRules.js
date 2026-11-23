@@ -18,6 +18,9 @@ export const EEW_RULES = Object.freeze({
   WARN_MIN_INTENSITY: 4.5,
   // 地域ごとの予測を載せる・更新判定に使う下限: 震度4以上(計測震度3.5以上)。
   AREA_MIN_INTENSITY: 3.5,
+  // MeteoQuake独自: 最大予測震度が6弱の報に限り、震度3の予測地域もカードに載せる(地図の塗り分け・一覧用)。
+  // 震度3の地域は警報の対象にはせず、報の更新判定(areaClasses)にも使わない。表示だけを増やす。
+  INT3_DISPLAY_WHEN_MAX_KEY: "6-",
 
   // ── 更新条件(前回の報を出した時点の内部値と比較する) ──
   // MeteoQuake独自: 発表値(M0.1刻み・深さ10km刻み)とは別に、内部値の変化で判定する。
@@ -184,9 +187,12 @@ export function evaluateReport(prev, latest) {
 
   // カードに載せる地域は、警報の対象地域だけ(予報の段階では載せない)。
   const areas = [];
+  const showInt3 = maxKey === R.INT3_DISPLAY_WHEN_MAX_KEY;
   for (const [name, v] of values) {
-    if (!warnNow || !warnAreas.has(name)) continue;
     const key = instrumentalIntensityToScaleKey(v);
+    const isWarnArea = warnNow && warnAreas.has(name);
+    // 最大予測震度が6弱の時は、震度3の地域も載せる(警報対象ではない)。
+    if (!isWarnArea && !(showInt3 && key === "3")) continue;
     const code = INTENSITY_SCALE_CODE[key] ?? 40;
     areas.push({
       pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: key,
