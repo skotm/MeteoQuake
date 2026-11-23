@@ -290,12 +290,33 @@ function pointUrl(code, blockMs) {
   return `${AMEDAS_BASE}/data/point/${code}/${t.y}${p2(t.mo)}${p2(t.d)}_${p2(t.h)}.json`;
 }
 
+// 推移グラフで選べる範囲(時間)
+export const AMEDAS_SERIES_HOURS = [3, 6, 12, 24];
+
+// 3時間ブロックのキャッシュ。終わったブロックは変わらないので保持し、
+// 最新を含むブロックは更新されるので短期(60秒)だけ使い回す。範囲を切り替えても取り直さない。
+const BLOCK_CACHE_MAX = 60;
+const blockCache = new Map(); // url -> { at, final, promise }
+function loadPointBlock(code, blockMs, latestMs) {
+  const url = pointUrl(code, blockMs);
+  const hit = blockCache.get(url);
+  if (hit && (hit.final || Date.now() - hit.at < 60000)) return hit.promise;
+  const promise = fetchBodyOrNull(url);
+  const entry = { at: Date.now(), final: blockMs + 3 * 3600000 <= latestMs, promise };
+  blockCache.set(url, entry);
+  promise.catch(() => { if (blockCache.get(url) === entry) blockCache.delete(url); });
+  while (blockCache.size > BLOCK_CACHE_MAX) blockCache.delete(blockCache.keys().next().value);
+  return promise;
+}
+export function clearAmedasSeriesCache() { blockCache.clear(); }
+
 // 戻り値: [{ timeMs, temp, precip10m, wind, windDir }] 古い順(欠測は null)。取得不可は []。
-export async function loadAmedasSeries(code, latestMs) {
-  const from = latestMs - AMEDAS_RANGE_MIN * 60 * 1000;
+// hours: さかのぼる時間(既定3)。
+export async function loadAmedasSeries(code, latestMs, hours = 3) {
+  const from = latestMs - hours * 3600000;
   const blocks = [];
   for (let b = blockStartMs(from); b <= latestMs; b += 3 * 60 * 60 * 1000) blocks.push(b);
-  const results = await Promise.allSettled(blocks.map(b => fetchBodyOrNull(pointUrl(code, b))));
+  const results = await Promise.allSettled(blocks.map(b => loadPointBlock(code, b, latestMs)));
   const rows = new Map();
   for (const r of results) {
     if (r.status !== "fulfilled" || !r.value || typeof r.value !== "object") continue;
@@ -402,7 +423,12 @@ export function niceTicks(min, max, target = 3) {
 
 // 横軸の目盛り: [t0,t1]に含まれる正時(JST)のms。長い範囲では間引く。
 export function hourTicks(t0, t1, maxCount = 5) {
-  const ticks = [];
-  for (let t = Math.ceil(t0 / 3600000) * 3600000; t <= t1; t += 3600000) ticks.push(t);
-  return ticks.length <= maxCount ? ticks : ticks.filter((_, i) => i % 2 === 0);
+  // 目盛りが maxCount 本以内に収まる最小の間隔(1,2,3,6,12時間)を選ぶ
+  for (const stepH of [1, 2, 3, 6, 12]) {
+    const step = stepH * 3600000;
+    const ticks = [];
+    for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) ticks.push(t);
+    if (ticks.length <= maxCount) return ticks;
+  }
+  return [];
 }
