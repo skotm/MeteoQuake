@@ -191,8 +191,10 @@ export function evaluateReport(prev, latest) {
   for (const [name, v] of values) {
     const key = instrumentalIntensityToScaleKey(v);
     const isWarnArea = warnNow && warnAreas.has(name);
-    // 最大予測震度が6弱の時は、震度3の地域も載せる(警報対象ではない)。
-    if (!isWarnArea && !(showInt3 && key === "3")) continue;
+    // 最大予測震度が6弱の時は、震度3以上の予測の地域を全て載せる(警報対象かどうかは問わない)。
+    // 震度3だけ足すと、警報対象に入っていない震度4の地域(続報で3→4に上がった地域など)が空白になり、
+    // 震度4と震度3の塗りの間に隙間ができるため、震度4以上も合わせて載せる。
+    if (!isWarnArea && !(showInt3 && classIndex(key) >= classIndex("3"))) continue;
     const code = INTENSITY_SCALE_CODE[key] ?? 40;
     areas.push({
       pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: key,
