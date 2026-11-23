@@ -21,7 +21,7 @@ import { SettingsBody } from "./SettingsBody";
 import { derivePrefFromEewAreaName } from "./eewUi";
 import { fastDist2 } from "./geo";
 import { shouldShowMechanismButton } from "./cmt";
-import { NowcastColorSchemeContext, formatWdistFrameLabel, loadNowcastFrames, loadPrecipFrames, loadStoredTyphoonForecastInterval, loadWdistFrames, nowcastNearestIndexToNow, saveTyphoonForecastInterval } from "./weather/nowcast";
+import { NowcastColorSchemeContext, formatWdistFrameLabel, loadNowcastFrames, loadPrecipFrames, nowcastValidtimeToMs, loadStoredTyphoonForecastInterval, loadWdistFrames, nowcastNearestIndexToNow, saveTyphoonForecastInterval } from "./weather/nowcast";
 import { fetchActiveTyphoonExists, fetchTyphoonData } from "./weather/typhoon";
 import { fetchAreaTimeSeries, fetchCurrentLocationForecast } from "./weather/location";
 import { findMunicipalityAtPoint, groupMunicipalitiesByKana, loadWarningAreaMunicipalities } from "./warnings";
@@ -968,7 +968,23 @@ export function BottomDock({
 
   const amedasViewing = amedasViewTimeMs != null ? amedasLoaded?.timeMs === amedasViewTimeMs : false;
   const amedasMissing = amedasViewing && !amedasLoaded?.data && !amedasLoading;
-  const amedasSliderEl = amedasActive && !weatherMenuOpen && amedasFrames.length > 0 ? (
+  // 雨雲レーダーと併用中は、雨雲側のスライダー1本で両方を動かす(予報コマと再生ボタンは出さない)。
+  // アメダスは雨雲の実況コマの時刻(10分に切り捨て)を表示する。最新の実況なら最新に追従。
+  const amedasLinked = amedasActive && nowcastEnabled;
+  const nowcastLinkedFrames = useMemo(
+    () => (amedasLinked && nowcastFrames ? nowcastFrames.filter(f => f.kind === "obs") : nowcastFrames),
+    [amedasLinked, nowcastFrames]
+  );
+  useEffect(() => {
+    if (!amedasLinked || !nowcastFrames || nowcastFrameIndex == null) return;
+    const lastObs = nowcastLinkedFrames.length - 1;
+    if (lastObs < 0) return;
+    // 予報コマを見ていたら、最新の実況に寄せる
+    if (nowcastFrameIndex > lastObs) { setNowcastFrameIndex(lastObs); return; }
+    const ms = nowcastValidtimeToMs(nowcastFrames[nowcastFrameIndex]?.validtime);
+    setAmedasViewMs(nowcastFrameIndex === lastObs || ms == null ? null : Math.floor(ms / 600000) * 600000);
+  }, [amedasLinked, nowcastFrames, nowcastFrameIndex, nowcastLinkedFrames]);
+  const amedasSliderEl = amedasActive && !amedasLinked && !weatherMenuOpen && amedasFrames.length > 0 ? (
     <AmedasTimeSlider
       frames={amedasFrames}
       frameIndex={amedasFrameIndex}
@@ -2549,9 +2565,10 @@ export function BottomDock({
               zIndex: 50,
             }}>
               <NowcastTimeSlider
-                frames={nowcastFrames}
+                frames={nowcastLinkedFrames}
                 frameIndex={nowcastFrameIndex ?? 0}
                 onChangeFrameIndex={setNowcastFrameIndex}
+                hidePlay={amedasLinked}
               />
             </div>
           )}
@@ -2614,9 +2631,10 @@ export function BottomDock({
           )}
           {nowcastEnabled && !weatherMenuOpen && (
             <NowcastTimeSlider
-              frames={nowcastFrames}
+              frames={nowcastLinkedFrames}
               frameIndex={nowcastFrameIndex ?? 0}
               onChangeFrameIndex={setNowcastFrameIndex}
+              hidePlay={amedasLinked}
             />
           )}
           {/* 1/3/24時間降水量の時刻スライダー。雨雲レーダーとは排他。 */}
