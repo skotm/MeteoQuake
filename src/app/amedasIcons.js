@@ -67,34 +67,27 @@ function addArrow(map) {
 function addWindArrow(map, id) {
   const [, , bStr, color] = id.split("|");
   const b = Math.max(0, Math.min(30, Number(bStr) || 0));
-  const len = (16 + Math.min(b, 20) * 1.5) * SCALE;       // 16〜46px
-  const shaftW = (3.6 + Math.min(b, 20) * 0.16) * SCALE;  // 3.6〜6.8px
-  const headW = shaftW * 2.4, headL = Math.min(len * 0.5, 16 * SCALE);
-  const s = Math.ceil(len + 10 * SCALE);
+  // 棒のない矢じりだけ。大きさで風速を表す(弱い風は小さく、強い風は大きく: 約9〜55px)。
+  const L = (9 + Math.min(b, 22) * 2.1) * SCALE;
+  const W = L * 0.62;
+  const pad = 5 * SCALE;
+  const s = Math.ceil(L + pad * 2);
   const canvas = document.createElement("canvas");
   canvas.width = s; canvas.height = s;
   const ctx = canvas.getContext("2d");
   ctx.translate(s / 2, s / 2);
-  const top = -len / 2, bottom = len / 2;
-  ctx.beginPath();
-  ctx.moveTo(0, top);
-  ctx.lineTo(headW / 2, top + headL);
-  ctx.lineTo(shaftW / 2, top + headL);
-  ctx.lineTo(shaftW / 2, bottom);
-  ctx.lineTo(-shaftW / 2, bottom);
-  ctx.lineTo(-shaftW / 2, top + headL);
-  ctx.lineTo(-headW / 2, top + headL);
+  ctx.beginPath();            // 上向き(北向き)。icon-rotateで風向きへ回す。中心が観測点の位置
+  ctx.moveTo(0, -L / 2);
+  ctx.lineTo(W / 2, L / 2);
+  ctx.lineTo(0, L * 0.2);
+  ctx.lineTo(-W / 2, L / 2);
   ctx.closePath();
-  // 縁は濃い色にする(白い縁だとライトモードの明るい地図で見えないため)。
+  // 縁は濃い色(白い縁だとライトモードの明るい地図で見えないため)。
   // 先に太い縁を描いてから塗ると、内側の半分は塗りで隠れ、外側だけが縁として残る。
   ctx.lineJoin = "round";
-  ctx.lineWidth = 3.4 * SCALE; ctx.strokeStyle = "rgba(20,30,42,0.9)"; ctx.stroke();
+  ctx.lineWidth = 3 * SCALE; ctx.strokeStyle = "rgba(20,30,42,0.9)"; ctx.stroke();
   ctx.fillStyle = color || "#0A84FF";
   ctx.fill();
-  // 観測点の位置(中心)に濃い点
-  ctx.beginPath(); ctx.arc(0, 0, 2.6 * SCALE, 0, Math.PI * 2);
-  ctx.fillStyle = "#263238"; ctx.fill();
-  ctx.lineWidth = 1.2 * SCALE; ctx.strokeStyle = "#ffffff"; ctx.stroke();
   map.addImage(id, ctx.getImageData(0, 0, s, s), { pixelRatio: SCALE });
 }
 
