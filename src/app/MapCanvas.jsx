@@ -760,7 +760,7 @@ export function MapCanvas({
               "icon-rotate": ["get", "rot"],
               "icon-rotation-alignment": "map",
               // 全部出すので、広域では小さくして重なりを抑える
-              "icon-size": ["interpolate", ["linear"], ["zoom"], 4, 0.4, 6, 0.55, 8, 0.8, 10, 1],
+              "icon-size": ["interpolate", ["linear"], ["zoom"], 4, 0.45, 6, 0.6, 8, 0.85, 10, 1],
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
               "symbol-sort-key": ["get", "sortKey"],
@@ -3215,7 +3215,7 @@ export function MapCanvas({
     // 風のとき: 点は静穏/風向なしの地点だけ。数値ラベルは矢印の下に添え、重なるものは間引く。
     map.setFilter("amedas-dot-layer", windMode ? ["<", ["get", "rot"], 0] : null);
     map.setLayerZoomRange("amedas-label-layer", windMode ? 6 : 0, 24);
-    map.setLayoutProperty("amedas-label-layer", "icon-offset", windMode ? [0, 30] : [0, 0]);
+    map.setLayoutProperty("amedas-label-layer", "icon-offset", windMode ? [0, 34] : [0, 0]);
     const source = map.getSource("amedas-stations");
     if (source) source.setData(amedasVisible && amedasGeoJson ? amedasGeoJson : { type: "FeatureCollection", features: [] });
   }, [amedasVisible, amedasGeoJson, amedasElementId, status]);
