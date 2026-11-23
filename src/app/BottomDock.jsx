@@ -1763,9 +1763,15 @@ export function BottomDock({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [amedasSelectedCode]);
   // フローティングを完全に閉じたら、観測点の選択も解除する(台風と同じ)。
+  // 「閉じた状態」ではなく「閉じる操作(0以外→0)」の時だけ解除する。
+  // 閉じたまま観測点をタップした時は、選択と同時に開く処理が走るため、
+  // 選択直後の snapIndex===0 で解除してしまうと選択が消えてしまう。
+  const prevSnapForAmedasRef = useRef(snapIndex);
   useEffect(() => {
-    if (snapIndex === 0 && amedasSelectedCode) onClearAmedasStation?.();
-  }, [snapIndex, amedasSelectedCode, onClearAmedasStation]);
+    const prev = prevSnapForAmedasRef.current;
+    prevSnapForAmedasRef.current = snapIndex;
+    if (snapIndex === 0 && prev > 0 && amedasSelectedCode) onClearAmedasStation?.();
+  }, [snapIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // フローティングが完全に閉じられたら(snapIndex===0)、台風の詳細選択も解除する。
   useEffect(() => {
