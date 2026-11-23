@@ -68,7 +68,7 @@ function stationChipSub(p) {
 }
 
 export function MapCanvas({
-  onReady, stationPoints, stationFocusRequest, maxZoom = 12, hypocenters, isWide,
+  onReady, stationPoints, stationFocusRequest, maxZoom = 9, hypocenters, isWide,
   quakeTimeStr, maxIntensityKey, estIntensityEnabled, areaFillEnabled,
   // 市区町村単位の震度塗り(ズームを上げると細分区域塗りから切り替わる)。
   // quakeCityFillEligibleは、旧震度階級の地震・テスト配信ではfalse(従来どおり細分区域塗りのまま)。

@@ -379,6 +379,8 @@ export function SettingsBody({
         <SettingsHeader title="表示設定"/>
         <SettingsCard>
           <SettingsMenuRow label="外観" onClick={() => onNavigate([...path, "appearance"])}/>
+          <SettingsCardDivider/>
+          <SettingsMenuRow label="最大ズームレベル" onClick={() => onNavigate([...path, "maxZoom"])}/>
         </SettingsCard>
 
         <div style={captionStyle}>地図</div>
@@ -415,8 +417,6 @@ export function SettingsBody({
           <SettingsMenuRow label="雨雲レーダー配色" onClick={() => onNavigate([...path, "nowcastColorScheme"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="台風予報円の表示間隔" onClick={() => onNavigate([...path, "typhoonForecastInterval"])}/>
-          <SettingsCardDivider/>
-          <SettingsMenuRow label="最大ズームレベル" onClick={() => onNavigate([...path, "maxZoom"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="アメダスの取得時間" onClick={() => onNavigate([...path, "amedasRange"])}/>
         </SettingsCard>
