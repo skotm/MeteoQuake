@@ -1702,14 +1702,14 @@ export function BottomDock({
   }, [typhoonDetailKey]);
 
   // アメダス観測点をタップした瞬間、フローティングが閉じていたら(または小さければ)
-  // 「中高」(中中のひとつ上)まで開いて詳細を見せる。すでに十分高い時は高さを変えない。
+  // 「高」(中高のひとつ上)まで開いて詳細を見せる。すでに十分高い時は高さを変えない。
   // 選択が別の観測点に変わっただけの時も高さは変えない(「未選択→選択」の時だけ)。
   const amedasSelectedCode = selectedAmedasStation?.station?.code ?? null;
   const prevAmedasCodeRef = useRef(amedasSelectedCode);
   useEffect(() => {
-    if (amedasSelectedCode && !prevAmedasCodeRef.current && snapIndex < 3) {
+    if (amedasSelectedCode && !prevAmedasCodeRef.current && snapIndex < 4) {
       killScrollMomentum();
-      setSnapIndex(3);
+      setSnapIndex(4);
       openedByTapRef.current = true;
     }
     prevAmedasCodeRef.current = amedasSelectedCode;
