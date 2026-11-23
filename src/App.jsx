@@ -3469,6 +3469,7 @@ export default function App() {
           showLowConfidenceEstimates={showLowConfidenceEstimates}
           onEpicenterEstimateChange={setEpicenterEstimates}
           shakeTestTrueEpicenters={shakeTestTrueEpicenters}
+          hideEstimateWaveCircles={hasLinkedShakeTest}
         />
 
         {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ。
