@@ -167,6 +167,10 @@ export function MapCanvas({
   // 実行に対応)。{ lat, lon, depthKm, magnitude }[]。テスト中でなければ
   // 空配列。
   shakeTestTrueEpicenters = [],
+  // 地震検知テスト連動の緊急地震速報シミュレーション実行中はtrue。
+  // 緊急地震速報のP波/S波の予報円は出したまま、震源推定(地震検知用)の
+  // P波/S波到達円だけを隠す(マーカー・ラベルは従来通り表示する)。
+  hideEstimateWaveCircles = false,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -1736,7 +1740,7 @@ export function MapCanvas({
         map.setLayoutProperty(
           layerId,
           "visibility",
-          showRealtimeMapLayers && epicenterEstimationEnabled ? "visible" : "none"
+          showRealtimeMapLayers && epicenterEstimationEnabled && !hideEstimateWaveCircles ? "visible" : "none"
         );
       }
     }
@@ -1771,7 +1775,7 @@ export function MapCanvas({
           showRealtimeMapLayers && gridDetectionEnabled && epicenterEstimationEnabled ? "visible" : "none");
       }
     }
-  }, [showRealtimeMapLayers, epicenterEstimationEnabled, gridDetectionEnabled, gridCellsVisible, status]);
+  }, [showRealtimeMapLayers, epicenterEstimationEnabled, gridDetectionEnabled, gridCellsVisible, hideEstimateWaveCircles, status]);
 
   // 地震検知テストの「正解」の震源(shakeTestTrueEpicenters、複数同時実行に
   // 対応)が変わるたびに、菱形マーカー用のsourceを更新する。tickごとに
