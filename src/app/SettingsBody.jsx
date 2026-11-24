@@ -9,6 +9,7 @@ import { APP_VERSION } from "./consent";
 import { BoundaryLineColorSettings, LicenseFileCard, LogViewerPanel, MapColorSettings, MarkdownFileCard, QuakeColorSchemeSettings, QuakeFetchLimitSettings } from "./settingsPanels";
 import { EewTestBroadcastPanel, QuakeTestBroadcastPanel, ShakeDetectionTestPanel, TsunamiTestBroadcastPanel } from "./testPanels";
 import { DEFAULT_CAMERA_SETTINGS, CITY_FILL_ZOOM_MIN, CITY_FILL_ZOOM_MAX, CITY_FILL_ZOOM_DEFAULT, clampCityFillZoom } from "./settingsStorage";
+import { setEewLocationEnabled, useEewLocationEnabled } from "./eewLocation";
 import { AmedasRangeSettings, MaxZoomSettings, NowcastColorSchemeSettings, TyphoonForecastIntervalSettings } from "./weatherSettings";
 
 
@@ -33,6 +34,23 @@ const LIBRARY_LICENSES = [
   { sub: "lib-turf", label: `Turf.js ${TURF_VERSION} — MIT License`, file: "licenses/MIT-Turf.txt" },
   { sub: "lib-workbox", label: "Workbox — MIT License", file: "licenses/MIT-Workbox.txt" },
 ];
+
+function EewLocationSettings() {
+  const enabled = useEewLocationEnabled();
+  return (
+    <>
+      <SettingsHeader title="緊急地震速報の現在地表示"/>
+      <SettingsCard>
+        <SettingsToggleRow
+          label="現在地の到達予測を表示"
+          description="緊急地震速報が出ている間だけ端末の位置情報を使い、現在地の細分区域の予測震度と、主要動(強い揺れ)が届くまでの秒数を速報カードに表示します。予測震度・到達時刻は、速報が配信する細分区域ごとの値です。位置情報は端末内だけで使い、保存・送信しません。現在地が速報の対象地域に含まれない時は表示しません(初期設定はオフ)。"
+          checked={enabled}
+          onChange={() => setEewLocationEnabled(!enabled)}
+        />
+      </SettingsCard>
+    </>
+  );
+}
 
 export function SettingsBody({
   path, onNavigate, colorSchemeId, onChangeColorScheme,
@@ -448,6 +466,9 @@ export function SettingsBody({
           <SettingsCardDivider/>
           <SettingsMenuRow label="カメラの動き" onClick={() => onNavigate([...path, "camera"])}/>
         </SettingsCard>
+        <SettingsCard>
+          <SettingsMenuRow label="緊急地震速報の現在地表示" onClick={() => onNavigate([...path, "eewLocation"])}/>
+        </SettingsCard>
       </>
     );
   }
@@ -840,6 +861,12 @@ export function SettingsBody({
         />
       </>
     );
+  }
+
+  // 緊急地震速報の現在地表示。オンの間、速報の最中だけ端末の位置を1回取得して、
+  // 現在地の細分区域の予測震度と、主要動までのカウントダウンをEEWカードに出す。
+  if (category === "quake" && leaf === "eewLocation") {
+    return <EewLocationSettings/>;
   }
 
   // カメラの動き(詳細設定の項目)。緊急地震速報・揺れ検知での地図の自動ズームの設定。

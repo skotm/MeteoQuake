@@ -5,6 +5,7 @@ import { splitIntensityLabel, useIntensityStyle } from "./colorSchemes";
 import { IntensityNumWithSuffix } from "./intensityLabel";
 import { AutoFitText, PanelDragHandoffCard } from "./quakeDetailUi";
 import { formatEewTimeShort } from "./quakeCards";
+import { resolveMyEewForecast, sanitizeArrivalMs, useEewLocationEnabled, useEewPosition, useMyAreaName } from "./eewLocation";
 
 
 /* ─────────────────────────────────────────────────────
@@ -163,6 +164,84 @@ function formatEewAreasSummary(areas) {
 }
 
 /* ─────────────────────────────────────────────────────
+   現在地の「主要動到達までのカウントダウン」と「予測震度」(EEWカードの空き行)。
+   設定でオンにした時だけ表示する(オフ・取消済みの時は何も描かず、カードの大きさも変えない)。
+   予測震度・到達時刻は、速報の「細分区域ごと」の値(WarnArea)をそのまま使う。
+   高さは固定(ROW_H)で、はみ出す内容は隠す。これでカード全体の大きさは変わらない。
+   ───────────────────────────────────────────────────── */
+const MY_LOCATION_ROW_H = 22;
+
+function MyIntensityChip({ intensityKey }) {
+  const { tokens } = useContext(ThemeContext);
+  const style = useIntensityStyle(intensityKey || "0");
+  if (!intensityKey) return null;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
+      <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>現在地 震度</span>
+      <span className="mono" style={{
+        background: style.bg, color: style.fg, borderRadius: 6,
+        padding: "0 7px", height: 20, lineHeight: "20px",
+        fontSize: 14, fontWeight: 800, whiteSpace: "nowrap",
+      }}>{style.label}</span>
+    </span>
+  );
+}
+
+function EewMyLocationRow({ eew }) {
+  const { tokens } = useContext(ThemeContext);
+  const enabled = useEewLocationEnabled();
+  const active = enabled && !eew.cancelled;
+  const pos = useEewPosition(active);
+  const areaName = useMyAreaName(pos.coords);
+  const forecast = resolveMyEewForecast(eew, areaName);
+
+  const [now, setNow] = useState(() => Date.now());
+  const arrivalMs = forecast?.inWarnArea ? sanitizeArrivalMs(forecast.arrivalMs, NaN, now) : null;
+  const counting = arrivalMs != null && !forecast.arrived && arrivalMs > now;
+  useEffect(() => {
+    if (!counting) return undefined;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, [counting]);
+
+  if (!active) return null;
+
+  const small = { fontSize: 11, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" };
+  let left = null;
+  if (pos.status === "loading" || (pos.status === "ready" && !areaName)) {
+    left = <span style={small}>現在地を確認中…</span>;
+  } else if (pos.status !== "ready") {
+    left = <span style={small}>現在地を取得できません</span>;
+  } else if (!forecast.inWarnArea) {
+    left = <span style={small}>現在地は対象地域外</span>;
+  } else if (forecast.arrived || (arrivalMs != null && arrivalMs <= now)) {
+    left = <span style={{ fontSize: 13, fontWeight: 800, color: "#FF453A", whiteSpace: "nowrap" }}>主要動 到達(推定)</span>;
+  } else if (arrivalMs != null) {
+    const remain = Math.max(0, Math.ceil((arrivalMs - now) / 1000));
+    left = (
+      <span style={{ display: "inline-flex", alignItems: "baseline", gap: 4, whiteSpace: "nowrap" }}>
+        <span style={small}>主要動まで</span>
+        <span className="mono" style={{ fontSize: 22, fontWeight: 800, lineHeight: 1, color: remain <= 10 ? "#FF453A" : tokens.text }}>{remain}</span>
+        <span style={small}>秒</span>
+      </span>
+    );
+  } else {
+    left = <span style={small}>到達時刻は未提供</span>;
+  }
+
+  return (
+    <div style={{
+      marginTop: "auto", width: "100%", height: MY_LOCATION_ROW_H, overflow: "hidden",
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+    }}>
+      {left}
+      {pos.status === "ready" && forecast?.inWarnArea && <MyIntensityChip intensityKey={forecast.intensityKey}/>}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    緊急地震速報の詳細フローティングカード。
    地震タブの選択中カード(QuakeDetailCard)と同じ「最大震度バッジ＋震源地／M・
    深さ／発生時刻」のレイアウトを踏襲しつつ、Glassで包んで地図上に浮かべ、
@@ -269,7 +348,7 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
               />
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "stretch", gap: 14 }}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
                 <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, whiteSpace: "nowrap", lineHeight: 1.1 }}>
                   最大予測震度
@@ -292,7 +371,10 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
                 </div>
               </div>
 
-              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+              {/* 右列は上寄せにして、M・深さ・発生時刻を少し上へ移す。空いた下の行に
+                    現在地のカウントダウン(EewMyLocationRow)を置く。右列の高さは左のバッジ列に
+                    合わせて伸びるだけなので、カード全体の大きさは変わらない。 */}
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 1, paddingTop: 2 }}>
                 {/* PLUM法(観測点の揺れの実測から震源を仮定する方式)の場合は、
                     M・深さの行そのものを「PLUM法による仮定震源要素」というラベルに
                     差し替えて同じ位置に表示する(通常方式のときだけM・深さを表示)。 */}
@@ -326,6 +408,8 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
                     {formatEewTimeShort(eew.originTime)}
                   </span>
                 </div>
+
+                <EewMyLocationRow eew={eew}/>
               </div>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import { fastDist2, polygonRoughCentroid } from "./geo";
+import { getJmaTravelTimeTable, lookupJmaTravelTime } from "../jmaTravelTime";
 
 
 // 計測震度(連続値)を気象庁の震度階級に変換する(「震度を知る」の計測震度→震度階級の対応表)。
@@ -83,9 +84,23 @@ export function calcTestEewAreasByAttenuation(areasGeoJSON, lat, lon, magnitude,
     if (instrIntensity < 4) continue; // 塗り潰し対象は震度4以上のみ
 
     const code = INTENSITY_SCALE_CODE[key] ?? 40;
-    areas.push({ pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: key, isPlum: !!isPlum });
+    areas.push({ pref: "", name, scaleFrom: code, scaleTo: code, maxIntensityKey: key, isPlum: !!isPlum, epicentralKm });
   }
   return { areas, maxIntensityKey: overallMaxKey || "?", maxIntensityValue: overallMaxValue, areaValues };
+}
+
+// テスト配信専用: 各地域に、主要動(S波)の到達予想時刻(arrivalMs)を付ける。
+// 気象庁の走時表(jma-travel-time.json)があればそれを使い、無ければS波速度3.5km/sで概算する。
+// originMs(発生時刻)を基準にするので、続報でも同じ地震なら到達時刻は変わらない。
+export function withTestArrivalMs(areas, originMs, depthKm) {
+  const table = getJmaTravelTimeTable();
+  const D = Number.isFinite(depthKm) ? Math.max(0, depthKm) : 10;
+  return areas.map((a) => {
+    if (!Number.isFinite(a.epicentralKm)) return a;
+    const tt = lookupJmaTravelTime(table, a.epicentralKm, D);
+    const sSec = tt?.sTimeSec ?? Math.hypot(a.epicentralKm, D) / 3.5;
+    return { ...a, arrivalMs: originMs + sSec * 1000, arrived: false };
+  });
 }
 
 /* ─────────────────────────────────────────────────────

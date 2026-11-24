@@ -1,4 +1,5 @@
 import { maxScaleToIntensityKey, toQuakeCard } from "./quakeCards";
+import { parseJstTimeToMs } from "./eewLocation";
 import { EEW_FILL_LEGEND_ORDER, intensityLabelToKey } from "./stationIcons";
 import { toTsunamiCard } from "./tsunamiData";
 
@@ -62,6 +63,9 @@ function toEewCard(item) {
       maxIntensityKey: eewMaxScaleKey([{ scaleFrom, scaleTo }]),
       // kindCode: 10/11=通常(到達予測あり)、19=PLUM法(主要動の到達予想なし)
       isPlum: a.kindCode === "19",
+      // 主要動の到達予想時刻(あれば)。P2P地震情報側にも地域ごとのarrivalTimeがある。
+      arrivalMs: parseJstTimeToMs(a.arrivalTime),
+      arrived: false,
     };
   }) : [];
 
@@ -187,6 +191,11 @@ function toEewCardFromWolfx(data) {
     // 2つのうち強いほうを使う(片方が"以上"などで変換できない時は、もう片方)。
     maxIntensityKey: strongerIntensityKey(intensityLabelToKey(a.Shindo1), intensityLabelToKey(a.Shindo2)),
     isPlum: !!data.isAssumption,
+    // 主要動の到達予想時刻(WarnArea[].Time、日本時間)と、既に到達したか(WarnArea[].Arrive)。
+    // 現在地の到達カウントダウン(eewLocation.js)が使う。PLUM法・レベル法では到達時刻が
+    // 提供されないため、Timeが空ならnullになる。
+    arrivalMs: parseJstTimeToMs(a.Time),
+    arrived: a.Arrive === true,
   })) : [];
 
   return {
