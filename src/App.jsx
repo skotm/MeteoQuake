@@ -36,7 +36,7 @@ import {
   levelTriggerStations, publishedDepthKm, publishedMagnitude,
 } from "./app/simEewRules";
 import { SIM_LOG_MAX, makeSimLogEntry } from "./app/simEewLog";
-import { buildTestQuakeStageCard, calcTestEewAreasByAttenuation, isTestWarnLevel, formatTestQuakeNow, testQuakeTimeFromInput, testQuakeTimeToInput } from "./app/testSimulation";
+import { buildTestQuakeStageCard, calcTestEewAreasByAttenuation, withTestArrivalMs, isTestWarnLevel, formatTestQuakeNow, testQuakeTimeFromInput, testQuakeTimeToInput } from "./app/testSimulation";
 import DisplayAreaEditor from "./app/DisplayAreaEditor";
 import { computeAreaLayout, isFullScreen } from "./displayArea";
 import { setLogicalViewport } from "./app/viewportScale";
@@ -754,9 +754,13 @@ export default function App() {
       // loadGeoData()の解決を待ってから行う(地図表示時に読み込み済みなので、
       // 実際にはほぼ即座に解決する)。
       loadGeoData().then(({ areas: areasGeoJSON }) => {
-        const { areas, maxIntensityKey } = calcTestEewAreasByAttenuation(
+        const { areas: areasRaw, maxIntensityKey } = calcTestEewAreasByAttenuation(
           areasGeoJSON, params.latitude, params.longitude, params.magnitude, params.depth, params.isPlum
         );
+        // 現在地カウントダウンの動作確認用に、各地域へ主要動の到達予想時刻を付ける。
+        // 発生時刻は新規なら今、続報なら元のイベントの発生時刻(到達時刻は続報でも動かさない)。
+        const testOriginMs = isNew ? Date.now() : (Date.parse(String(testEews[idx].originTime).replace(/-/g, "/")) || Date.now());
+        const areas = params.isPlum ? areasRaw : withTestArrivalMs(areasRaw, testOriginMs, params.depth);
         // 警報/予報はテスト機能限定のルール: 最大震度5弱以上を警報、4以下を予報として
         // 自動判定する。一度警報級になったイベントは、その後の続報で計算上の震度が
         // 下がっても予報には戻さない(気象庁の実運用でも警報は取消されるまで解除されない)。
