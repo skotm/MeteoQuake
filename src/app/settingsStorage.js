@@ -713,26 +713,6 @@ export function saveQuakeSource(source) {
   }
 }
 
-/* 津波情報の取得元。"p2p"(P2P地震情報、既定) または "wolfx"(Wolfx Open API)。 */
-const TSUNAMI_SOURCE_STORAGE_KEY = "tsunamiSource";
-
-export function loadStoredTsunamiSource() {
-  try {
-    return localStorage.getItem(TSUNAMI_SOURCE_STORAGE_KEY) === "wolfx" ? "wolfx" : "p2p";
-  } catch (err) {
-    console.warn("津波情報の取得元の設定を読み込めませんでした:", err);
-  }
-  return "p2p";
-}
-
-export function saveTsunamiSource(source) {
-  try {
-    localStorage.setItem(TSUNAMI_SOURCE_STORAGE_KEY, source === "wolfx" ? "wolfx" : "p2p");
-  } catch (err) {
-    console.warn("津波情報の取得元の設定を保存できませんでした:", err);
-  }
-}
-
 /* ─────────────────────────────────────────────────────
    市区町村単位の震度塗りつぶしに切り替えるズームレベル。
    このズームより拡大すると、細分区域塗りから市区町村塗りに切り替わる(前後0.4で重なりながら切替)。

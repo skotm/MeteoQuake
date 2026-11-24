@@ -98,7 +98,7 @@ export function BottomDock({
   shakeEventCardsEnabled = true, onChangeShakeEventCardsEnabled,
   longPeriodEnabled = true, onChangeLongPeriodEnabled,
   quakeSource = "p2p", onChangeQuakeSource,
-  tsunamiSource = "p2p", onChangeTsunamiSource, tsunamiNotice = null,
+  tsunamiNotice = null,
   displayInsets, onOpenDisplayAreaEditor,
   tabPlacement = "slide", onChangeTabPlacement,
   cameraSettings, onChangeCameraSettings,
@@ -3120,8 +3120,6 @@ export function BottomDock({
                   tsunamis={tsunamis}
                   status={tsunamiStatus}
                   notice={tsunamiNotice}
-                  tsunamiSource={tsunamiSource}
-                  onChangeTsunamiSource={onChangeTsunamiSource}
                   selectedId={selectedTsunamiId}
                   onSelect={handleSelectTsunamiForScroll}
                   onHandoffToPanelDrag={handlePointerDown}

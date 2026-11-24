@@ -104,7 +104,11 @@ export async function fetchTideObsForDateRange(stationCode, startDate, endDate) 
   const dateStrs = [];
   const cur = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
   const last = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
-  while (cur.getTime() <= last.getTime()) {
+  // 取得する日数には上限を設ける。期間が長すぎる(例: 何年も前の津波情報を、解除が確認できないまま
+  // 「現在まで」として見る)と、数千日分のリクエストを一度に投げて、アプリが固まるため。
+  // 気象庁の潮位データは、そもそも古い日の分を保持していない。
+  const MAX_RANGE_DAYS = 10;
+  while (cur.getTime() <= last.getTime() && dateStrs.length < MAX_RANGE_DAYS) {
     dateStrs.push(toTideDateStr(cur));
     cur.setDate(cur.getDate() + 1);
   }
