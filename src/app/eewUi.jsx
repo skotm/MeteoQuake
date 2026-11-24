@@ -169,27 +169,7 @@ function formatEewAreasSummary(areas) {
    予測震度・到達時刻は、速報の「細分区域ごと」の値(WarnArea)をそのまま使う。
    高さは固定(ROW_H)で、はみ出す内容は隠す。これでカード全体の大きさは変わらない。
    ───────────────────────────────────────────────────── */
-const MY_LOCATION_ROW_H = 22;
-
-function MyIntensityChip({ areaName, intensityKey }) {
-  const { tokens } = useContext(ThemeContext);
-  const style = useIntensityStyle(intensityKey || "0");
-  if (!intensityKey) return null;
-  // 表示するのは「現在地」ではなく、現在地が属する細分区域の予測震度。
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0 }}>
-      <span style={{
-        fontSize: 11, color: `rgba(${tokens.ink},0.55)`,
-        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0,
-      }}>{areaName} 震度</span>
-      <span className="mono" style={{
-        background: style.bg, color: style.fg, borderRadius: 6,
-        padding: "0 7px", height: 20, lineHeight: "20px", flexShrink: 0,
-        fontSize: 14, fontWeight: 800, whiteSpace: "nowrap",
-      }}>{style.label}</span>
-    </span>
-  );
-}
+const MY_LOCATION_ROW_H = 34;
 
 function EewMyLocationRow({ eew }) {
   const { tokens } = useContext(ThemeContext);
@@ -198,6 +178,7 @@ function EewMyLocationRow({ eew }) {
   const pos = useEewPosition(active);
   const areaName = useMyAreaName(pos.coords);
   const forecast = resolveMyEewForecast(eew, areaName);
+  const style = useIntensityStyle(forecast?.intensityKey || "0");
 
   const [now, setNow] = useState(() => Date.now());
   const arrivalMs = forecast?.inWarnArea ? sanitizeArrivalMs(forecast.arrivalMs, NaN, now) : null;
@@ -214,6 +195,7 @@ function EewMyLocationRow({ eew }) {
 
   const small = { fontSize: 11, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" };
   let left = null;
+  let right = null;
   if (pos.status === "loading" || !areaName) {
     left = <span style={small}>現在地を確認中…</span>;
   } else if (!forecast.inWarnArea) {
@@ -222,25 +204,44 @@ function EewMyLocationRow({ eew }) {
     // 到達後(Arriveがtrue、または到達予想時刻を過ぎた後)は0秒のまま。色は常に通常の文字色。
     const remain = forecast.arrived || arrivalMs == null ? 0 : Math.max(0, Math.ceil((arrivalMs - now) / 1000));
     left = (
-      <span style={{ display: "inline-flex", alignItems: "baseline", gap: 4, whiteSpace: "nowrap", flexShrink: 0 }}>
-        <span style={{ ...small, color: tokens.text }}>主要動まで</span>
-        <span className="mono" style={{ fontSize: 22, fontWeight: 800, lineHeight: 1, color: tokens.text }}>{remain}</span>
-        <span style={{ ...small, color: tokens.text }}>秒</span>
+      <span style={{ display: "inline-flex", alignItems: "baseline", gap: 3, whiteSpace: "nowrap", flexShrink: 0, color: tokens.text }}>
+        <span style={{ fontSize: 11 }}>あと</span>
+        <span className="mono" style={{ fontSize: 28, fontWeight: 800, lineHeight: 1 }}>{remain}</span>
+        <span style={{ fontSize: 12 }}>秒</span>
       </span>
     );
   } else {
     left = <span style={small}>到達時刻は未提供</span>;
   }
+  // 右: 現在地が属する細分区域名と、その区域の予測震度(速報の細分区域ごとの値)。
+  if (pos.status === "ready" && areaName && forecast?.inWarnArea && forecast.intensityKey) {
+    right = (
+      <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.15, minWidth: 0 }}>
+        <span style={{
+          fontSize: 11, fontWeight: 700, color: tokens.text, maxWidth: "100%",
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>{areaName}</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 10, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>予測震度</span>
+          <span className="mono" style={{
+            background: style.bg, color: style.fg, borderRadius: 5,
+            padding: "0 6px", height: 17, lineHeight: "17px",
+            fontSize: 13, fontWeight: 800, whiteSpace: "nowrap",
+          }}>{style.label}</span>
+        </span>
+      </span>
+    );
+  }
 
   return (
     <div style={{
-      marginTop: "auto", width: "100%", height: MY_LOCATION_ROW_H, overflow: "hidden",
+      marginTop: "auto", width: "100%", boxSizing: "border-box", height: MY_LOCATION_ROW_H,
+      padding: "0 10px", borderRadius: 10, overflow: "hidden",
+      background: `rgba(${tokens.ink},0.07)`,
       display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
     }}>
       {left}
-      {pos.status === "ready" && areaName && forecast?.inWarnArea && (
-        <MyIntensityChip areaName={areaName} intensityKey={forecast.intensityKey}/>
-      )}
+      {right}
     </div>
   );
 }
@@ -378,12 +379,12 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
               {/* 右列は上寄せにして、M・深さ・発生時刻を少し上へ移す。空いた下の行に
                     現在地のカウントダウン(EewMyLocationRow)を置く。右列の高さは左のバッジ列に
                     合わせて伸びるだけなので、カード全体の大きさは変わらない。 */}
-              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 1, paddingTop: 2 }}>
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 1 }}>
                 {/* PLUM法(観測点の揺れの実測から震源を仮定する方式)の場合は、
                     M・深さの行そのものを「PLUM法による仮定震源要素」というラベルに
                     差し替えて同じ位置に表示する(通常方式のときだけM・深さを表示)。 */}
                 {eew.isPlum ? (
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1, marginBottom: 14 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1 }}>
                     <span style={{ fontSize: 16, fontWeight: 700, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
                       {eew.isLevel ? "震源・Mは未推定(レベル法)" : "PLUM法による仮定震源要素"}
                     </span>
@@ -391,12 +392,12 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
                 ) : (
                   <div style={{ display: "flex", alignItems: "baseline", gap: 12, lineHeight: 1.1 }}>
                     <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
-                      M<span className="mono" style={{ fontSize: 25, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
+                      M<span className="mono" style={{ fontSize: 22, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
                         {eew.magnitude != null ? eew.magnitude.toFixed(1) : "-"}
                       </span>
                     </span>
                     <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
-                      深さ<span className="mono" style={{ fontSize: 25, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
+                      深さ<span className="mono" style={{ fontSize: 22, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
                         {eew.depth != null ? (eew.depth === 0 ? "ごく浅い" : eew.depth) : "-"}
                       </span>
                       {eew.depth != null && eew.depth !== 0 && (
@@ -406,12 +407,9 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
                   </div>
                 )}
 
-                <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1 }}>
-                  <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>発生時刻</span>
-                  <span className="mono" style={{ fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.1 }}>
-                    {formatEewTimeShort(eew.originTime)}
-                  </span>
-                </div>
+                <span className="mono" style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1, whiteSpace: "nowrap" }}>
+                  発生 {formatEewTimeShort(eew.originTime)}
+                </span>
 
                 <EewMyLocationRow eew={eew}/>
               </div>
