@@ -20,7 +20,7 @@ import { parseWolfxTsunami, mergeWolfxObservations, matchTideStationByName } fro
 import { useWolfxDetail } from "./app/useWolfxDetail";
 import { attachLongPeriod, buildTestLongPeriodInfo, eventIdMinuteKey } from "./longPeriod";
 const EMPTY_LONG_PERIOD = new Map();
-import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredCityFillZoom, saveCityFillZoom, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredTabPlacement, saveTabPlacement, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredLongPeriodEnabled, saveLongPeriodEnabled, loadStoredQuakeSource, saveQuakeSource, loadStoredTsunamiSource, saveTsunamiSource, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
+import { clampQuakeFetchLimit, loadStoredMapColorOverrides, saveMapColorOverrides, loadStoredAreaFillEnabled, loadStoredCityFillZoom, saveCityFillZoom, loadStoredBoundaryLineColorId, loadStoredEpicenterCirclesEnabled, loadStoredEpicenterEstimationEnabled, loadStoredShowLowConfidenceEstimates, loadStoredEstIntensityEnabled, loadStoredExperimentalFeaturesEnabled, loadStoredFaultsEnabled, loadStoredPlateBoundariesEnabled, loadStoredQuakeFetchLimit, loadStoredRealtimeIntensityThreshold, loadStoredRealtimeRisingEnabled, loadStoredReplayJmaColorEnabled, loadStoredTabPlacement, saveTabPlacement, loadStoredDisplayInsets, saveDisplayInsets, loadStoredShakeEventCardsEnabled, saveShakeEventCardsEnabled, loadStoredLongPeriodEnabled, saveLongPeriodEnabled, loadStoredQuakeSource, saveQuakeSource, loadStoredReplayPastQuakesEnabled, saveReplayPastQuakesEnabled, loadStoredShakeDetectionEnabled, loadStoredGridDetectionEnabled, loadStoredGridCellsVisible, loadStoredDetectedOutlineEnabled, saveGridDetectionEnabled, saveGridCellsVisible, saveDetectedOutlineEnabled, loadStoredWeakArrayDetectionEnabled, loadStoredStationListDisplayMode, saveAreaFillEnabled, saveBoundaryLineColorId, saveEpicenterCirclesEnabled, saveEpicenterEstimationEnabled, saveShowLowConfidenceEstimates, saveEstIntensityEnabled, saveExperimentalFeaturesEnabled, saveFaultsEnabled, savePlateBoundariesEnabled, saveQuakeFetchLimit, saveRealtimeIntensityThreshold, saveRealtimeRisingEnabled, saveReplayJmaColorEnabled, saveShakeDetectionEnabled, saveWeakArrayDetectionEnabled, saveStationListDisplayMode, loadStoredCameraSettings, saveCameraSettings } from "./app/settingsStorage";
 import { computeEewVisibility, shouldRevealIncomingEew } from "./app/eewVisibility";
 import { EEW_CANCEL_LINGER_MS, EEW_MAX_CONCURRENT, EEW_STALE_MS, connectQuakeWebSocket, connectWolfxEewWebSocket, fetchLatestFreshEew, fetchLatestFreshEewFromWolfx } from "./app/liveFeeds";
 import { loadEpicenterNamesData, loadGeoData, loadTsunamiAreasData } from "./app/mapDataLoaders";
@@ -43,7 +43,7 @@ import { setLogicalViewport } from "./app/viewportScale";
 import { useReplayQuakes } from "./app/useReplayQuakes";
 import { replayQuakesAt, replayQuakeSignature } from "./replayQuakes";
 import { dedupeQuakeList, fetchRecentQuakes, mergeQuakeCards } from "./app/quakeCards";
-import { TSUNAMI_FETCH_LIMIT, TSUNAMI_HISTORY_PAGE_SIZE, dedupeTsunamiList, fetchJmaTsunamiHistory, fetchRecentTsunamis, fetchTsunamiHistoryPage, mergeTsunamiSources, tsunamiGradeInfo, tsunamiHeightBandColor } from "./app/tsunamiData";
+import { TSUNAMI_FETCH_LIMIT, TSUNAMI_HISTORY_PAGE_SIZE, dedupeTsunamiList, fetchRecentTsunamis, fetchTsunamiHistoryPage, tsunamiGradeInfo, tsunamiHeightBandColor } from "./app/tsunamiData";
 import { TEST_TSUNAMI_GRADE_OPTIONS } from "./app/testPanels";
 import { EMPTY_EQDB_LIST, buildEqdbQuakeCard } from "./app/eqdb";
 import { computeMaxTsunamiHeightCm, daysBetweenDates, fetchTideObsForDateRange, fetchTideObsRange, fetchTideStations, toTideDateStr } from "./app/tideData";
@@ -345,11 +345,8 @@ export default function App() {
 
   // 揺れ検出情報をフローティングのカードに表示するか(既定ON)。検知自体は止めず、カードだけを隠す。
   // 地震情報(緊急地震速報を除く)の取得元: "p2p" | "wolfx"
-  const [tsunamiSource, setTsunamiSourceState] = useState(loadStoredTsunamiSource);
-  function handleChangeTsunamiSource(next) {
-    setTsunamiSourceState(next);
-    saveTsunamiSource(next);
-  }
+  // 津波情報の取得元は固定: 現在発表中の津波はWolfx(WebSocket)、過去の津波(履歴)はP2P地震情報。
+  // 以前はP2P/Wolfxを切り替える設定があったが、この使い分けに固定した。
   const [quakeSource, setQuakeSourceState] = useState(loadStoredQuakeSource);
   function handleChangeQuakeSource(next) {
     setQuakeSourceState(next);
@@ -1744,7 +1741,7 @@ export default function App() {
   // 津波情報の取得元がWolfxの時は、Wolfxの「現在の状態」(警報等あり/解除)を先頭に置く。
   // Wolfxの状態が確認できない間(期限切れ・不明・未取得)は、P2P地震情報の一覧をそのまま使い、
   // 「津波の心配なし」とは決して断定しない。過去の津波一覧(tsunamiHistory)は常にP2P/気象庁。
-  const wolfxTsunamiLive = useWolfxTsunami(tsunamiSource === "wolfx" && !wolfxTsunamiSample);
+  const wolfxTsunamiLive = useWolfxTsunami(!wolfxTsunamiSample);
   // サンプル選択中は、取得元の設定に関わらず、サンプルを本物のWolfx取得データとして扱う
   // (同じ解析・同じ表示経路を通る)。
   const wolfxSampleActive = !!wolfxTsunamiSample;
@@ -1755,13 +1752,13 @@ export default function App() {
     [wolfxTsunamiSample, wolfxTsunamiLive]
   );
   const tsunamisBySource = useMemo(() => {
-    const card = tsunamiSource === "wolfx" || wolfxSampleActive ? wolfxTsunami.result?.card : null;
+    const card = wolfxTsunami.result?.card ?? null;
     if (!card) return tsunamis;
     const t0 = new Date(card.time).getTime();
     // 同じ発表がP2P側にも出ている場合は、Wolfx側を採用して重複を除く
     const rest = tsunamis.filter(t => !(Number.isFinite(t0) && Math.abs(new Date(t.time).getTime() - t0) < 60 * 1000));
     return [card, ...rest];
-  }, [tsunamiSource, wolfxSampleActive, wolfxTsunami.result, tsunamis]);
+  }, [wolfxTsunami.result, tsunamis]);
   const tsunamiNotice = (() => {
     if (wolfxSampleActive) {
       const label = WOLFX_TSUNAMI_SAMPLES.find(s => s.key === wolfxTsunamiSample.key)?.label ?? "";
@@ -1772,7 +1769,6 @@ export default function App() {
           (untrusted ? "状態を確認できない場合の表示を確認するためのサンプルです。" : ""),
       };
     }
-    if (tsunamiSource !== "wolfx") return null;
     if (wolfxTsunami.result?.state === "untrusted") {
       return { uncertain: true, text: "Wolfxの津波情報の現在の状態を確認できないため、P2P地震情報の情報を表示しています。" };
     }
@@ -1882,13 +1878,10 @@ export default function App() {
     setTsunamiHistory(prev => ({ ...prev, status: "loading" }));
     const debugParts = [];
     try {
-      // 初回は、気象庁の公式一覧(list.json)と、P2P地震情報の津波予報専用API
-      // (/v2/jma/tsunami)の先頭2ページ(offset 0, 100)をまとめて取得して統合する。
+      // 過去の津波の取得元はP2P地震情報に固定(現在発表中の津波はWolfx)。
+      // 初回は、P2P地震情報の津波予報専用API(/v2/jma/tsunami)の先頭2ページ(offset 0, 100)を取得する。
       if (tsunamiHistory.offset === 0 && tsunamiHistory.items.length === 0) {
-        const [jmaItems, p2pPage1, p2pPage2] = await Promise.all([
-          fetchJmaTsunamiHistory()
-            .then(r => { debugParts.push(`気象庁:${r.length}件`); return r; })
-            .catch(err => { console.error("気象庁 津波情報一覧の取得に失敗:", err); debugParts.push(`気象庁:失敗(${err.message})`); return []; }),
+        const [p2pPage1, p2pPage2] = await Promise.all([
           fetchTsunamiHistoryPage(0, TSUNAMI_HISTORY_PAGE_SIZE)
             .then(r => { debugParts.push(`P2P#1:${r.length}件`); return r; })
             .catch(err => { console.error("P2P地震情報 過去の津波情報の取得に失敗:", err); debugParts.push(`P2P#1:失敗(${err.message})`); return []; }),
@@ -1898,7 +1891,7 @@ export default function App() {
         ]);
         const p2pItems = [...p2pPage1, ...p2pPage2];
         setTsunamiHistory({
-          items: mergeTsunamiSources(jmaItems, p2pItems),
+          items: dedupeTsunamiList(p2pItems), // 取得元がP2P1つだけなので、同じidの重複だけ除く
           offset: TSUNAMI_HISTORY_PAGE_SIZE * 2,
           status: "ready",
           hasMore: p2pPage2.length >= TSUNAMI_HISTORY_PAGE_SIZE,
@@ -1910,7 +1903,7 @@ export default function App() {
       // 2回目以降の「もっと見る」は、P2P地震情報側のoffsetをさらに進めて補う。
       const page = await fetchTsunamiHistoryPage(tsunamiHistory.offset, TSUNAMI_HISTORY_PAGE_SIZE);
       setTsunamiHistory(prev => ({
-        items: mergeTsunamiSources(prev.items, page),
+        items: dedupeTsunamiList([...prev.items, ...page]),
         offset: prev.offset + TSUNAMI_HISTORY_PAGE_SIZE,
         status: "ready",
         hasMore: page.length >= TSUNAMI_HISTORY_PAGE_SIZE,
@@ -1977,8 +1970,11 @@ export default function App() {
     // チェック等)のため最低2日分(前日+当日)は必ず取得する。
     const isWarnedStation = activeTsunami != null &&
       tideStationsWithGrade.some(st => st.code === stationCode && st.activeGrade);
+    // 取得日数には上限を設ける(MAX_TIDE_FETCH_DAYS)。発表が何年も前のサンプルや、時刻が古い津波情報で
+    // 「第１報〜今日」を全部取りに行くと、数千日分×観測点数のリクエストになり、アプリが固まるため。
+    const MAX_TIDE_FETCH_DAYS = 5;
     const days = isWarnedStation && activeTsunamiEpisodeStartTime
-      ? Math.max(2, daysBetweenDates(activeTsunamiEpisodeStartTime, new Date()))
+      ? Math.min(MAX_TIDE_FETCH_DAYS, Math.max(2, daysBetweenDates(activeTsunamiEpisodeStartTime, new Date())))
       : 2;
 
     // 通常時は読み込み済みならスキップ。ただし、以前は非発令(2日分)で読み込んだ
@@ -3099,6 +3095,9 @@ export default function App() {
   );
   useEffect(() => {
     if (!activeTsunami || !warnedStationCodesKey) return;
+    // 取得元がWolfxの津波情報は、最大波を気象庁の観測報(Wolfx経由)から取るので、警報対象の全観測点の
+    // 潮位データを先に取りに行く必要がない(観測点をタップした時に、その1地点だけ読み込まれる)。
+    if (activeTsunami.source === "wolfx") return;
     const overrides = activeTsunami.heightOverrides || null;
     // テスト配信で手入力の高さを設定済みの観測点は、実データが無くても表示できるので
     // 取得をスキップする(無駄なリクエストを増やさないため)。
@@ -4072,8 +4071,6 @@ export default function App() {
                   longPeriodEnabled={longPeriodEnabled}
                   quakeSource={quakeSource}
                   onChangeQuakeSource={handleChangeQuakeSource}
-                  tsunamiSource={tsunamiSource}
-                  onChangeTsunamiSource={handleChangeTsunamiSource}
                   tsunamiNotice={tsunamiNotice}
                   onChangeLongPeriodEnabled={handleChangeLongPeriodEnabled}
                   onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
@@ -4270,8 +4267,6 @@ export default function App() {
               longPeriodEnabled={longPeriodEnabled}
               quakeSource={quakeSource}
               onChangeQuakeSource={handleChangeQuakeSource}
-              tsunamiSource={tsunamiSource}
-              onChangeTsunamiSource={handleChangeTsunamiSource}
               onChangeLongPeriodEnabled={handleChangeLongPeriodEnabled}
               onChangeShakeEventCardsEnabled={handleChangeShakeEventCardsEnabled}
               cameraSettings={cameraSettings}
