@@ -10,13 +10,16 @@ import { loadGeoData } from "./mapDataLoaders";
      現在地が属する細分区域(細分区域.json)を引き当て、同名の対象地域を探す。
      距離減衰などによる独自推定はしない。
    ・現在地が対象地域に含まれない時は、予測震度も到達時刻も出さない。
-   ・位置情報は、この機能をオンにした利用者の端末の中だけで使う(保存・送信しない)。
+   ・位置情報は、すでに許可済みの時だけ端末内で使う(保存・送信しない)。設定で切れる(初期設定はオン)。
    ───────────────────────────────────────────────────── */
 
-const ENABLED_KEY = "meteoquake_eew_location_enabled_v1";
+// 初期設定はオン。オフにした時だけ"0"を保存する(保存が無ければオン)。
+const ENABLED_KEY = "meteoquake_eew_location_enabled_v2";
+// 気象タブの「現在地を使う」に同意済みかのフラグ(BottomDock.jsxと同じキー)。
+const WEATHER_CONSENT_KEY = "meteoquake_weather_location_consented_v1";
 
 function readEnabled() {
-  try { return localStorage.getItem(ENABLED_KEY) === "1"; } catch { return false; }
+  try { return localStorage.getItem(ENABLED_KEY) !== "0"; } catch { return true; }
 }
 let enabledValue = readEnabled();
 const listeners = new Set();
@@ -29,13 +32,13 @@ function subscribe(fn) {
 export function setEewLocationEnabled(next) {
   enabledValue = !!next;
   try {
-    if (enabledValue) localStorage.setItem(ENABLED_KEY, "1");
-    else localStorage.removeItem(ENABLED_KEY);
+    if (enabledValue) localStorage.removeItem(ENABLED_KEY);
+    else localStorage.setItem(ENABLED_KEY, "0");
   } catch { /* 保存できなくても、このセッション内では有効 */ }
   listeners.forEach((fn) => fn());
 }
 export function useEewLocationEnabled() {
-  return useSyncExternalStore(subscribe, () => enabledValue, () => false);
+  return useSyncExternalStore(subscribe, () => enabledValue, () => true);
 }
 
 // Wolfxの時刻文字列("2026-11-24 23:09:09" / "2026/11/24 23:09:09")は日本時間。
@@ -84,8 +87,11 @@ export function sanitizeArrivalMs(arrivalMs, originMs, nowMs) {
 
 /**
  * 有効な間だけ、現在地を1回取得する(追跡はしない)。
- * ブラウザが持っている10分以内の位置があれば、それを使うので速報の発表時でも待たされにくい。
- * status: "idle" | "loading" | "ready" | "denied" | "error" | "unsupported"
+ * 速報の最中に許可ダイアログが出て画面を塞がないよう、位置情報が「すでに許可済み」の
+ * 時だけ取得する。許可の有無が分からないブラウザ(Permissions API非対応)では、
+ * 気象タブで現在地の利用に同意済みの時だけ取得する。
+ * ブラウザが持っている10分以内の位置があればそれを使うので、速報の発表時でも待たされにくい。
+ * status: "idle" | "loading" | "ready" | "unavailable"(許可なし・取得失敗など。表示しない)
  */
 export function useEewPosition(active) {
   const [state, setState] = useState({ status: "idle", coords: null });
@@ -95,20 +101,37 @@ export function useEewPosition(active) {
       return undefined;
     }
     if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
-      setState({ status: "unsupported", coords: null });
+      setState({ status: "unavailable", coords: null });
       return undefined;
     }
     let cancelled = false;
-    setState((s) => (s.status === "ready" ? s : { status: "loading", coords: null }));
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        if (!cancelled) setState({ status: "ready", coords: { lat: pos.coords.latitude, lon: pos.coords.longitude } });
-      },
-      (err) => {
-        if (!cancelled) setState({ status: err?.code === 1 ? "denied" : "error", coords: null });
-      },
-      { enableHighAccuracy: false, maximumAge: 10 * 60 * 1000, timeout: 8000 }
-    );
+    const fetchOnce = () => {
+      setState((s) => (s.status === "ready" ? s : { status: "loading", coords: null }));
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          if (!cancelled) setState({ status: "ready", coords: { lat: pos.coords.latitude, lon: pos.coords.longitude } });
+        },
+        () => { if (!cancelled) setState({ status: "unavailable", coords: null }); },
+        { enableHighAccuracy: false, maximumAge: 10 * 60 * 1000, timeout: 8000 }
+      );
+    };
+    const weatherConsented = (() => {
+      try { return localStorage.getItem(WEATHER_CONSENT_KEY) === "1"; } catch { return false; }
+    })();
+    if (navigator.permissions?.query) {
+      navigator.permissions.query({ name: "geolocation" }).then((st) => {
+        if (cancelled) return;
+        if (st.state === "granted") fetchOnce();
+        else setState({ status: "unavailable", coords: null });
+      }).catch(() => {
+        if (cancelled) return;
+        if (weatherConsented) fetchOnce(); else setState({ status: "unavailable", coords: null });
+      });
+    } else if (weatherConsented) {
+      fetchOnce();
+    } else {
+      setState({ status: "unavailable", coords: null });
+    }
     return () => { cancelled = true; };
   }, [active]);
   return state;
