@@ -173,6 +173,50 @@ function tsunamiGradeShortLabel(grade) {
   return map[grade] || "情報";
 }
 
+// Wolfx(気象庁の津波観測に関する情報)の「観測された津波」「沿岸での推定」。
+// 潮位データからの独自算出値(予報区の下の「最大波」)とは別に、公式の報を載せる。
+// 沿岸推定は観測値ではないので、見出しを分けて明示する。
+function WolfxObservationList({ title, stations }) {
+  const { tokens } = useContext(ThemeContext);
+  if (!stations.length) return null;
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ padding: "4px 2px", fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>{title}</div>
+      <div style={{ borderRadius: 12, overflow: "hidden", background: `rgba(${tokens.ink},0.04)`, boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)` }}>
+        {stations.map((st, i) => {
+          const value = st.maxHeightM != null ? `${st.maxHeightM.toFixed(1)}m` : st.maxText;
+          const time = st.maxTime ? formatTsunamiMaxWaveTime(new Date(st.maxTime.replace(/-/g, "/")).getTime()) : null;
+          return (
+            <div key={`${st.areaName}-${st.name}-${i}`}>
+              {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.08)`, marginLeft: 12 }}/>}
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "7px 12px" }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: tokens.text, flexShrink: 0, maxWidth: "42%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{st.name}</span>
+                <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.45)`, minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {[st.areaName || st.sensor, time && `最大波 ${time}`].filter(Boolean).join("・")}
+                </span>
+                {value && <span style={{ fontSize: 14, fontWeight: 800, color: tokens.text, flexShrink: 0 }}>{value}</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function WolfxObservationsSection({ observations }) {
+  if (!Array.isArray(observations) || observations.length === 0) return null;
+  const observed = observations.flatMap(o => o.observed || []);
+  const estimated = observations.flatMap(o => o.estimated || []);
+  if (observed.length === 0 && estimated.length === 0) return null;
+  return (
+    <div style={{ marginTop: 6 }}>
+      <WolfxObservationList title="観測された津波(気象庁の観測報)" stations={observed}/>
+      <WolfxObservationList title="沿岸での推定(観測値ではありません)" stations={estimated}/>
+    </div>
+  );
+}
+
 function TsunamiAreaRow({ area, showDivider, observedStations = [], onSelectStation }) {
   const { tokens } = useContext(ThemeContext);
   const info = tsunamiGradeInfo(area.grade);
@@ -465,6 +509,7 @@ export function TsunamiTabBody({
                 <TsunamiAreaRow key={`${area.name}-${i}`} area={area} showDivider={i > 0} observedStations={observedStations} onSelectStation={onSelectTideStation}/>
               ))}
             </div>
+            <WolfxObservationsSection observations={selected.observations}/>
           </div>
         ) : (
           <div style={{

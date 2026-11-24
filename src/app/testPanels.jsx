@@ -7,6 +7,7 @@ import { INTENSITY_LABEL } from "./stationIcons";
 import { QUAKE_STAGE_LABEL } from "./quakeCards";
 import { haversineKm } from "./geo";
 import { tsunamiGradeInfo } from "./tsunamiData";
+import { WOLFX_TSUNAMI_SAMPLES } from "./wolfxTsunamiSamples";
 
 
 /* ─────────────────────────────────────────────────────
@@ -1000,6 +1001,7 @@ export function ShakeDetectionTestPanel({ shakeTests = [], onAction, shakeTestFo
 
 export function TsunamiTestBroadcastPanel({
   testTsunami, onBroadcast, onCancel, onClear,
+  wolfxSampleKey = null, onSelectWolfxSample,
   tsunamiAreaPickActive, onStartAreaPick, pickedAreas = [], onRemoveAreaPick, onCycleAreaGrade,
   pickedHeights = [], onChangeHeightPick, onRemoveHeightPick,
   candidateHeightStations = [], onAddHeightPick,
@@ -1016,6 +1018,31 @@ export function TsunamiTestBroadcastPanel({
         実際の気象庁発表ではない、動作確認用のダミーデータです。津波タブの一覧・カード・地図の塗り分け・
         潮位観測点への反映などが、このデータを使って表示されます。「配信を削除」で元に戻ります。
       </div>
+
+      <SettingsCard>
+        <div style={{ padding: "12px 14px 4px", fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>
+          Wolfxの実データサンプルで表示
+        </div>
+        <div style={{ padding: "0 14px 12px" }}>
+          <select
+            value={wolfxSampleKey ?? ""}
+            onChange={e => onSelectWolfxSample?.(e.target.value || null)}
+            style={{
+              width: "100%", padding: "10px 12px", borderRadius: 10, fontSize: 13,
+              border: `0.5px solid rgba(${tokens.ink},0.18)`,
+              background: `rgba(${tokens.ink},0.05)`, color: tokens.text,
+            }}
+          >
+            <option value="">サンプルを使わない(通常の表示)</option>
+            {WOLFX_TSUNAMI_SAMPLES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+          </select>
+          <div style={{ marginTop: 8, fontSize: 11, color: `rgba(${tokens.ink},0.4)`, lineHeight: 1.6 }}>
+            Wolfx(jma_tsunami)の取得データの形式のサンプルを、本物の取得データの代わりに流し込みます。
+            津波タブ・地図・通知は、実際のWolfx用の処理を通って表示されます。選ぶと津波の取得元の設定に関わらず
+            サンプルが使われ、「サンプルを使わない」か「配信を削除」で元に戻ります。
+          </div>
+        </div>
+      </SettingsCard>
 
       <SettingsCard>
         <div style={{ padding: "12px 14px 4px", fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>

@@ -109,6 +109,7 @@ export function BottomDock({
   shakeEvents = EMPTY_EQDB_LIST,
   realtimeDataTime,
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
+  wolfxTsunamiSampleKey = null, onSelectWolfxTsunamiSample,
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
   eewTestForm, eewEpicenterPickActive,
   testQuakes, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeLpPickActive, lpMapView, onSetLpMapView, quakeTestAutoPlaying,
@@ -3232,6 +3233,8 @@ export function BottomDock({
                   onBroadcastTestTsunami={onBroadcastTestTsunami}
                   onCancelTestTsunami={onCancelTestTsunami}
                   onClearTestTsunami={onClearTestTsunami}
+                  wolfxTsunamiSampleKey={wolfxTsunamiSampleKey}
+                  onSelectWolfxTsunamiSample={onSelectWolfxTsunamiSample}
                   testEews={testEews}
                   onTestEewAction={onTestEewAction}
                   eewTestForm={eewTestForm}

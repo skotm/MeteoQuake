@@ -4,7 +4,7 @@ import { wolfxPayloadToQuakeCards } from "../wolfxQuakes";
 
 /* ─────────────────────────────────────────────────────
    Wolfx Open API: jma_earthquake_detail(直近100件の地震の電文を、地震ごとにまとめたもの)
-   https://wolfx.jp/apidoc
+   https://wolfx.jp/docs/open-api
    1回の取得(約250KB)から、次の2つを同時に作る(別々に取りに行かない)。
      ・longPeriod: 長周期地震動階級(Map<eventId, LongPeriodEvent>)
      ・quakeCards: 地震カードの一覧(地震情報の取得元をWolfxにした時に使う)
@@ -13,6 +13,9 @@ import { wolfxPayloadToQuakeCards } from "../wolfxQuakes";
      部分的なデータで全体を壊さないよう、少し待ってからHTTPで取り直す。
    ・WebSocketが切れている間だけ、数分おきにHTTPで取り直す(常時ポーリングはしない)。
    ・画面に戻った時にも1回取り直す(長周期の観測情報は地震の約10分後に出るため)。
+   ・注意: Open API仕様書(2026-11-23時点)はこのデータを「HTTPのみ」としているが、WebSocket仕様書にも
+     jma_earthquake_detailの記載は無い。WebSocketは未公開(または非公式)の可能性があるため、
+     つながらない場合でも、上のHTTP取得だけで動くようにしてある。
    needed=falseの間は一切通信しない。
    ───────────────────────────────────────────────────── */
 const HTTP_URL = "https://api.wolfx.jp/jma_earthquake_detail.json";

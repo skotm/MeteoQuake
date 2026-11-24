@@ -15,6 +15,8 @@ import { Glass, GlassOpaqueContext, PressableButton, detectSuspectedBackdropFilt
 import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, computeGlareGuard, loadStoredThemeModePref, saveThemeModePref, useSystemThemeMode } from "./app/theme";
 import { LongPeriodContext, useJmaLongPeriod } from "./app/useJmaLongPeriod";
 import { useWolfxTsunami } from "./app/useWolfxTsunami";
+import { loadWolfxTsunamiSample, WOLFX_TSUNAMI_SAMPLES } from "./app/wolfxTsunamiSamples";
+import { parseWolfxTsunami } from "./wolfxTsunami";
 import { useWolfxDetail } from "./app/useWolfxDetail";
 import { attachLongPeriod, buildTestLongPeriodInfo, eventIdMinuteKey } from "./longPeriod";
 const EMPTY_LONG_PERIOD = new Map();
@@ -1682,6 +1684,7 @@ export default function App() {
      巻き込まれて消えてしまわないようにしている。
      ───────────────────────────────────────────────────── */
   const [testTsunami, setTestTsunami] = useState(null); // { ...tsunamiカード, isTest: true } | null
+  const [wolfxTsunamiSample, setWolfxTsunamiSample] = useState(null); // { key, raw, nowMs } | null
 
   function broadcastTestTsunami({ areas, heightOverrides }) {
     const now = new Date();
@@ -1718,6 +1721,22 @@ export default function App() {
   }
   function clearTestTsunami() {
     setTestTsunami(null);
+    setWolfxTsunamiSample(null);
+  }
+
+  // Wolfxの実データ形式のサンプルを、本物の取得データの代わりに流し込む(津波警報テスト配信画面から)。
+  // keyがnullなら元に戻す。読み込み中に別の操作があっても、最後に選んだものだけを反映する。
+  const wolfxSampleReqRef = useRef(0);
+  async function selectWolfxTsunamiSample(key) {
+    const req = ++wolfxSampleReqRef.current;
+    if (!key) { setWolfxTsunamiSample(null); return; }
+    try {
+      const loaded = await loadWolfxTsunamiSample(key);
+      if (req !== wolfxSampleReqRef.current) return;
+      setWolfxTsunamiSample(loaded);
+    } catch (err) {
+      console.warn("Wolfx津波サンプルの読み込みに失敗:", err);
+    }
   }
 
   // テスト配信中は、実際の一覧の先頭にテストデータを合成する。以降、津波タブに
@@ -1725,16 +1744,34 @@ export default function App() {
   // 津波情報の取得元がWolfxの時は、Wolfxの「現在の状態」(警報等あり/解除)を先頭に置く。
   // Wolfxの状態が確認できない間(期限切れ・不明・未取得)は、P2P地震情報の一覧をそのまま使い、
   // 「津波の心配なし」とは決して断定しない。過去の津波一覧(tsunamiHistory)は常にP2P/気象庁。
-  const wolfxTsunami = useWolfxTsunami(tsunamiSource === "wolfx");
+  const wolfxTsunamiLive = useWolfxTsunami(tsunamiSource === "wolfx" && !wolfxTsunamiSample);
+  // サンプル選択中は、取得元の設定に関わらず、サンプルを本物のWolfx取得データとして扱う
+  // (同じ解析・同じ表示経路を通る)。
+  const wolfxSampleActive = !!wolfxTsunamiSample;
+  const wolfxTsunami = useMemo(
+    () => (wolfxTsunamiSample
+      ? { status: "ready", result: parseWolfxTsunami(wolfxTsunamiSample.raw, wolfxTsunamiSample.nowMs) }
+      : wolfxTsunamiLive),
+    [wolfxTsunamiSample, wolfxTsunamiLive]
+  );
   const tsunamisBySource = useMemo(() => {
-    const card = tsunamiSource === "wolfx" ? wolfxTsunami.result?.card : null;
+    const card = tsunamiSource === "wolfx" || wolfxSampleActive ? wolfxTsunami.result?.card : null;
     if (!card) return tsunamis;
     const t0 = new Date(card.time).getTime();
     // 同じ発表がP2P側にも出ている場合は、Wolfx側を採用して重複を除く
     const rest = tsunamis.filter(t => !(Number.isFinite(t0) && Math.abs(new Date(t.time).getTime() - t0) < 60 * 1000));
     return [card, ...rest];
-  }, [tsunamiSource, wolfxTsunami.result, tsunamis]);
+  }, [tsunamiSource, wolfxSampleActive, wolfxTsunami.result, tsunamis]);
   const tsunamiNotice = (() => {
+    if (wolfxSampleActive) {
+      const label = WOLFX_TSUNAMI_SAMPLES.find(s => s.key === wolfxTsunamiSample.key)?.label ?? "";
+      const untrusted = wolfxTsunami.result?.state === "untrusted";
+      return {
+        uncertain: untrusted,
+        text: `【テスト】Wolfxの津波情報のサンプル「${label}」を表示しています。実際の津波情報ではありません。` +
+          (untrusted ? "状態を確認できない場合の表示を確認するためのサンプルです。" : ""),
+      };
+    }
     if (tsunamiSource !== "wolfx") return null;
     if (wolfxTsunami.result?.state === "untrusted") {
       return { uncertain: true, text: "Wolfxの津波情報の現在の状態を確認できないため、P2P地震情報の情報を表示しています。" };
@@ -4039,6 +4076,8 @@ export default function App() {
                   onBroadcastTestTsunami={broadcastTestTsunami}
                   onCancelTestTsunami={cancelTestTsunami}
                   onClearTestTsunami={clearTestTsunami}
+                  wolfxTsunamiSampleKey={wolfxTsunamiSample?.key ?? null}
+                  onSelectWolfxTsunamiSample={selectWolfxTsunamiSample}
                   testEews={testEews}
                   onTestEewAction={handleTestEewAction}
                   eewTestForm={eewTestForm}
@@ -4234,6 +4273,8 @@ export default function App() {
               onBroadcastTestTsunami={broadcastTestTsunami}
               onCancelTestTsunami={cancelTestTsunami}
               onClearTestTsunami={clearTestTsunami}
+              wolfxTsunamiSampleKey={wolfxTsunamiSample?.key ?? null}
+              onSelectWolfxTsunamiSample={selectWolfxTsunamiSample}
               testEews={testEews}
               onTestEewAction={handleTestEewAction}
               eewTestForm={eewTestForm}
