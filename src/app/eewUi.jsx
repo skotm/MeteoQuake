@@ -165,22 +165,26 @@ function formatEewAreasSummary(areas) {
 
 /* ─────────────────────────────────────────────────────
    現在地の「主要動到達までのカウントダウン」と「予測震度」(EEWカードの空き行)。
-   設定でオンにした時だけ表示する(オフ・取消済みの時は何も描かず、カードの大きさも変えない)。
+   設定(初期設定はオン)で切れる。オフ・取消済み・位置情報が使えない時は何も描かず、カードの大きさも変えない。
    予測震度・到達時刻は、速報の「細分区域ごと」の値(WarnArea)をそのまま使う。
    高さは固定(ROW_H)で、はみ出す内容は隠す。これでカード全体の大きさは変わらない。
    ───────────────────────────────────────────────────── */
 const MY_LOCATION_ROW_H = 22;
 
-function MyIntensityChip({ intensityKey }) {
+function MyIntensityChip({ areaName, intensityKey }) {
   const { tokens } = useContext(ThemeContext);
   const style = useIntensityStyle(intensityKey || "0");
   if (!intensityKey) return null;
+  // 表示するのは「現在地」ではなく、現在地が属する細分区域の予測震度。
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-      <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>現在地 震度</span>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+      <span style={{
+        fontSize: 11, color: `rgba(${tokens.ink},0.55)`,
+        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0,
+      }}>{areaName} 震度</span>
       <span className="mono" style={{
         background: style.bg, color: style.fg, borderRadius: 6,
-        padding: "0 7px", height: 20, lineHeight: "20px",
+        padding: "0 7px", height: 20, lineHeight: "20px", flexShrink: 0,
         fontSize: 14, fontWeight: 800, whiteSpace: "nowrap",
       }}>{style.label}</span>
     </span>
@@ -205,25 +209,23 @@ function EewMyLocationRow({ eew }) {
     return () => clearInterval(id);
   }, [counting]);
 
-  if (!active) return null;
+  // オフ・取消済み・位置情報が使えない時は、何も描かない(カードの大きさも変えない)。
+  if (!active || pos.status === "idle" || pos.status === "unavailable") return null;
 
   const small = { fontSize: 11, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" };
   let left = null;
-  if (pos.status === "loading" || (pos.status === "ready" && !areaName)) {
+  if (pos.status === "loading" || !areaName) {
     left = <span style={small}>現在地を確認中…</span>;
-  } else if (pos.status !== "ready") {
-    left = <span style={small}>現在地を取得できません</span>;
   } else if (!forecast.inWarnArea) {
     left = <span style={small}>現在地は対象地域外</span>;
-  } else if (forecast.arrived || (arrivalMs != null && arrivalMs <= now)) {
-    left = <span style={{ fontSize: 13, fontWeight: 800, color: "#FF453A", whiteSpace: "nowrap" }}>主要動 到達(推定)</span>;
-  } else if (arrivalMs != null) {
-    const remain = Math.max(0, Math.ceil((arrivalMs - now) / 1000));
+  } else if (arrivalMs != null || forecast.arrived) {
+    // 到達後(Arriveがtrue、または到達予想時刻を過ぎた後)は0秒のまま。色は常に通常の文字色。
+    const remain = forecast.arrived || arrivalMs == null ? 0 : Math.max(0, Math.ceil((arrivalMs - now) / 1000));
     left = (
-      <span style={{ display: "inline-flex", alignItems: "baseline", gap: 4, whiteSpace: "nowrap" }}>
-        <span style={small}>主要動まで</span>
-        <span className="mono" style={{ fontSize: 22, fontWeight: 800, lineHeight: 1, color: remain <= 10 ? "#FF453A" : tokens.text }}>{remain}</span>
-        <span style={small}>秒</span>
+      <span style={{ display: "inline-flex", alignItems: "baseline", gap: 4, whiteSpace: "nowrap", flexShrink: 0 }}>
+        <span style={{ ...small, color: tokens.text }}>主要動まで</span>
+        <span className="mono" style={{ fontSize: 22, fontWeight: 800, lineHeight: 1, color: tokens.text }}>{remain}</span>
+        <span style={{ ...small, color: tokens.text }}>秒</span>
       </span>
     );
   } else {
@@ -236,7 +238,9 @@ function EewMyLocationRow({ eew }) {
       display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
     }}>
       {left}
-      {pos.status === "ready" && forecast?.inWarnArea && <MyIntensityChip intensityKey={forecast.intensityKey}/>}
+      {pos.status === "ready" && areaName && forecast?.inWarnArea && (
+        <MyIntensityChip areaName={areaName} intensityKey={forecast.intensityKey}/>
+      )}
     </div>
   );
 }
