@@ -4,6 +4,7 @@ import { ThemeContext } from "./theme";
 import { Glass, PressableButton } from "./glass";
 import { formatQuakeTimeShort, formatTsunamiMaxWaveTime, formatTsunamiTimeShort } from "./quakeCards";
 import { EMPTY_EQDB_LIST } from "./eqdb";
+import { mergeWolfxObservations, matchTideStationByName } from "../wolfxTsunami";
 import { PanelDragHandoffCard, QuakeDetailCard, StationPointsList } from "./quakeDetailUi";
 import { HistoryClockIcon, TideGaugeIcon } from "./mapOverlayUi";
 import { useIsStandalonePwa } from "./layoutHooks";
@@ -185,7 +186,7 @@ function WolfxObservationList({ title, stations }) {
       <div style={{ borderRadius: 12, overflow: "hidden", background: `rgba(${tokens.ink},0.04)`, boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)` }}>
         {stations.map((st, i) => {
           const value = st.maxHeightM != null ? `${st.maxHeightM.toFixed(1)}m` : st.maxText;
-          const time = st.maxTime ? formatTsunamiMaxWaveTime(new Date(st.maxTime.replace(/-/g, "/")).getTime()) : null;
+          const time = st.maxTimeMs != null ? formatTsunamiMaxWaveTime(st.maxTimeMs) : null;
           return (
             <div key={`${st.areaName}-${st.name}-${i}`}>
               {i > 0 && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.08)`, marginLeft: 12 }}/>}
@@ -204,14 +205,16 @@ function WolfxObservationList({ title, stations }) {
   );
 }
 
-function WolfxObservationsSection({ observations }) {
+function WolfxObservationsSection({ observations, inlineAreaObserved = false }) {
   if (!Array.isArray(observations) || observations.length === 0) return null;
-  const observed = observations.flatMap(o => o.observed || []);
-  const estimated = observations.flatMap(o => o.estimated || []);
+  const merged = mergeWolfxObservations(observations);
+  // 予報区の行に載せた沿岸の観測点は、ここでは重ねて出さない(予報区を持たない沖合の観測だけ出す)。
+  const observed = inlineAreaObserved ? merged.observed.filter(o => !o.areaName) : merged.observed;
+  const estimated = merged.estimated;
   if (observed.length === 0 && estimated.length === 0) return null;
   return (
     <div style={{ marginTop: 6 }}>
-      <WolfxObservationList title="観測された津波(気象庁の観測報)" stations={observed}/>
+      <WolfxObservationList title={inlineAreaObserved ? "沖合の観測(GPS波浪計など)" : "観測された津波(気象庁の観測報)"} stations={observed}/>
       <WolfxObservationList title="沿岸での推定(観測値ではありません)" stations={estimated}/>
     </div>
   );
@@ -261,18 +264,19 @@ function TsunamiAreaRow({ area, showDivider, observedStations = [], onSelectStat
       {observedStations.length > 0 && (
         <div style={{ padding: "0 12px 8px 46px", display: "flex", flexDirection: "column", gap: 2 }}>
           {observedStations.map(st => {
-            const color = tsunamiHeightBandColor(st.heightM);
+            const hasHeight = st.heightM != null;
+            const color = hasHeight ? tsunamiHeightBandColor(st.heightM) : `rgba(${tokens.ink},0.4)`;
             const timeText = formatTsunamiMaxWaveTime(st.timeMs);
             return (
               <PressableButton
                 key={st.name}
                 type="button"
-                onClick={() => onSelectStation?.(st.code)}
+                onClick={() => { if (st.code != null) onSelectStation?.(st.code); }}
                 style={{
                   display: "flex", alignItems: "baseline", gap: 6, padding: "6px 8px",
                   margin: "0 -6px", borderRadius: 8,
                   border: `0.5px solid rgba(${tokens.ink},0.12)`,
-                  background: `rgba(${tokens.ink},0.035)`, cursor: "pointer",
+                  background: `rgba(${tokens.ink},0.035)`, cursor: st.code != null ? "pointer" : "default",
                   textAlign: "left", width: "calc(100% + 12px)",
                 }}
               >
@@ -292,7 +296,7 @@ function TsunamiAreaRow({ area, showDivider, observedStations = [], onSelectStat
                   // あるため、白い縁取りを付けて視認性を確保する。
                   textShadow: "-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 3px rgba(255,255,255,0.8)",
                 }}>
-                  {Math.abs(st.heightM).toFixed(1)}m
+                  {hasHeight ? `${Math.abs(st.heightM).toFixed(1)}m` : st.valueText}
                 </span>
               </PressableButton>
             );
@@ -375,15 +379,31 @@ export function TsunamiTabBody({
     // 一覧の並び順は、まず予報区自体の警報グレードの高い順(注意報より警報が上、など)。
     // 同じグレードの予報区が複数ある場合だけ、その中でより高い最大波が観測された
     // 予報区を上に表示する。
+    // 取得元がWolfxの津波情報は、潮位データからの独自算出ではなく、気象庁の津波観測報(Wolfx経由)の
+    // 観測値を、予報区ごとの観測点として出す。値が「高さ」でなく状態の文言(観測中・重要など)の観測点も、
+    // 文言のまま載せる。潮位計の観測点と名前で対応がつく時だけ、行を押して潮位を見られる。
+    const isWolfxCard = selected.source === "wolfx";
+    const wolfxMerged = isWolfxCard ? mergeWolfxObservations(selected.observations) : null;
     const areasWithObserved = sortedAreas
       .map(area => ({
         area,
-        observedStations: tideStations
-          .filter(st => st.tsunamiAreaName === area.name && tsunamiHeightByStation[st.code] != null)
-          .map(st => ({ code: st.code, name: st.name, heightM: tsunamiHeightByStation[st.code], timeMs: tsunamiHeightTimeByStation[st.code] }))
-          .sort((a, b) => Math.abs(b.heightM) - Math.abs(a.heightM)),
+        observedStations: isWolfxCard
+          ? wolfxMerged.observed
+              .filter(o => o.areaName === area.name && (o.maxHeightM != null || o.maxText))
+              .map(o => ({
+                code: matchTideStationByName(tideStations, area.name, o.name)?.code ?? null,
+                name: o.name,
+                heightM: o.maxHeightM,
+                valueText: o.maxText,
+                timeMs: o.maxTimeMs,
+              }))
+              .sort((a, b) => (b.heightM != null ? Math.abs(b.heightM) : -1) - (a.heightM != null ? Math.abs(a.heightM) : -1))
+          : tideStations
+              .filter(st => st.tsunamiAreaName === area.name && tsunamiHeightByStation[st.code] != null)
+              .map(st => ({ code: st.code, name: st.name, heightM: tsunamiHeightByStation[st.code], timeMs: tsunamiHeightTimeByStation[st.code] }))
+              .sort((a, b) => Math.abs(b.heightM) - Math.abs(a.heightM)),
       }))
-      .map(x => ({ ...x, gradeWeight: tsunamiGradeInfo(x.area.grade).weight, maxObservedHeight: x.observedStations[0] ? Math.abs(x.observedStations[0].heightM) : -1 }))
+      .map(x => ({ ...x, gradeWeight: tsunamiGradeInfo(x.area.grade).weight, maxObservedHeight: x.observedStations[0]?.heightM != null ? Math.abs(x.observedStations[0].heightM) : -1 }))
       .sort((a, b) => (b.gradeWeight - a.gradeWeight) || (b.maxObservedHeight - a.maxObservedHeight));
     const hasAnyObservedHeight = areasWithObserved.some(x => x.observedStations.length > 0);
     const showingCausingQuake = showingCausingQuakeFor === selected.id;
@@ -486,9 +506,9 @@ export function TsunamiTabBody({
                     background: `rgba(${tokens.ink},0.04)`,
                     fontSize: 11.5, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.8,
                   }}>
-                    「最大波」は、潮位観測データの潮位偏差(実測潮位−天文潮位)からMeteoQuakeが
-                    独自に算出した参考値です。気象庁が発表する津波情報・観測値ではなく、公表値と
-                    一致しない場合があります。
+                    {isWolfxCard
+                      ? "「最大波」は、気象庁が発表する津波観測に関する情報(Wolfx経由)の観測値です。観測中・重要などの文言は、気象庁の発表のままです。"
+                      : "「最大波」は、潮位観測データの潮位偏差(実測潮位−天文潮位)からMeteoQuakeが独自に算出した参考値です。気象庁が発表する津波情報・観測値ではなく、公表値と一致しない場合があります。"}
                   </div>
                 )}
               </div>
@@ -497,7 +517,7 @@ export function TsunamiTabBody({
               padding: "6px 2px",
               fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`,
             }}>
-              {hasAnyObservedHeight ? "対象の予報区と津波の最大波(参考値)" : "対象の予報区"}
+              {hasAnyObservedHeight ? (isWolfxCard ? "対象の予報区と津波の最大波(気象庁の観測値)" : "対象の予報区と津波の最大波(参考値)") : "対象の予報区"}
             </div>
             <div style={{
               borderRadius: 12,
@@ -509,7 +529,7 @@ export function TsunamiTabBody({
                 <TsunamiAreaRow key={`${area.name}-${i}`} area={area} showDivider={i > 0} observedStations={observedStations} onSelectStation={onSelectTideStation}/>
               ))}
             </div>
-            <WolfxObservationsSection observations={selected.observations}/>
+            <WolfxObservationsSection observations={selected.observations} inlineAreaObserved={isWolfxCard}/>
           </div>
         ) : (
           <div style={{

@@ -16,7 +16,7 @@ import { THEME_TOKENS, ThemeContext, applyMapColorOverrides, computeGlareGuard, 
 import { LongPeriodContext, useJmaLongPeriod } from "./app/useJmaLongPeriod";
 import { useWolfxTsunami } from "./app/useWolfxTsunami";
 import { loadWolfxTsunamiSample, WOLFX_TSUNAMI_SAMPLES } from "./app/wolfxTsunamiSamples";
-import { parseWolfxTsunami } from "./wolfxTsunami";
+import { parseWolfxTsunami, mergeWolfxObservations, matchTideStationByName } from "./wolfxTsunami";
 import { useWolfxDetail } from "./app/useWolfxDetail";
 import { attachLongPeriod, buildTestLongPeriodInfo, eventIdMinuteKey } from "./longPeriod";
 const EMPTY_LONG_PERIOD = new Map();
@@ -3143,6 +3143,17 @@ export default function App() {
     if (!Number.isFinite(startMs)) return {};
     const overrides = activeTsunami.heightOverrides || null; // テスト配信用の手入力値(App側参照)
     const result = {};
+    // 津波情報の取得元がWolfxの時は、潮位データからの独自算出ではなく、気象庁の津波観測報(Wolfx経由)の
+    // 観測値に従う。潮位計の観測点とは名前で対応づける(コード体系が違うため)。
+    if (activeTsunami.source === "wolfx") {
+      const { observed } = mergeWolfxObservations(activeTsunami.observations);
+      observed.forEach(o => {
+        if (o.maxHeightM == null || Math.abs(o.maxHeightM) < TSUNAMI_HEIGHT_NEGLIGIBLE_M) return;
+        const st = matchTideStationByName(tideStationsWithGrade, o.areaName, o.name);
+        if (st && st.activeGrade) result[st.code] = o.maxHeightM;
+      });
+      return result;
+    }
     tideStationsWithGrade.forEach(st => {
       if (!st.activeGrade) return;
       if (overrides && overrides[st.code] != null) {
@@ -3171,6 +3182,16 @@ export default function App() {
     const episodeStartMs = activeTsunamiEpisodeStartTime ? activeTsunamiEpisodeStartTime.getTime() : startMs;
     const overrides = activeTsunami.heightOverrides || null;
     const result = {};
+    // Wolfxの津波観測報の時は、観測報に書かれている最大波の時刻を使う。
+    if (activeTsunami.source === "wolfx") {
+      const { observed } = mergeWolfxObservations(activeTsunami.observations);
+      observed.forEach(o => {
+        if (o.maxHeightM == null || o.maxTimeMs == null) return;
+        const st = matchTideStationByName(tideStationsWithGrade, o.areaName, o.name);
+        if (st && tsunamiHeightByStation[st.code] != null) result[st.code] = o.maxTimeMs;
+      });
+      return result;
+    }
     tideStationsWithGrade.forEach(st => {
       if (!st.activeGrade || tsunamiHeightByStation[st.code] == null) return;
       if (overrides && overrides[st.code] != null) {
