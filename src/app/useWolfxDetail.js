@@ -8,22 +8,22 @@ import { wolfxPayloadToQuakeCards } from "../wolfxQuakes";
    1回の取得(約250KB)から、次の2つを同時に作る(別々に取りに行かない)。
      ・longPeriod: 長周期地震動階級(Map<eventId, LongPeriodEvent>)
      ・quakeCards: 地震カードの一覧(地震情報の取得元をWolfxにした時に使う)
-   ・起動時にHTTPで1回取得し、以降はWebSocketの通知を受ける。
-   ・WebSocketが全件を送ってくる場合はそのまま使う。1件だけ(またはそれ以外)の場合、
-     部分的なデータで全体を壊さないよう、少し待ってからHTTPで取り直す。
+
+   更新の検知: jma_eqlist(気象庁 地震情報、最新50件)のWebSocketを購読する。
+   ・地震詳細(jma_earthquake_detail)には、WebSocket配信が無い(仕様書で「HTTPのみ」)。
+     そのため、WebSocketで届くjma_eqlistの更新(md5の変化)を「詳細を取り直す合図」にして、
+     本体はHTTPで取る。
+   ・jma_eqlistは、新しい地震や、震源・震度・「info」の補完・訂正があると更新される。詳細側の報の反映が
+     少し遅れることがあるため、合図の後に、数秒後と少し後の2回取り直す(md5が同じなら反映しない)。
    ・WebSocketが切れている間だけ、数分おきにHTTPで取り直す(常時ポーリングはしない)。
    ・画面に戻った時にも1回取り直す(長周期の観測情報は地震の約10分後に出るため)。
-   ・注意: Open API仕様書(2026-11-23時点)はこのデータを「HTTPのみ」としているが、WebSocket仕様書にも
-     jma_earthquake_detailの記載は無い。WebSocketは未公開(または非公式)の可能性があるため、
-     つながらない場合でも、上のHTTP取得だけで動くようにしてある。
    needed=falseの間は一切通信しない。
    ───────────────────────────────────────────────────── */
 const HTTP_URL = "https://api.wolfx.jp/jma_earthquake_detail.json";
-const WS_URL = "wss://ws-api.wolfx.jp/jma_earthquake_detail";
+const WS_URL = "wss://ws-api.wolfx.jp/jma_eqlist";
 const FALLBACK_POLL_MS = 3 * 60 * 1000;
 const RECONNECT_MS = 5000;
-const REFETCH_DEBOUNCE_MS = 3000;
-const FULL_LIST_MIN = 20; // これ以上の件数が来たら「全件」とみなす
+const REFETCH_DELAYS_MS = [2000, 20000]; // 合図の何ms後に詳細を取り直すか
 
 const EMPTY_MAP = new Map();
 const EMPTY_LIST = [];
@@ -38,11 +38,16 @@ export function useWolfxDetail(needed) {
     let wsOpen = false;
     let reconnectTimer = null;
     let pollTimer = null;
-    let refetchTimer = null;
+    let refetchTimers = [];
+    let lastDetailMd5 = null; // 詳細の内容が変わっていなければ、再計算・再描画をしない
+    let lastEqlistMd5 = null; // jma_eqlistの更新識別子(これが変わったら詳細を取り直す)
     setState((s) => (s.status === "ready" ? s : { ...s, status: "loading" }));
 
     const apply = (data) => {
       if (cancelled) return;
+      const md5 = typeof data?.md5 === "string" ? data.md5 : null;
+      if (md5 && md5 === lastDetailMd5) return;
+      lastDetailMd5 = md5;
       const longPeriod = new Map(parseLongPeriodPayload(data).map((e) => [e.eventId, e]));
       setState({ longPeriod, quakeCards: wolfxPayloadToQuakeCards(data), status: "ready" });
     };
@@ -58,9 +63,10 @@ export function useWolfxDetail(needed) {
       }
     };
 
+    // jma_eqlistの更新を受けた時: 前回の予約を捨てて、詳細を取り直す予約をし直す。
     const scheduleRefetch = () => {
-      if (refetchTimer) return;
-      refetchTimer = setTimeout(() => { refetchTimer = null; fetchAll(); }, REFETCH_DEBOUNCE_MS);
+      refetchTimers.forEach(clearTimeout);
+      refetchTimers = REFETCH_DELAYS_MS.map((ms) => setTimeout(fetchAll, ms));
     };
 
     const connect = () => {
@@ -75,8 +81,17 @@ export function useWolfxDetail(needed) {
       ws.onmessage = (ev) => {
         let data;
         try { data = JSON.parse(ev.data); } catch { return; }
-        if (Array.isArray(data?.events) && data.events.length >= FULL_LIST_MIN) apply(data);
-        else if (data && (Array.isArray(data.events) || typeof data.eventId === "string")) scheduleRefetch();
+        if (data?.type === "heartbeat") {
+          // 仕様書の推奨: ハートビートにpingを返す。
+          try { ws.send("ping"); } catch { /* 無視 */ }
+          return;
+        }
+        if (data?.type !== "jma_eqlist") return; // pongなどは無視する
+        const md5 = typeof data.md5 === "string" ? data.md5 : null;
+        // 接続直後に届く最初の1通は、すでに取得済みの内容かもしれないので、変化があった時だけ取り直す。
+        const changed = lastEqlistMd5 !== null && md5 !== lastEqlistMd5;
+        lastEqlistMd5 = md5;
+        if (changed) scheduleRefetch();
       };
       ws.onerror = () => {};
       ws.onclose = () => {
@@ -98,7 +113,7 @@ export function useWolfxDetail(needed) {
       document.removeEventListener("visibilitychange", onVisible);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (pollTimer) clearInterval(pollTimer);
-      if (refetchTimer) clearTimeout(refetchTimer);
+      refetchTimers.forEach(clearTimeout);
       if (ws) { ws.onclose = null; try { ws.close(); } catch { /* 無視 */ } }
     };
   }, [needed]);
