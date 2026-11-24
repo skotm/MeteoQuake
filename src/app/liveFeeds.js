@@ -151,7 +151,7 @@ export async function fetchLatestFreshEew() {
 
 /* ─────────────────────────────────────────────────────
    Wolfx Open API — JMA緊急地震速報 (jma_eew)
-   https://wolfx.jp/apidoc
+   https://wolfx.jp/docs/open-api
    P2P地震情報のEEW(code:556)には無い、isFinal(最終報かどうか)・
    isWarn(警報/予報の区別)・isAssumption(PLUM法かどうか)を直接持っている。
    そのため、両方を受信しつつWolfxを優先する(同じeventIdについて、Wolfx由来の
@@ -172,6 +172,10 @@ function strongerIntensityKey(a, b) {
 }
 
 function toEewCardFromWolfx(data) {
+  // Magunitude(スペルミス)は非推奨で、将来削除される可能性がある。Magnitudeを使い、無い時だけ旧名にフォールバックする。
+  const wolfxMag = typeof data.Magnitude === "number" ? data.Magnitude : typeof data.Magunitude === "number" ? data.Magunitude : 0;
+  // 仮定震源要素、またはレベル法(最大予測震度のみの発表)の時は、M・深さが仮定値になる。
+  const assumedValues = !!data.isAssumption || (typeof data.CodeType === "string" && data.CodeType.includes("最大予測震度のみ"));
   const areas = Array.isArray(data.WarnArea) ? data.WarnArea.map(a => ({
     pref: "", // Wolfxは都道府県単位を分けて返さないため空にしておく
     name: a.Chiiki || "",
@@ -201,8 +205,10 @@ function toEewCardFromWolfx(data) {
     reducedPlace: null,
     latitude: typeof data.Latitude === "number" ? data.Latitude : null,
     longitude: typeof data.Longitude === "number" ? data.Longitude : null,
-    depth: typeof data.Depth === "number" && data.Depth >= 0 ? Math.round(data.Depth) : null,
-    magnitude: typeof data.Magunitude === "number" && data.Magunitude > 0 ? data.Magunitude : null,
+    // 仕様書(2026-11-23更新): 0は「未知」の互換値、仮定震源要素・レベル法のM1.0/深さ10kmは仮定値で、
+    // どれも実測値ではない。実測値でない時は、表示しないようnullにする。
+    depth: typeof data.Depth === "number" && data.Depth > 0 && !(assumedValues && data.Depth === 10) ? Math.round(data.Depth) : null,
+    magnitude: wolfxMag > 0 && !(assumedValues && wolfxMag === 1) ? wolfxMag : null,
     areas,
     // 最大震度。念のため、地域ごとの予測震度の最大とも突き合わせて、強いほうを使う。
     maxIntensityKey: areas.reduce((m, a) => strongerIntensityKey(m, a.maxIntensityKey), intensityLabelToKey(data.MaxIntensity)),

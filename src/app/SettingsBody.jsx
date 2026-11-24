@@ -68,6 +68,7 @@ export function SettingsBody({
   showLowConfidenceEstimates, onChangeShowLowConfidenceEstimates,
   cameraSettings = DEFAULT_CAMERA_SETTINGS, onChangeCameraSettings = () => {},
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
+  wolfxTsunamiSampleKey = null, onSelectWolfxTsunamiSample,
   testEews = EMPTY_EQDB_LIST, onTestEewAction,
   eewTestForm, eewEpicenterPickActive,
   testQuakes, onTestQuakeAction, quakeTestForm, quakeEpicenterPickActive, quakeTestAutoPlaying,
@@ -928,6 +929,8 @@ export function SettingsBody({
           onBroadcast={onBroadcastTestTsunami}
           onCancel={onCancelTestTsunami}
           onClear={onClearTestTsunami}
+          wolfxSampleKey={wolfxTsunamiSampleKey}
+          onSelectWolfxSample={onSelectWolfxTsunamiSample}
           tsunamiAreaPickActive={tsunamiAreaPickActive}
           onStartAreaPick={onStartTsunamiAreaPick}
           pickedAreas={pickedTsunamiAreas}

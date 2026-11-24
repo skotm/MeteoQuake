@@ -17,8 +17,8 @@ const active = {
   status: "active", trusted: true, validUntil: "2026-11-20T12:00:00Z",
   report: { id: "R1", time: "2026-11-20T09:00:00Z", eventIds: ["E1"] },
   areas: [
-    { code: "100", name: "北海道太平洋沿岸東部", level: "advisory", firstWave: { time: "2026-11-20T09:30:00Z", text: "" }, maxWave: { height: 1, text: "1m" } },
-    { code: "101", name: "青森県太平洋沿岸", level: "warning", firstWave: { text: "ただちに津波来襲と予測" }, maxWave: { text: "高い" } },
+    { code: "100", name: "北海道太平洋沿岸東部", level: "advisory", firstWave: { time: "2026-11-20T09:30:00Z" }, maxWave: { height: 1, text: "1m" } },
+    { code: "101", name: "青森県太平洋沿岸", level: "warning", firstWave: { condition: "ただちに津波来襲と予測" }, maxWave: { text: "高い" } },
     { code: "102", name: "x", level: "cleared" },
   ],
   comments: { warning: "警報です" },
@@ -54,4 +54,51 @@ test("cleared and none_reported -> clear with cancelled card", () => {
 test("garbage input is untrusted", () => {
   assert.equal(parseWolfxTsunami(null, NOW).state, "untrusted");
   assert.equal(utcIsoToJstSlash("bad"), null);
+});
+
+test("'ただちに' in firstWave text sets immediate", () => {
+  const r = parseWolfxTsunami(active, NOW);
+  assert.equal(r.card!.areas[0].immediate, false);
+  assert.equal(r.card!.areas[1].immediate, true);
+});
+
+const fx = (n: string) => JSON.parse(readFileSync(new URL(`./fixtures/${n}`, import.meta.url), "utf8"));
+
+test("real warning sample: 'ただちに' and wave text come from firstWave.condition / maxWave.text", () => {
+  const d = fx("wolfx_tsunami_warning.json");
+  const r = parseWolfxTsunami(d, Date.parse(d.validUntil) - 60_000);
+  assert.equal(r.state, "active");
+  const a = r.card!.areas.find(x => x.name === "宮古島・八重山地方")!;
+  assert.equal(a.immediate, true);
+  assert.equal(a.firstHeightCondition, "ただちに津波来襲と予測");
+  assert.equal(a.maxHeightDescription, "３ｍ");
+  assert.deepEqual(r.card!.observations, []);
+});
+
+test("real with_observations sample: observed stations and flat estimated points", () => {
+  const d = fx("wolfx_tsunami_with_observations.json");
+  const r = parseWolfxTsunami(d, Date.parse(d.validUntil) - 60_000);
+  assert.equal(r.state, "active");
+  const obs = r.card!.observations;
+  assert.ok(obs.length > 0);
+  const observed = obs.flatMap(o => o.observed);
+  const estimated = obs.flatMap(o => o.estimated);
+  assert.ok(observed.length > 0 && estimated.length > 0);
+  // 沿岸の観測点は予報区名を持ち、沖合(GPS波浪計など)の観測点は予報区名の代わりに観測機器を持つ。推定点は区域なし。
+  assert.ok(observed.every(s => s.areaName !== "" || s.sensor));
+  assert.ok(observed.some(s => s.areaName !== "") && observed.some(s => s.sensor));
+  assert.ok(estimated.every(s => s.areaName === ""));
+  // 最大波の値か状態文言(観測中・推定中・重要など)のどちらかが必ず出る
+  assert.ok(observed.every(s => s.maxText || s.maxTime || s.firstTime));
+  // 取消状態の報や波情報なしの点は含まれない
+  assert.ok(obs.every(o => !o.cancelled));
+});
+
+test("real forecast_only / cleared / cancelled samples", () => {
+  const f = fx("wolfx_tsunami_forecast_only.json");
+  assert.equal(parseWolfxTsunami(f, Date.parse(f.validUntil) - 1000).card!.maxGrade, "NonEffective");
+  const c = fx("wolfx_tsunami_cleared.json");
+  assert.equal(parseWolfxTsunami(c, Date.parse(c.validUntil) - 1000).state, "clear");
+  const x = fx("wolfx_tsunami_cancelled.json");
+  assert.equal(parseWolfxTsunami(x, Date.parse(x.report.time)).state, "untrusted");
 });
