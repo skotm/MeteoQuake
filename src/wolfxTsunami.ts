@@ -28,6 +28,7 @@ export interface WolfxTsunamiObservedStation {
   maxHeightM: number | null;
   maxText: string | null;
   maxTime: string | null; // "YYYY/MM/DD HH:mm:ss"(JST)
+  maxTimeMs: number | null; // 同じ時刻のエポックms(端末のタイムゾーンに依存しない比較・表示用)
   firstTime: string | null;
 }
 
@@ -116,9 +117,10 @@ function parseObservedStations(list: any): WolfxTsunamiObservedStation[] {
       const h = typeof mw?.height === "number" && Number.isFinite(mw.height) ? mw.height : null;
       const text = waveText(mw);
       const maxTime = utcIsoToJstSlash(mw?.time);
+      const maxTimeMsRaw = typeof mw?.time === "string" ? Date.parse(mw.time) : NaN;
       const firstTime = utcIsoToJstSlash(st?.firstWave?.time);
       if (h == null && !text && !maxTime && !firstTime) continue; // 波情報が無い観測点は載せない
-      out.push({ areaName, name: st.name, code: typeof st?.code === "string" ? st.code : null, sensor: typeof st?.sensor === "string" && st.sensor ? st.sensor : null, maxHeightM: h, maxText: text, maxTime, firstTime });
+      out.push({ areaName, name: st.name, code: typeof st?.code === "string" ? st.code : null, maxTimeMs: Number.isFinite(maxTimeMsRaw) ? maxTimeMsRaw : null, sensor: typeof st?.sensor === "string" && st.sensor ? st.sensor : null, maxHeightM: h, maxText: text, maxTime, firstTime });
     }
   }
   return out;
@@ -183,4 +185,48 @@ export function parseWolfxTsunami(data: any, nowMs: number): WolfxTsunamiResult 
     return { ...base, state: "active", card: { id, time, cancelled: false, areas, maxGrade, source: "wolfx", eventIds, comment, observations } };
   }
   return { ...base, state: "untrusted", card: null };
+}
+
+/**
+ * 津波観測報(複数の報)を、観測点ごとに最新のもの1件にまとめる。
+ * 同じ観測点が続報で更新された時は、発表時刻の新しい報の値を採用する(時刻が無い報は最も古い扱い)。
+ * observed: 沿岸・沖合の観測点 / estimated: 沿岸での推定点(観測値ではない)。
+ */
+export function mergeWolfxObservations(observations: WolfxTsunamiObservations[] | undefined | null): {
+  observed: WolfxTsunamiObservedStation[];
+  estimated: WolfxTsunamiObservedStation[];
+} {
+  const sorted = [...(observations ?? [])].sort((a, b) => (a.time ?? "").localeCompare(b.time ?? ""));
+  const observed = new Map<string, WolfxTsunamiObservedStation>();
+  const estimated = new Map<string, WolfxTsunamiObservedStation>();
+  for (const o of sorted) {
+    if (o.cancelled) continue;
+    for (const st of o.observed) observed.set(`${st.areaName}|${st.code ?? st.name}`, st);
+    for (const st of o.estimated) estimated.set(`${st.areaName}|${st.code ?? st.name}`, st);
+  }
+  return { observed: [...observed.values()], estimated: [...estimated.values()] };
+}
+
+/**
+ * Wolfx(気象庁の津波観測点)の観測点を、潮位計の観測点(気象庁の潮位API)に、名前で対応づける。
+ * 両者の観測点コードは体系が違うため、コードでは突き合わせられない。
+ * 予報区名が分かる時は、その予報区に属する潮位計だけを候補にする(同名・類似名の取り違え防止)。
+ * 完全一致を優先し、無ければ一方がもう一方を含む場合(例:「むつ市関根浜」と「関根浜」)を採用する。
+ */
+export function matchTideStationByName<T extends { name: string; tsunamiAreaName?: string }>(
+  tideStations: T[],
+  areaName: string,
+  name: string
+): T | null {
+  const norm = (s: string) => s.replace(/\s/g, "");
+  const n = norm(name);
+  if (!n) return null;
+  const candidates = areaName ? tideStations.filter((st) => st.tsunamiAreaName === areaName) : tideStations;
+  const exact = candidates.find((st) => norm(st.name) === n);
+  if (exact) return exact;
+  if (n.length < 2) return null;
+  return candidates.find((st) => {
+    const m = norm(st.name);
+    return m.length >= 2 && (n.includes(m) || m.includes(n));
+  }) ?? null;
 }

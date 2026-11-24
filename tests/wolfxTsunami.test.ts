@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseWolfxTsunami, utcIsoToJstSlash } from "../src/wolfxTsunami.ts";
+import { parseWolfxTsunami, utcIsoToJstSlash, mergeWolfxObservations, matchTideStationByName } from "../src/wolfxTsunami.ts";
 
 const expired = JSON.parse(readFileSync(new URL("./fixtures/wolfx_tsunami_expired.json", import.meta.url), "utf8"));
 const NOW = Date.parse("2026-11-20T10:00:00Z");
@@ -101,4 +101,38 @@ test("real forecast_only / cleared / cancelled samples", () => {
   assert.equal(parseWolfxTsunami(c, Date.parse(c.validUntil) - 1000).state, "clear");
   const x = fx("wolfx_tsunami_cancelled.json");
   assert.equal(parseWolfxTsunami(x, Date.parse(x.report.time)).state, "untrusted");
+});
+
+test("mergeWolfxObservations: newer report wins per station; cancelled reports ignored", () => {
+  const st = (name: string, h: number | null, text: string | null) => ({
+    areaName: "岩手県", name, code: "c-" + name, sensor: null, maxHeightM: h, maxText: text, maxTime: null, maxTimeMs: null, firstTime: null,
+  });
+  const merged = mergeWolfxObservations([
+    { reportId: "new", time: "2026/11/20 19:00:00", cancelled: false, observed: [st("宮古", 1.2, "１．２ｍ")], estimated: [] },
+    { reportId: "old", time: "2026/11/20 18:00:00", cancelled: false, observed: [st("宮古", null, "観測中"), st("釜石", 0.5, "０．５ｍ")], estimated: [] },
+    { reportId: "x", time: "2026/11/20 20:00:00", cancelled: true, observed: [st("宮古", 9, "９ｍ")], estimated: [] },
+  ]);
+  assert.equal(merged.observed.length, 2);
+  assert.equal(merged.observed.find(s => s.name === "宮古")!.maxHeightM, 1.2);
+});
+
+test("matchTideStationByName: exact first, then partial within the same area", () => {
+  const tide = [
+    { name: "関根浜", tsunamiAreaName: "青森県太平洋沿岸" },
+    { name: "八戸", tsunamiAreaName: "青森県太平洋沿岸" },
+    { name: "八戸", tsunamiAreaName: "別の予報区" },
+  ];
+  assert.equal(matchTideStationByName(tide, "青森県太平洋沿岸", "むつ市関根浜")!.name, "関根浜");
+  assert.equal(matchTideStationByName(tide, "別の予報区", "八戸")!.tsunamiAreaName, "別の予報区");
+  assert.equal(matchTideStationByName(tide, "青森県太平洋沿岸", "宮古"), null);
+});
+
+test("real with_observations sample: every coastal observed station belongs to a forecast area of the card", () => {
+  const d = fx("wolfx_tsunami_with_observations.json");
+  const r = parseWolfxTsunami(d, Date.parse(d.validUntil) - 60_000);
+  const areaNames = new Set(r.card!.areas.map(a => a.name));
+  const { observed } = mergeWolfxObservations(r.card!.observations);
+  const coastal = observed.filter(s => s.areaName);
+  assert.ok(coastal.length > 0);
+  assert.ok(coastal.every(s => areaNames.has(s.areaName)));
 });
