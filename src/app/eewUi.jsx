@@ -174,7 +174,8 @@ const MY_LOCATION_ROW_H = 34;
 function EewMyLocationRow({ eew }) {
   const { tokens } = useContext(ThemeContext);
   const enabled = useEewLocationEnabled();
-  const active = enabled && !eew.cancelled;
+  // 過去の速報の再生(リプレイ)では出さない。実際の現在地への到達予測ではないため。
+  const active = enabled && !eew.cancelled && !eew.isReplay;
   const pos = useEewPosition(active);
   const areaName = useMyAreaName(pos.coords);
   const forecast = resolveMyEewForecast(eew, areaName);
@@ -190,18 +191,15 @@ function EewMyLocationRow({ eew }) {
     return () => clearInterval(id);
   }, [counting]);
 
-  // オフ・取消済み・位置情報が使えない時は、何も描かない(カードの大きさも変えない)。
-  if (!active || pos.status === "idle" || pos.status === "unavailable") return null;
+  // 専用枠を出すのは、現在地の細分区域の予測震度が速報で提供されている時だけ。
+  // オフ・取消済み・再生・位置情報なし・区域の判定前・対象地域外・震度なし(未提供)では、何も描かない
+  // (カードの大きさも変えない)。
+  if (!active || pos.status !== "ready" || !areaName || !forecast?.inWarnArea || !forecast.intensityKey) return null;
 
-  const small = { fontSize: 11, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" };
-  let left = null;
-  let right = null;
-  if (pos.status === "loading" || !areaName) {
-    left = <span style={small}>現在地を確認中…</span>;
-  } else if (!forecast.inWarnArea) {
-    left = <span style={small}>現在地は対象地域外</span>;
-  } else if (arrivalMs != null || forecast.arrived) {
-    // 到達後(Arriveがtrue、または到達予想時刻を過ぎた後)は0秒のまま。色は常に通常の文字色。
+  // 到達後(Arriveがtrue、または到達予想時刻を過ぎた後)は0秒のまま。色は常に通常の文字色。
+  // PLUM法など到達時刻が提供されない報では、秒数のかわりに「到達時刻は未提供」と出す。
+  let left;
+  if (arrivalMs != null || forecast.arrived) {
     const remain = forecast.arrived || arrivalMs == null ? 0 : Math.max(0, Math.ceil((arrivalMs - now) / 1000));
     left = (
       <span style={{ display: "inline-flex", alignItems: "baseline", gap: 3, whiteSpace: "nowrap", flexShrink: 0, color: tokens.text }}>
@@ -211,27 +209,25 @@ function EewMyLocationRow({ eew }) {
       </span>
     );
   } else {
-    left = <span style={small}>到達時刻は未提供</span>;
+    left = <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>到達時刻は未提供</span>;
   }
   // 右: 現在地が属する細分区域名と、その区域の予測震度(速報の細分区域ごとの値)。
-  if (pos.status === "ready" && areaName && forecast?.inWarnArea && forecast.intensityKey) {
-    right = (
-      <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.15, minWidth: 0 }}>
-        <span style={{
-          fontSize: 11, fontWeight: 700, color: tokens.text, maxWidth: "100%",
-          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-        }}>{areaName}</span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 10, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>予測震度</span>
-          <span className="mono" style={{
-            background: style.bg, color: style.fg, borderRadius: 5,
-            padding: "0 6px", height: 17, lineHeight: "17px",
-            fontSize: 13, fontWeight: 800, whiteSpace: "nowrap",
-          }}>{style.label}</span>
-        </span>
+  const right = (
+    <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.15, minWidth: 0 }}>
+      <span style={{
+        fontSize: 11, fontWeight: 700, color: tokens.text, maxWidth: "100%",
+        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+      }}>{areaName}</span>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <span style={{ fontSize: 10, color: `rgba(${tokens.ink},0.55)`, whiteSpace: "nowrap" }}>予測震度</span>
+        <span className="mono" style={{
+          background: style.bg, color: style.fg, borderRadius: 5,
+          padding: "0 6px", height: 17, lineHeight: "17px",
+          fontSize: 13, fontWeight: 800, whiteSpace: "nowrap",
+        }}>{style.label}</span>
       </span>
-    );
-  }
+    </span>
+  );
 
   return (
     <div style={{

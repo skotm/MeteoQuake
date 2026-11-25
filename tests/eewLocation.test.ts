@@ -43,3 +43,25 @@ test("到達時刻の不正値を弾く", () => {
   assert.equal(sanitizeArrivalMs(now - 1, now, now), null);
   assert.equal(sanitizeArrivalMs(null, NaN, now), null);
 });
+
+// @ts-expect-error JSモジュール
+import { withSimArrivalMs } from "../src/app/simEew.js";
+
+test("シミュレーションの報: 通常方式の地域に到達時刻を付け、PLUM法・レベル法の地域には付けない", () => {
+  const sq = (lon: number, lat: number) => ({
+    type: "Feature", properties: { name: `区域${lon}` },
+    geometry: { type: "Polygon", coordinates: [[[lon, lat], [lon + 0.2, lat], [lon + 0.2, lat + 0.2], [lon, lat + 0.2], [lon, lat]]] },
+  });
+  const geo = { type: "FeatureCollection", features: [sq(139, 36), sq(140, 36)] };
+  const originTime = Date.parse("2026-11-25T00:00:00Z");
+  const areas = [
+    { name: "区域139", maxIntensityKey: "5-" },
+    { name: "区域140", maxIntensityKey: "4", isPlum: true },
+    { name: "区域X", maxIntensityKey: "4" },
+  ];
+  const out = withSimArrivalMs(areas, { lat: 36.1, lon: 139.1, originTime }, 10, geo);
+  assert.ok(out[0].arrivalMs > originTime && out[0].arrivalMs < originTime + 30_000);
+  assert.equal(out[1].arrivalMs, undefined);
+  assert.equal(out[2].arrivalMs, undefined);
+  assert.equal(withSimArrivalMs(areas, { lat: 36, lon: 139, originTime }, 10, null), areas);
+});
