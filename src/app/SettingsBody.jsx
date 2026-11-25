@@ -830,6 +830,14 @@ export function SettingsBody({
           />
         </SettingsCard>
         <SettingsCard>
+          <SettingsToggleRow
+            label="ハンバーガー式のタブ(縦画面)"
+            description="フローティングのカードの右上のボタンで全画面にでき、全画面の間だけ、左上のハンバーガーボタンからタブを選べます。フローティングは今までどおりです。緊急地震速報を受信すると、自動でフローティングに戻り、地震タブに切り替わります。横画面は今までどおりです(上の「右上に配置」とはどちらか一方です。初期設定はオフ)。"
+            checked={tabPlacement === "hamburger"}
+            onChange={() => onChangeTabPlacement(tabPlacement === "hamburger" ? "slide" : "hamburger")}
+          />
+        </SettingsCard>
+        <SettingsCard>
           <div style={{ padding: "12px 16px" }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>表示領域</div>
             <div style={{ fontSize: 12.5, lineHeight: 1.6, opacity: 0.7, marginBottom: 10 }}>

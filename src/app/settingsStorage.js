@@ -653,12 +653,15 @@ export function saveDisplayInsets(insets) {
   }
 }
 
-/* タブボタンの配置。"slide"=スライド式のナビ(デフォルト) / "corner"=フローティングの右上に独立して配置。 */
+/* タブボタンの配置。"slide"=スライド式のナビ(デフォルト) / "corner"=フローティングの右上に独立して配置 /
+   "hamburger"=縦画面で、全画面にした時だけ左上のハンバーガーボタンからタブを選ぶ。 */
+export const TAB_PLACEMENTS = ["slide", "corner", "hamburger"];
+export const normalizeTabPlacement = (v) => (TAB_PLACEMENTS.includes(v) ? v : "slide");
 const TAB_PLACEMENT_STORAGE_KEY = "tabPlacement";
 
 export function loadStoredTabPlacement() {
   try {
-    return localStorage.getItem(TAB_PLACEMENT_STORAGE_KEY) === "corner" ? "corner" : "slide";
+    return normalizeTabPlacement(localStorage.getItem(TAB_PLACEMENT_STORAGE_KEY));
   } catch (err) {
     console.warn("タブボタンの配置の設定を読み込めませんでした:", err);
   }
@@ -667,7 +670,7 @@ export function loadStoredTabPlacement() {
 
 export function saveTabPlacement(value) {
   try {
-    localStorage.setItem(TAB_PLACEMENT_STORAGE_KEY, value === "corner" ? "corner" : "slide");
+    localStorage.setItem(TAB_PLACEMENT_STORAGE_KEY, normalizeTabPlacement(value));
   } catch (err) {
     console.warn("タブボタンの配置の設定を保存できませんでした:", err);
   }
