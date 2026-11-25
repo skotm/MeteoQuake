@@ -1,6 +1,6 @@
 import { useContext, useRef, useState, useEffect } from "react";
 import { ThemeContext, touchGlassBackdropFilter } from "./theme";
-import { Glass, GlassOpaqueContext } from "./glass";
+import { Glass, GlassOpaqueContext, useGlassSurface } from "./glass";
 import { NAV } from "./navigation";
 
 
@@ -328,15 +328,28 @@ export const WIDE_PANEL_RADIUS_ATTACHED = "28px 0 28px 28px";
 
 /** パネルとタブ群の接合部の内側の角を、なめらかにつなぐ小さなガラス片。
  *  hole: えぐる円の中心(ガラス片の角)。横画面は"100% 100%"、縦画面は"0 0"。 */
-export function CornerTabFillet({ style, hole = "100% 100%" }) {
+export function CornerTabFillet({ style, hole = "100% 100%", blur }) {
   const { tokens } = useContext(ThemeContext);
-  const mask = `radial-gradient(circle at ${hole}, transparent ${CORNER_TAB_FILLET - 0.5}px, #000 ${CORNER_TAB_FILLET}px)`;
+  const surface = useGlassSurface({ blur });
   const F = CORNER_TAB_FILLET;
-  // 円弧に沿った縁の光(つなぎ目の凹みの輪郭)。ガラス本体はマスクで切るので、縁は別のSVGで描く。
+  // 凹みの形(正方形から、角の円を引いた形)。hole="100% 100%"なら左上の角、"0 0"なら右下の角が残る。
+  const shape = hole === "0 0"
+    ? `M ${F} ${F} L ${F} 0 A ${F} ${F} 0 0 1 0 ${F} Z`
+    : `M 0 0 L ${F} 0 A ${F} ${F} 0 0 0 0 ${F} Z`;
+  const clip = `path('${shape}')`;
+  // 円弧に沿った縁の光(つなぎ目の凹みの輪郭)。
   const arc = hole === "0 0" ? `M ${F} 0.4 A ${F - 0.4} ${F - 0.4} 0 0 1 0.4 ${F}` : `M 0.4 ${F} A ${F - 0.4} ${F - 0.4} 0 0 1 ${F} 0.4`;
   return (
-    <div style={{ width: F, height: F, ...style }}>
-      <Glass radius={0} filterSize="none" rim={false} style={{ width: F, height: F, WebkitMaskImage: mask, maskImage: mask }}/>
+    <div style={{ width: F, height: F, position: "relative", ...style }}>
+      {/* ぼかしと色は、形を切り抜く clip-path と同じ要素に直接当てる。
+          以前は、ぼかしを持つGlassの外側にmask-imageを掛けていたが、maskを持つ祖先は「バックドロップルート」
+          になり、中のbackdrop-filterは地図まで届かず(ルートの内側しか見えず)、ぼかしが効かなかった。
+          clip-pathは、backdrop-filterを持つ要素自身に付ける分には、ぼかしごと形に切り抜かれる。 */}
+      <div aria-hidden style={{
+        position: "absolute", inset: 0, clipPath: clip, WebkitClipPath: clip,
+        backdropFilter: surface.backdropFilter, WebkitBackdropFilter: surface.backdropFilter,
+        background: surface.background,
+      }}/>
       <svg width={F} height={F} style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none", overflow: "visible" }}>
         <path d={arc} fill="none" stroke={tokens.rimLight} strokeWidth={0.9}/>
       </svg>
@@ -368,10 +381,10 @@ export const CORNER_TAB_ATTACHED_RADIUS_PORTRAIT = `${(CORNER_TAB_SIZE + CORNER_
 export const CORNER_TAB_ROW_HEIGHT = CORNER_TAB_SIZE + CORNER_TAB_PAD * 2;
 
 /** horizontal=trueで横並び(縦画面用)、falseで縦並び(横画面用)。 */
-export function CornerTabButtons({ active, onNav, style, horizontal = false, radius, rimClip }) {
+export function CornerTabButtons({ active, onNav, style, horizontal = false, radius, rimClip, blur, filterSize }) {
   const { tokens } = useContext(ThemeContext);
   return (
-    <Glass radius={radius ?? (CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2} rimClip={rimClip} style={style}>
+    <Glass radius={radius ?? (CORNER_TAB_SIZE + CORNER_TAB_PAD * 2) / 2} rimClip={rimClip} style={style} blur={blur} filterSize={filterSize}>
       <div style={{ display: "flex", flexDirection: horizontal ? "row" : "column", gap: CORNER_TAB_GAP, padding: CORNER_TAB_PAD }}>
         {NAV.map(({ id, label }) => {
           const isActive = id === active;

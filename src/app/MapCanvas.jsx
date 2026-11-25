@@ -3172,6 +3172,10 @@ export function MapCanvas({
   // 間は、visibilityの切り替えだけにして、1,821件分の塗り直し
   // (setData、MapLibre内部の再タイル化を伴う重い処理)をスキップする。
   const warningAreasLastMergedLevelMapRef = useRef(null);
+  // 緊急地震速報の予想震度の塗り(areas-intensity-fill)が出ている間は、警報・注意報の塗りを見た目上だけ消す。
+  // 両方を同じ区域に重ねて塗ると、色が混ざって、どちらの色も読み取れなくなるため。
+  // 速報の塗りは短時間(数分以内)で消えるので、速報を優先する(区域の塗りの調停と同じ考え方)。
+  const eewFillActive = eewFillRange != null;
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
@@ -3183,8 +3187,9 @@ export function MapCanvas({
     // opacityを0にする)。visibility:noneにするとMapLibreのクリック判定
     // (queryRenderedFeatures)も効かなくなり、キキクル表示中に市区町村を
     // タップできなくなってしまうため。
-    map.setPaintProperty("warning-areas-fill-layer", "fill-opacity", riskVisible ? 0 : 0.55);
-    map.setPaintProperty("warning-areas-line-layer", "line-opacity", riskVisible ? 0 : 1);
+    const hideWarningPaint = riskVisible || eewFillActive;
+    map.setPaintProperty("warning-areas-fill-layer", "fill-opacity", hideWarningPaint ? 0 : 0.55);
+    map.setPaintProperty("warning-areas-line-layer", "line-opacity", hideWarningPaint ? 0 : 1);
     if (!warningVisible) return;
 
     if (!warningAreasLoadedRef.current) {
@@ -3213,7 +3218,7 @@ export function MapCanvas({
       const source = map.getSource("warning-areas");
       if (source) source.setData(merged);
     }
-  }, [warningVisible, warningLevelMap, riskVisible, status]);
+  }, [warningVisible, warningLevelMap, riskVisible, eewFillActive, status]);
 
   // 警報タブ: 河川水位観測所。riverStations(BottomDock側で10分おきに取得した
   // GeoJSON)をそのままsetDataし、riverVisibleでON/OFFする。

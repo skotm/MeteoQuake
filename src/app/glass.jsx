@@ -63,6 +63,23 @@ export const GlassOpaqueContext = createContext({
   setOverride: () => {},
 });
 
+/**
+ * ガラスの「ぼかし+色」の作り方を1か所にまとめたもの(Glassと、Glassでは作れない形のガラスで共有する)。
+ * 返す backdropFilter / background を、1つの要素にそのまま当てれば、Glassの背景ぼかし層と同じ見た目になる。
+ */
+export function useGlassSurface({ blur = 14, tintColor } = {}) {
+  const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
+  const { tokens, glare } = useContext(ThemeContext);
+  const guardOn = !!glare?.active;
+  const saturatePct = guardOn ? glare.saturate : 140;
+  const base = `blur(${blur}px) saturate(${saturatePct}%)${guardOn ? ` brightness(${glare.brightness})` : ""}`;
+  return {
+    glassOpaque,
+    backdropFilter: glassOpaque ? "none" : base,
+    background: tintColor ? `${tintColor}${glassOpaque ? "E6" : "8C"}` : (glassOpaque ? tokens.glassOpaqueBg : tokens.glassTint),
+  };
+}
+
 /* ─────────────────────────────────────────────────────
    LIQUID GLASS SURFACE COMPONENT
    
