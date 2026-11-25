@@ -171,7 +171,9 @@ function formatEewAreasSummary(areas) {
    ───────────────────────────────────────────────────── */
 const MY_LOCATION_ROW_H = 34;
 
-function EewMyLocationRow({ eew }) {
+// 専用枠に出す内容を求める。出さない時はnullを返す。カード本体がこの結果で、枠の有無に応じた
+// レイアウト(枠あり=コンパクト / 枠なし=従来どおり)を切り替えるため、枠の外で呼ぶ。
+function useMyEewForecastRow(eew) {
   const { tokens } = useContext(ThemeContext);
   const enabled = useEewLocationEnabled();
   // 過去の速報の再生(リプレイ)では出さない。実際の現在地への到達予測ではないため。
@@ -229,6 +231,11 @@ function EewMyLocationRow({ eew }) {
     </span>
   );
 
+  return { left, right };
+}
+
+function EewMyLocationRow({ mine }) {
+  const { tokens } = useContext(ThemeContext);
   return (
     <div style={{
       marginTop: "auto", width: "100%", boxSizing: "border-box", height: MY_LOCATION_ROW_H,
@@ -236,8 +243,8 @@ function EewMyLocationRow({ eew }) {
       background: `rgba(${tokens.ink},0.07)`,
       display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
     }}>
-      {left}
-      {right}
+      {mine.left}
+      {mine.right}
     </div>
   );
 }
@@ -255,6 +262,9 @@ function EewMyLocationRow({ eew }) {
 export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
   const { tokens } = useContext(ThemeContext);
   const style = useIntensityStyle(eew.maxIntensityKey);
+  // 現在地の専用枠を出す報だけ、右列をコンパクトなレイアウトにする。出さない報は従来のレイアウトのまま。
+  const mine = useMyEewForecastRow(eew);
+  const compact = mine != null;
   const { num, suffix } = splitIntensityLabel(style.label);
   const isWarnLevel = eew.isWarnLevel !== false; // 警報級かどうか(Wolfxの予報はfalse)
   // 警報=赤、予報=amber、取消=グレー、と重要度で色分けする。
@@ -349,7 +359,7 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
               />
             </div>
 
-            <div style={{ display: "flex", alignItems: "stretch", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: compact ? "stretch" : "center", gap: 14 }}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
                 <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, whiteSpace: "nowrap", lineHeight: 1.1 }}>
                   最大予測震度
@@ -372,15 +382,15 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
                 </div>
               </div>
 
-              {/* 右列は上寄せにして、M・深さ・発生時刻を少し上へ移す。空いた下の行に
-                    現在地のカウントダウン(EewMyLocationRow)を置く。右列の高さは左のバッジ列に
-                    合わせて伸びるだけなので、カード全体の大きさは変わらない。 */}
+              {/* 専用枠あり(compact): 右列を上寄せ・左のバッジ列の高さに合わせ、下に現在地の専用枠
+                    (EewMyLocationRow)を置く。カード全体の大きさは変わらない。
+                    専用枠なし: 従来のレイアウト(右列は縦中央)。 */}
               <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 1 }}>
                 {/* PLUM法(観測点の揺れの実測から震源を仮定する方式)の場合は、
                     M・深さの行そのものを「PLUM法による仮定震源要素」というラベルに
                     差し替えて同じ位置に表示する(通常方式のときだけM・深さを表示)。 */}
                 {eew.isPlum ? (
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1, marginBottom: compact ? 0 : 14 }}>
                     <span style={{ fontSize: 16, fontWeight: 700, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
                       {eew.isLevel ? "震源・Mは未推定(レベル法)" : "PLUM法による仮定震源要素"}
                     </span>
@@ -388,12 +398,12 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
                 ) : (
                   <div style={{ display: "flex", alignItems: "baseline", gap: 12, lineHeight: 1.1 }}>
                     <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
-                      M<span className="mono" style={{ fontSize: 22, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
+                      M<span className="mono" style={{ fontSize: compact ? 22 : 25, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
                         {eew.magnitude != null ? eew.magnitude.toFixed(1) : "-"}
                       </span>
                     </span>
                     <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1 }}>
-                      深さ<span className="mono" style={{ fontSize: 22, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
+                      深さ<span className="mono" style={{ fontSize: compact ? 22 : 25, fontWeight: 800, color: tokens.text, marginLeft: 3, lineHeight: 1.1 }}>
                         {eew.depth != null ? (eew.depth === 0 ? "ごく浅い" : eew.depth) : "-"}
                       </span>
                       {eew.depth != null && eew.depth !== 0 && (
@@ -403,11 +413,21 @@ export function EewDetailFloatingCard({ eew, onHandoffToPanelDrag }) {
                   </div>
                 )}
 
-                <span className="mono" style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1, whiteSpace: "nowrap" }}>
-                  発生 {formatEewTimeShort(eew.originTime)}
-                </span>
-
-                <EewMyLocationRow eew={eew}/>
+                {compact ? (
+                  <>
+                    <span className="mono" style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.1, whiteSpace: "nowrap" }}>
+                      発生 {formatEewTimeShort(eew.originTime)}
+                    </span>
+                    <EewMyLocationRow mine={mine}/>
+                  </>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1 }}>
+                    <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>発生時刻</span>
+                    <span className="mono" style={{ fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.1 }}>
+                      {formatEewTimeShort(eew.originTime)}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
