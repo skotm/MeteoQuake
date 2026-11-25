@@ -1,5 +1,5 @@
 import { findAreaNameByPoint, haversineKm, polygonRoughCentroid } from "./geo";
-import { INTENSITY_SCALE_CODE, instrumentalIntensityToScaleKey } from "./testSimulation";
+import { INTENSITY_SCALE_CODE, instrumentalIntensityToScaleKey, withTestArrivalMs } from "./testSimulation";
 
 /* ─────────────────────────────────────────────────────
    地震検知テスト連動の緊急地震速報シミュレーション(非推奨・自己責任の実験的機能)。
@@ -89,9 +89,25 @@ export function fallbackSimPlace(lat, lon) {
   return `推定震源(北緯${lat.toFixed(2)}度 東経${lon.toFixed(2)}度)`;
 }
 
+// シミュレーションの報の各地域に、主要動(S波)の到達予想時刻(arrivalMs)を付ける。
+// 実在の地震の予報ではなく、利用者が作った模擬の地震に対する計算なので、アプリ自身で求めてよい
+// (実際の速報では、気象庁が配信した値だけを使い、アプリでは計算しない)。
+// 地域までの距離は、細分区域の中心(おおよその重心)から震央までで測り、
+// 走時は気象庁の走時表(無ければS波3.5km/s)で求める。PLUM法・レベル法の地域には付けない。
+export function withSimArrivalMs(areas, est, depthKm, areasGeoJSON) {
+  if (!Array.isArray(areas) || !areasGeoJSON || !Number.isFinite(est?.originTime)) return areas;
+  const byName = new Map(areaCentroids(areasGeoJSON).map((c) => [c.name, c]));
+  const withKm = areas.map((a) => {
+    if (a.isPlum || a.isLevel) return a;
+    const c = byName.get(a.name);
+    return c ? { ...a, epicentralKm: haversineKm(est.lat, est.lon, c.lat, c.lon) } : a;
+  });
+  return withTestArrivalMs(withKm, est.originTime, depthKm);
+}
+
 // 第1報のカードを組み立てる。evaluated: simEewRules.evaluateReportの戻り値({ state, reasons, display })。
 // 震源の位置は内部値、Mと深さは発表値(M0.1刻み・深さ10km刻み)を載せる。
-export function buildSimEewCard({ eventId, est, evaluated, place, simTestId, nowMs }) {
+export function buildSimEewCard({ eventId, est, evaluated, place, simTestId, nowMs, areasGeoJSON }) {
   const { state, display } = evaluated;
   const id = `${SIM_EEW_ID_PREFIX}${eventId}`;
   return {
@@ -106,7 +122,7 @@ export function buildSimEewCard({ eventId, est, evaluated, place, simTestId, now
     reducedPlace: "シミュレーション",
     latitude: est.lat, longitude: est.lon, depth: state.pub.depthKm,
     magnitude: state.pub.magnitude,
-    areas: display.areas,
+    areas: withSimArrivalMs(display.areas, est, state.pub.depthKm, areasGeoJSON),
     maxIntensityKey: display.maxKey,
     isTest: true,
     isSimulation: true,
@@ -124,7 +140,7 @@ export function buildSimEewCard({ eventId, est, evaluated, place, simTestId, now
 
 // 続報(報番号+1)。警報は一度出たら予報に戻さない(state.warnが引き継ぐ)。
 // レベル法の報(震源・M未推定)から、通常方式の報に切り替わる場合にも使う。
-export function buildSimEewFollowUp(card, { est, evaluated, place, nowMs }) {
+export function buildSimEewFollowUp(card, { est, evaluated, place, nowMs, areasGeoJSON }) {
   const { state, display } = evaluated;
   const serial = String((parseInt(card.serial, 10) || 1) + 1);
   return {
@@ -134,7 +150,7 @@ export function buildSimEewFollowUp(card, { est, evaluated, place, nowMs }) {
     place: place || fallbackSimPlace(est.lat, est.lon),
     latitude: est.lat, longitude: est.lon, depth: state.pub.depthKm,
     magnitude: state.pub.magnitude,
-    areas: display.areas,
+    areas: withSimArrivalMs(display.areas, est, state.pub.depthKm, areasGeoJSON),
     maxIntensityKey: display.maxKey,
     isWarnLevel: display.isWarnLevel,
     isPlum: false,

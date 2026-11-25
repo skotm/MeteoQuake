@@ -1515,11 +1515,11 @@ export default function App() {
         const i = prev.findIndex(e => e.id === eewId);
         if (i === -1) {
           if (!asNewCard) return prev; // 利用者が削除済みの続報は出し直さない
-          return [...prev, buildSimEewCard({ eventId, est, evaluated, place, simTestId: owner.id, nowMs: now })];
+          return [...prev, buildSimEewCard({ eventId, est, evaluated, place, simTestId: owner.id, nowMs: now, areasGeoJSON: geo.areas })];
         }
         if (prev[i].cancelled) return prev;
         const next = [...prev];
-        next[i] = buildSimEewFollowUp(prev[i], { est, evaluated, place, nowMs: now });
+        next[i] = buildSimEewFollowUp(prev[i], { est, evaluated, place, nowMs: now, areasGeoJSON: geo.areas });
         return next;
       });
     }
