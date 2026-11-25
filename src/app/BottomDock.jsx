@@ -13,6 +13,8 @@ import { resolveStationPoints } from "./stations";
 import { NearbyQuakesPanel, QuakeListRow, QuakeListToolbar, QuakeSearchPanel, TSUNAMI_TOOLBAR_ITEMS, defaultEqdbDateRange } from "./quakeSearchUi";
 import { CORNER_TAB_ATTACHED_RADIUS_PORTRAIT, CORNER_TAB_SIZE, CORNER_TAB_PAD, CORNER_TAB_FILLET, CORNER_TAB_RIM_CLIP_PORTRAIT, CORNER_TAB_ROW_HEIGHT, CORNER_TAB_STACK_HEIGHT, CornerTabButtons, CornerTabFillet, NAV_ICONS, WIDE_PANEL_RADIUS_ATTACHED, portraitPanelRimClip, useSnapDrag } from "./navUi";
 import { NAV } from "./navigation";
+import { HamburgerExpandButton, HamburgerLayer } from "./hamburgerUi";
+import { HAM_NOTICE_MS, HAM_TOP_GAP, detectNewActiveEew } from "./hamburgerLayout";
 import { BackToListButton, RealtimeDataTimeBadge, SearchFabButton, ShakeEventCard, ShakeTestRunningBadge, StationMarkerToggleButton } from "./mapOverlayUi";
 import { EewDetailFloatingCard, EewFabButton } from "./eewUi";
 import { LongPeriodCard, LongPeriodMapToggle, PanelDragHandoffCard, QuakeDetailCard, QuakeMechDetailPanel, QuakeMessageCard, StationPointsList } from "./quakeDetailUi";
@@ -1652,9 +1654,16 @@ export function BottomDock({
 
   // タブボタンを「フローティングの右上」に独立して置く設定の時は、ナビ行(下部バー/左端レール)を出さない。
   const cornerTabs = tabPlacement === "corner";
-  const NAV_ROW_HEIGHT  = cornerTabs ? 0 : 66; // ナビ行の固定高さ(58pxボタン + 上下4pxパディング)。cornerTabsの時はナビ行なし
+  // ハンバーガー式(縦画面のみ)。フローティングは今までどおりで、カード右上のボタンで全画面にする。
+  // 全画面の間だけ、左上のハンバーガーボタン(タブ一覧のドロワー)と、右上の「戻す」ボタンを出し、タブドックは出さない。
+  const hamburger = tabPlacement === "hamburger" && !isWide;
+  const [hamFullscreen, setHamFullscreen] = useState(false);
+  const [hamMenuOpen, setHamMenuOpen] = useState(false);
+  const [hamNotice, setHamNotice] = useState(null);
+  const hamFs = hamburger && hamFullscreen;
+  const NAV_ROW_HEIGHT  = cornerTabs || hamFs ? 0 : 66; // ナビ行の固定高さ(58pxボタン + 上下4pxパディング)。cornerTabsの時はナビ行なし
   const BOTTOM_OFFSET   = 32; // 親側の bottom:16px+safeArea の概算
-  const TOP_GAP         = 56; // 全画面時に画面最上部へ残す余白
+  const TOP_GAP         = hamFs ? HAM_TOP_GAP : 56; // 全画面時に画面最上部へ残す余白
 
   // ハンドル行の高さ(HANDLE_HEIGHT)を変更した場合の差分。
   // 各スナップの固定高さは元々HANDLE_HEIGHT=18px前提で調整済みなので、
@@ -2031,8 +2040,10 @@ export function BottomDock({
     }
   }
 
-  const { height: currentHeight, isDragging, handlePointerDown } =
-    useSnapDrag({ heights: SNAP_HEIGHTS, index: snapIndex, onSnap: handleSnap });
+  // ハンバーガー式の全画面の間は、高さを最大(全画面)に固定し、ドラッグでは動かさない。
+  const { height: currentHeight, isDragging, handlePointerDown: handlePointerDownRaw } =
+    useSnapDrag({ heights: SNAP_HEIGHTS, index: hamFs ? SNAP_HEIGHTS.length - 1 : snapIndex, onSnap: hamFs ? () => {} : handleSnap });
+  const handlePointerDown = hamFs ? () => {} : handlePointerDownRaw;
   const tabRowMovedRef = useRef(false);
   const tabRowStartYRef = useRef(0);
 
@@ -2214,7 +2225,8 @@ export function BottomDock({
   // 戻るボタンの下端オフセット。パネル本体(currentHeight)+ナビ行(NAV_ROW_HEIGHT)+
   // 少し余白、を常に足し上げているため、ドラッグ中も含めてパネルの高さに追従する。
   // cornerTabs(縦画面)の時は、パネルの上の右端にタブ群(横並び1行)が載るため、その分だけ上にずらす。
-  const cornerTabsOffset = cornerTabs && !isWide ? CORNER_TAB_ROW_HEIGHT : 0;
+  // ハンバーガー式のフローティング中は、カード右上の「全画面」ボタンの分も、戻るボタン類を上にずらす。
+  const cornerTabsOffset = (cornerTabs || (hamburger && !hamFs && currentHeight > 0)) && !isWide ? CORNER_TAB_ROW_HEIGHT : 0;
   const backButtonBottom = currentHeight + NAV_ROW_HEIGHT + 12 + cornerTabsOffset;
   // 横画面でフローティングの右隣に出すボタン類の上端。cornerTabsの時は、右上に載るタブ群の下に置く。
   // 縦画面で、パネルが開いていて、タブ群がパネルの上辺につながっている状態か。
@@ -2227,6 +2239,29 @@ export function BottomDock({
 
   // 緊急地震速報のFAB/戻るボタンを出すかどうか(取消済みでないEEWが1件でもあるか)。
   const hasActiveEew = eews.some(e => !e.cancelled);
+
+  // ハンバーガー式: 緊急地震速報が新しく届いたら、メニューを閉じ、フローティングに戻して、地震タブ(リアルタイム=地図)に切り替える。
+  // 取消・終了では動かさない。過去の速報の再生では切り替えない(detectNewActiveEew)。
+  const prevEewIdsRef = useRef(null);
+  useEffect(() => {
+    const { ids, arrived } = detectNewActiveEew(prevEewIdsRef.current, eews);
+    prevEewIdsRef.current = ids;
+    if (!arrived || !hamburger) return;
+    setHamMenuOpen(false);
+    setHamFullscreen(false);
+    if (navActive !== "quake") onNav("quake");
+    if (quakeViewMode !== "realtime") onQuakeViewModeChange?.("realtime");
+    setHamNotice("緊急地震速報を受信。地震タブに切り替えました");
+  }, [eews, hamburger]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!hamNotice) return undefined;
+    const t = setTimeout(() => setHamNotice(null), HAM_NOTICE_MS);
+    return () => clearTimeout(t);
+  }, [hamNotice]);
+  // 配置をハンバーガー式から変えた時は、全画面・メニューの状態を残さない。
+  useEffect(() => {
+    if (!hamburger) { setHamFullscreen(false); setHamMenuOpen(false); }
+  }, [hamburger]);
 
   // 「戻るボタンの位置」(right:16, bottom:backButtonBottom)を、他のタブ固有の
   // 戻るボタン/切替ボタン群がすでに使っているかどうか。使っている場合だけ、
@@ -2807,6 +2842,26 @@ export function BottomDock({
         )
       )}
 
+      {/* ハンバーガー式: フローティング中はカードの右上に「全画面」ボタン。全画面中は背景・上部のボタン行・ドロワー。 */}
+      {hamburger && !hamFs && currentHeight > 0 && <HamburgerExpandButton onClick={() => setHamFullscreen(true)}/>}
+      {hamburger && (
+        <HamburgerLayer
+          fullscreen={hamFs}
+          menuOpen={hamFs && hamMenuOpen}
+          activeId={navActive}
+          navItems={NAV}
+          notice={hamNotice}
+          onOpenMenu={() => setHamMenuOpen(true)}
+          onCloseMenu={() => setHamMenuOpen(false)}
+          onShrink={() => { setHamMenuOpen(false); setHamFullscreen(false); }}
+          onSelect={(id) => {
+            setHamMenuOpen(false);
+            // 表示中のタブを選んだ時は何もしない(同じタブのタップは、開閉のトグルとして扱われてしまうため)。
+            if (id !== navActive) onNav(id);
+          }}
+        />
+      )}
+
       {/* タブボタンを「フローティングの右上」に出す設定(縦画面): パネルの上辺の右端につなげて横並びで置く。
           この箱の下端(bottom:100%)がパネルの上端なので、パネルの高さに追従する。パネルと同じ
           幅の枠(maxWidth 480、中央寄せ)の右端に揃える。パネルが閉じている間は、独立した丸ピルになる。 */}
@@ -2907,7 +2962,7 @@ export function BottomDock({
             重ね合わせが原因と思われる表示崩れが発生したため、
             ハンドル行自体の高さを広げてタップ範囲とするシンプルな
             構成に戻した(見た目のバー位置は中央のまま変わらない)。 */}
-        {!isWide && !cornerTabs && (
+        {!isWide && !cornerTabs && !hamFs && (
         <div
           onPointerDown={handlePointerDown}
           style={{
@@ -3521,7 +3576,7 @@ export function BottomDock({
           タブを選べる。タップのみの操作もそのまま機能する。
           広い画面(isWide)では、代わりに左端のSideNavRailを使うのでここでは出さない。
           タブボタンを「フローティングの右上」に出す設定(cornerTabs)の時も、ここでは出さない。 */}
-      {!isWide && !cornerTabs && (
+      {!isWide && !cornerTabs && !hamFs && (
       <div
         ref={navRowRef}
         onPointerDown={handleNavPointerDown}
