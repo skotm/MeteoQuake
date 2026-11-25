@@ -53,8 +53,13 @@ export interface WolfxTsunamiCard {
   observations: WolfxTsunamiObservations[];
 }
 
-/** active: 警報・注意報・予報あり / clear: 公式に解除・津波なし / untrusted: 確認できない */
-export type WolfxTsunamiState = "active" | "clear" | "untrusted";
+/**
+ * active: 警報・注意報・予報あり / clear: 公式に解除・津波なし /
+ * expired: Wolfxは正常(trusted・信頼期限内)で、最後の発表の有効期限が切れている(失効) /
+ * untrusted: 確認できない(trustedでない・信頼期限切れ・想定外のstatusなど)
+ * expiredは「津波なし」とは言い切れない(clearではない)。カードは出さず、失効した旨だけ知らせる。
+ */
+export type WolfxTsunamiState = "active" | "clear" | "expired" | "untrusted";
 
 export interface WolfxTsunamiResult {
   state: WolfxTsunamiState;
@@ -63,6 +68,8 @@ export interface WolfxTsunamiResult {
   validUntilMs: number | null;
   card: WolfxTsunamiCard | null; // active または clear のとき(clearは取消済みカード)
   eventIds: string[];
+  /** expiredのときだけ。失効した最後の発表(表示用。timeは日本時間の"YYYY/MM/DD HH:mm:ss")。 */
+  lastReport?: { title: string | null; time: string | null };
 }
 
 const LEVEL_TO_GRADE: Record<string, WolfxTsunamiGrade | undefined> = {
@@ -159,6 +166,13 @@ export function parseWolfxTsunami(data: any, nowMs: number): WolfxTsunamiResult 
     .filter((s: unknown) => typeof s === "string" && s).join("\n");
   const id = `wolfx_${data?.report?.id ?? time}`;
   const observations = parseObservations(data);
+
+  // 失効: Wolfx自体は正常(trusted・信頼期限内)で、最後の公式発表の有効期限が切れている。
+  // 予報区は空だが「安全」を意味しないため、clearにはせず、カードも出さない。
+  if (rawStatus === "expired") {
+    const title = typeof data?.report?.title === "string" && data.report.title ? data.report.title : null;
+    return { ...base, state: "expired", card: null, lastReport: { title, time } };
+  }
 
   if (rawStatus === "cleared" || rawStatus === "none_reported") {
     return { ...base, state: "clear", card: { id, time, cancelled: true, areas: [], maxGrade: null, source: "wolfx", eventIds, comment, observations: [] } };

@@ -708,7 +708,9 @@ export function TsunamiTabBody({
         <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: `rgba(${tokens.ink},0.45)` }}>
           {notice?.uncertain
             ? "津波情報の現在の状態を確認できません"
-            : "現在発表されている津波予報・警報はありません"}
+            : notice?.expired
+              ? "Wolfxの津波情報は失効しています(P2P地震情報にも発表中の津波予報・警報はありません)"
+              : "現在発表されている津波予報・警報はありません"}
         </div>
       </>
     );

@@ -1767,10 +1767,24 @@ export default function App() {
     if (wolfxSampleActive) {
       const label = WOLFX_TSUNAMI_SAMPLES.find(s => s.key === wolfxTsunamiSample.key)?.label ?? "";
       const untrusted = wolfxTsunami.result?.state === "untrusted";
+      const expired = wolfxTsunami.result?.state === "expired";
       return {
         uncertain: untrusted,
+        expired,
         text: `【テスト】Wolfxの津波情報のサンプル「${label}」を表示しています。実際の津波情報ではありません。` +
-          (untrusted ? "状態を確認できない場合の表示を確認するためのサンプルです。" : ""),
+          (untrusted ? "状態を確認できない場合の表示を確認するためのサンプルです。" : "") +
+          (expired ? "失効した場合の表示を確認するためのサンプルです。" : ""),
+      };
+    }
+    if (wolfxTsunami.result?.state === "expired") {
+      // 失効: Wolfxは正常で、最後の発表の有効期限が切れている。「津波なし」とは書かない。
+      const last = wolfxTsunami.result.lastReport;
+      const m = /^\d{4}\/(\d{2})\/(\d{2}) (\d{2}:\d{2})/.exec(last?.time ?? "");
+      const when = m ? `${Number(m[1])}/${Number(m[2])} ${m[3]}の` : "";
+      return {
+        uncertain: false,
+        expired: true,
+        text: `Wolfxの津波情報は失効しています(最後の発表: ${when}${last?.title ?? "津波情報"}の有効期限が切れています)。新しい発表があれば自動で更新されます。`,
       };
     }
     if (wolfxTsunami.result?.state === "untrusted") {
