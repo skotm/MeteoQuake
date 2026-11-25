@@ -136,3 +136,22 @@ test("real with_observations sample: every coastal observed station belongs to a
   assert.ok(coastal.length > 0);
   assert.ok(coastal.every(s => areaNames.has(s.areaName)));
 });
+
+// 実際のWolfx応答(trusted=true・信頼期限内・最後の発表だけが期限切れ)。
+const expiredTrusted = JSON.parse(readFileSync(new URL("./fixtures/wolfx_tsunami_expired_trusted.json", import.meta.url), "utf8"));
+const NOW_LIVE = Date.parse("2026-11-25T03:43:20Z");
+
+test("trusted な expired は『失効』になる(clear・untrusted にはならず、カードも出さない)", () => {
+  const r = parseWolfxTsunami(expiredTrusted, NOW_LIVE);
+  assert.equal(r.state, "expired");
+  assert.equal(r.card, null);
+  assert.deepEqual(r.lastReport, { title: "津波予報", time: "2026/11/06 19:53:00" });
+  assert.deepEqual(r.eventIds, ["20261106193937"]);
+});
+
+test("expired でも、信頼期限切れ・trusted でない場合は『失効』にせず untrusted のまま", () => {
+  // Wolfx自体の更新が止まった場合を、失効と取り違えない
+  assert.equal(parseWolfxTsunami(expiredTrusted, Date.parse("2026-11-25T03:45:00Z")).state, "untrusted");
+  assert.equal(parseWolfxTsunami({ ...expiredTrusted, trusted: false }, NOW_LIVE).state, "untrusted");
+  assert.equal(parseWolfxTsunami({ ...expiredTrusted, validUntil: null }, NOW_LIVE).state, "untrusted");
+});

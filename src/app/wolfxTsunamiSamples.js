@@ -10,7 +10,7 @@ export const WOLFX_TSUNAMI_SAMPLES = [
   { key: "forecast_only", label: "津波予報のみ(若干の海面変動)" },
   { key: "with_observations", label: "大津波警報+津波観測報(観測・沖合・推定)" },
   { key: "cleared", label: "解除" },
-  { key: "expired", label: "有効期限切れ(状態を確認できない)" },
+  { key: "expired", label: "失効(最後の発表の有効期限切れ)" },
   { key: "cancelled", label: "報の取消(状態を確認できない)" },
 ];
 
@@ -29,8 +29,8 @@ const LOADERS = {
  * サンプルを読み込み、「その時点を現在とみなす時刻(nowMs)」と一緒に返す。
  * サンプルのvalidUntil(信頼期限)は過去の日付なので、そのまま判定すると全て期限切れになってしまう。
  * そのため、期限の1分前(期限が無い時は報の発表時刻)を現在とする。
- * 期限切れ・取消のサンプルは、元々 trusted=false(または status=expired)なので、この時刻でも
- * 「状態を確認できない」扱いになる。
+ * 取消のサンプルは元々 trusted=false なので、この時刻でも「状態を確認できない」扱いになる。
+ * 失効(expired)のサンプルは trusted=true なので、この時刻では「失効」として表示される。
  */
 export async function loadWolfxTsunamiSample(key) {
   const loader = LOADERS[key];
