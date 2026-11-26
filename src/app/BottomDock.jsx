@@ -2880,8 +2880,11 @@ export function BottomDock({
                 horizontal
                 radius={tabsAttached ? CORNER_TAB_ATTACHED_RADIUS_PORTRAIT : undefined}
                 rimClip={tabsAttached ? CORNER_TAB_RIM_CLIP_PORTRAIT : undefined}
+                // パネルと同じぼかし・屈折にそろえる(パネルは、動かしている間だけ軽くしているため、タブ群もそれに合わせる)。
+                blur={settled ? 14 : 8}
+                filterSize={settled ? "normal" : "none"}
               />
-              {tabsAttached && <CornerTabFillet hole="0 0" style={{ position: "absolute", right: "100%", bottom: 0 }}/>}
+              {tabsAttached && <CornerTabFillet hole="0 0" blur={settled ? 14 : 8} style={{ position: "absolute", right: "100%", bottom: 0 }}/>}
             </div>
           </div>
         </div>

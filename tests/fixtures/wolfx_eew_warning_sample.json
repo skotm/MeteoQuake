@@ -1,0 +1,58 @@
+{
+ "Title": "緊急地震速報（警報）",
+ "CodeType": "Ｍ、最大予測震度及び主要動到達予測時刻の緊急地震速報",
+ "Issue": {
+  "Source": "東京",
+  "Status": "通常"
+ },
+ "EventID": "20240417231454",
+ "Serial": 17,
+ "AnnouncedTime": "2024/04/17 23:15:10",
+ "OriginTime": "2024/04/17 23:14:47",
+ "Hypocenter": "豊後水道",
+ "Latitude": 33.2,
+ "Longitude": 132.4,
+ "Magnitude": 6.6,
+ "Depth": 40,
+ "MaxIntensity": "6弱",
+ "WarnArea": [
+  {
+   "Chiiki": "愛媛県南予",
+   "Shindo1": "6弱",
+   "Shindo2": "6弱",
+   "Time": "231504",
+   "Type": "警報",
+   "Arrive": "主要動到達時刻の予測なし（PLUM 法による予測）"
+  },
+  {
+   "Chiiki": "大分県南部",
+   "Shindo1": "5弱",
+   "Shindo2": "5弱",
+   "Time": "//////",
+   "Type": "警報",
+   "Arrive": "既に到達と予測"
+  },
+  {
+   "Chiiki": "愛媛県東予",
+   "Shindo1": "4",
+   "Shindo2": "4",
+   "Time": "231512",
+   "Type": "警報",
+   "Arrive": "未到達"
+  },
+  {
+   "Chiiki": "大阪府南部",
+   "Shindo1": "3",
+   "Shindo2": "3",
+   "Time": "231602",
+   "Type": "予報",
+   "Arrive": "未到達"
+  }
+ ],
+ "isSea": true,
+ "isTraining": false,
+ "isAssumption": false,
+ "isWarn": true,
+ "isFinal": false,
+ "isCancel": false
+}
