@@ -657,11 +657,18 @@ export function saveDisplayInsets(insets) {
    "hamburger"=縦画面で、全画面にした時だけ左上のハンバーガーボタンからタブを選ぶ。 */
 export const TAB_PLACEMENTS = ["slide", "corner", "hamburger"];
 export const normalizeTabPlacement = (v) => (TAB_PLACEMENTS.includes(v) ? v : "slide");
+// 「右上に配置(corner)」と「ハンバーガー式(hamburger)」は、いったん使えなくしてある(下部のスライド式ナビだけ)。
+// 実装・保存済みの設定値はそのまま残してあり、これをtrueにすると、設定画面のスイッチと、保存済みの設定が元どおり使える。
+export const TAB_PLACEMENT_VARIANTS_ENABLED = false;
+// 保存されている値(または新しく選んだ値)を、今使える配置に直す。無効の間は、常に"slide"。
+export const resolveTabPlacement = (value, enabled = TAB_PLACEMENT_VARIANTS_ENABLED) =>
+  enabled ? normalizeTabPlacement(value) : "slide";
 const TAB_PLACEMENT_STORAGE_KEY = "tabPlacement";
 
 export function loadStoredTabPlacement() {
   try {
-    return normalizeTabPlacement(localStorage.getItem(TAB_PLACEMENT_STORAGE_KEY));
+    // 保存済みの値は消さない(再び有効にした時に、元の選択がそのまま戻る)。今は"slide"で返す。
+    return resolveTabPlacement(localStorage.getItem(TAB_PLACEMENT_STORAGE_KEY));
   } catch (err) {
     console.warn("タブボタンの配置の設定を読み込めませんでした:", err);
   }
