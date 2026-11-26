@@ -1,5 +1,5 @@
 import { maxScaleToIntensityKey, toQuakeCard } from "./quakeCards";
-import { parseJstTimeToMs } from "./eewLocation";
+import { parseJstTimeToMs, parseWolfxWarnAreaArrival } from "./eewLocation";
 import { EEW_FILL_LEGEND_ORDER, intensityLabelToKey } from "./stationIcons";
 import { toTsunamiCard } from "./tsunamiData";
 
@@ -175,11 +175,13 @@ function strongerIntensityKey(a, b) {
   return rank(b) > rank(a) ? b : a;
 }
 
-function toEewCardFromWolfx(data) {
+export function toEewCardFromWolfx(data) {
   // Magunitude(スペルミス)は非推奨で、将来削除される可能性がある。Magnitudeを使い、無い時だけ旧名にフォールバックする。
   const wolfxMag = typeof data.Magnitude === "number" ? data.Magnitude : typeof data.Magunitude === "number" ? data.Magunitude : 0;
   // 仮定震源要素、またはレベル法(最大予測震度のみの発表)の時は、M・深さが仮定値になる。
   const assumedValues = !!data.isAssumption || (typeof data.CodeType === "string" && data.CodeType.includes("最大予測震度のみ"));
+  // WarnArea[].Timeは日付を持たない"HHMMSS"なので、発表時刻(なければ発生時刻)の日付と組み合わせる。
+  const referenceMs = parseJstTimeToMs(data.AnnouncedTime) ?? parseJstTimeToMs(data.OriginTime) ?? Date.now();
   const areas = Array.isArray(data.WarnArea) ? data.WarnArea.map(a => ({
     pref: "", // Wolfxは都道府県単位を分けて返さないため空にしておく
     name: a.Chiiki || "",
@@ -191,11 +193,9 @@ function toEewCardFromWolfx(data) {
     // 2つのうち強いほうを使う(片方が"以上"などで変換できない時は、もう片方)。
     maxIntensityKey: strongerIntensityKey(intensityLabelToKey(a.Shindo1), intensityLabelToKey(a.Shindo2)),
     isPlum: !!data.isAssumption,
-    // 主要動の到達予想時刻(WarnArea[].Time、日本時間)と、既に到達したか(WarnArea[].Arrive)。
-    // 現在地の到達カウントダウン(eewLocation.js)が使う。PLUM法・レベル法では到達時刻が
-    // 提供されないため、Timeが空ならnullになる。
-    arrivalMs: parseJstTimeToMs(a.Time),
-    arrived: a.Arrive === true,
+    // 主要動の到達予想時刻(WarnArea[].Time="HHMMSS"、日本時間)と、既に到達したか(WarnArea[].Arrive="既に到達と予測"など)。
+    // 現在地の到達カウントダウン(eewLocation.js)が使う。PLUM法など到達時刻の予測がない地域はnullになる。
+    ...parseWolfxWarnAreaArrival(a, referenceMs),
   })) : [];
 
   return {

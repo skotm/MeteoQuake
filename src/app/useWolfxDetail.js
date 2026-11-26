@@ -23,7 +23,21 @@ const HTTP_URL = "https://api.wolfx.jp/jma_earthquake_detail.json";
 const WS_URL = "wss://ws-api.wolfx.jp/jma_eqlist";
 const FALLBACK_POLL_MS = 3 * 60 * 1000;
 const RECONNECT_MS = 5000;
-const REFETCH_DELAYS_MS = [2000, 20000]; // 合図の何ms後に詳細を取り直すか
+// 合図の何ms後に詳細を取り直すか。詳細(HTTP)の反映は、jma_eqlistの更新より遅れることがあるため、
+// 数回に分けて取り直す(詳細のmd5が変わっていなければ、反映も再描画もしないので、空振りは軽い)。
+const REFETCH_DELAYS_MS = [2000, 10000, 30000, 90000];
+
+/**
+ * jma_eqlistのWebSocketメッセージが「詳細を取り直す合図」になるかを判定する。
+ * Wolfxのサーバーは、接続した時にjma_eqlistの現在値を送らない(送るのはheartbeatだけ。現在値が欲しい時は
+ * query_jmaeqlistを送る必要がある)。そのため、接続後に最初に届くjma_eqlistは、「すでに取得済みの内容」ではなく
+ * 「接続後の最初の更新」。以前は最初の1通を基準値として捨てていたので、接続後の最初の更新が反映されなかった。
+ * 最初の1通を含め、md5が前回と違う(またはmd5が無い)ものは、すべて合図にする。
+ */
+export function eqlistNeedsRefetch(lastMd5, md5) {
+  if (md5 == null) return true;
+  return md5 !== lastMd5;
+}
 
 const EMPTY_MAP = new Map();
 const EMPTY_LIST = [];
@@ -41,6 +55,7 @@ export function useWolfxDetail(needed) {
     let refetchTimers = [];
     let lastDetailMd5 = null; // 詳細の内容が変わっていなければ、再計算・再描画をしない
     let lastEqlistMd5 = null; // jma_eqlistの更新識別子(これが変わったら詳細を取り直す)
+    let everOpened = false;   // 一度でも接続できたか(切れた後の再接続かどうかの判定に使う)
     setState((s) => (s.status === "ready" ? s : { ...s, status: "loading" }));
 
     const apply = (data) => {
@@ -48,13 +63,15 @@ export function useWolfxDetail(needed) {
       const md5 = typeof data?.md5 === "string" ? data.md5 : null;
       if (md5 && md5 === lastDetailMd5) return;
       lastDetailMd5 = md5;
+      console.debug("[wolfx] 地震の詳細を更新", { md5 });
       const longPeriod = new Map(parseLongPeriodPayload(data).map((e) => [e.eventId, e]));
       setState({ longPeriod, quakeCards: wolfxPayloadToQuakeCards(data), status: "ready" });
     };
 
     const fetchAll = async () => {
       try {
-        const res = await fetch(HTTP_URL);
+        // ブラウザのHTTPキャッシュが古い内容を返さないように、毎回サーバーへ取りに行く。
+        const res = await fetch(HTTP_URL, { cache: "no-store" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         apply(await res.json());
       } catch (err) {
@@ -77,7 +94,12 @@ export function useWolfxDetail(needed) {
         reconnectTimer = setTimeout(connect, RECONNECT_MS * 6);
         return;
       }
-      ws.onopen = () => { wsOpen = true; };
+      ws.onopen = () => {
+        wsOpen = true;
+        // 切れていた間の更新は、WebSocketでは届かない。再接続できた時に、1回取り直して取りこぼしを埋める。
+        if (everOpened) fetchAll();
+        everOpened = true;
+      };
       ws.onmessage = (ev) => {
         let data;
         try { data = JSON.parse(ev.data); } catch { return; }
@@ -88,8 +110,9 @@ export function useWolfxDetail(needed) {
         }
         if (data?.type !== "jma_eqlist") return; // pongなどは無視する
         const md5 = typeof data.md5 === "string" ? data.md5 : null;
-        // 接続直後に届く最初の1通は、すでに取得済みの内容かもしれないので、変化があった時だけ取り直す。
-        const changed = lastEqlistMd5 !== null && md5 !== lastEqlistMd5;
+        const changed = eqlistNeedsRefetch(lastEqlistMd5, md5);
+        // 動作確認用(開発者ツールのコンソールに出る。通信量・負荷はほぼ無い)。
+        console.debug("[wolfx] jma_eqlist受信", { md5, changed });
         lastEqlistMd5 = md5;
         if (changed) scheduleRefetch();
       };

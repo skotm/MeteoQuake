@@ -53,6 +53,36 @@ export function parseJstTimeToMs(raw) {
   return Number.isFinite(ms) ? ms : null;
 }
 
+/**
+ * Wolfx jma_eew の WarnArea[] 1件から、主要動の到達予想時刻(epoch ms)と、既に到達したかを求める。
+ * 仕様(https://wolfx.jp/en/docs/open-api)と実データの例:
+ *   Time  : 主要動の到達予想時刻(日本時間)。"HHMMSS"(例 "231504")。不明は "//////"。日付は含まない。
+ *           PLUM法の地域では「震度が最初に予測された時刻」で、主要動の到達時刻ではない。
+ *   Arrive: 文字列。"未到達" / "既に到達と予測" / "主要動到達時刻の予測なし（PLUM 法による予測）" など。
+ * 日付は含まれないので、発表時刻(referenceMs)の日付と組み合わせる。日付をまたぐ場合(23:59台の発表で
+ * 00:00台の到達)は、基準より12時間以上前になる時刻を翌日に繰り上げる。
+ * 旧形式("YYYY-MM-DD HH:mm:ss"の日時、Arriveが真偽値)も読めるようにしてある。
+ * @returns {{ arrivalMs: number | null, arrived: boolean }}
+ */
+export function parseWolfxWarnAreaArrival(area, referenceMs) {
+  const arrive = typeof area?.Arrive === "string" ? area.Arrive : "";
+  if (area?.Arrive === true || arrive.includes("既に到達")) return { arrivalMs: null, arrived: true };
+  // 到達時刻の予測なし(PLUM法など)の地域は、Timeが入っていても主要動の到達時刻ではないので使わない。
+  if (arrive.includes("予測なし") || arrive.includes("PLUM")) return { arrivalMs: null, arrived: false };
+
+  const raw = typeof area?.Time === "string" ? area.Time.trim() : "";
+  const full = parseJstTimeToMs(raw);
+  if (full != null) return { arrivalMs: full, arrived: false };
+  const m = /^(\d{2})(\d{2})(\d{2})$/.exec(raw);
+  if (!m || !Number.isFinite(referenceMs)) return { arrivalMs: null, arrived: false };
+  const JST = 9 * 3600 * 1000;
+  const ref = new Date(referenceMs + JST);
+  const dayStart = Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), ref.getUTCDate()) - JST; // 発表日のJST 0時
+  let ms = dayStart + (Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])) * 1000;
+  if (ms < referenceMs - 12 * 3600 * 1000) ms += 24 * 3600 * 1000;
+  return { arrivalMs: ms, arrived: false };
+}
+
 // 全角数字("東京都２３区")などの表記ゆれを吸収して地域名を比べる。
 const normName = (s) => String(s || "").normalize("NFKC");
 
