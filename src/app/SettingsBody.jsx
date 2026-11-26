@@ -10,6 +10,7 @@ import { BoundaryLineColorSettings, LicenseFileCard, LogViewerPanel, MapColorSet
 import { EewTestBroadcastPanel, QuakeTestBroadcastPanel, ShakeDetectionTestPanel, TsunamiTestBroadcastPanel } from "./testPanels";
 import { DEFAULT_CAMERA_SETTINGS, CITY_FILL_ZOOM_MIN, CITY_FILL_ZOOM_MAX, CITY_FILL_ZOOM_DEFAULT, clampCityFillZoom } from "./settingsStorage";
 import { setEewLocationEnabled, useEewLocationEnabled } from "./eewLocation";
+import { TAB_PLACEMENT_VARIANTS_ENABLED } from "./settingsStorage";
 import { AmedasRangeSettings, MaxZoomSettings, NowcastColorSchemeSettings, TyphoonForecastIntervalSettings } from "./weatherSettings";
 
 
@@ -821,6 +822,9 @@ export function SettingsBody({
             disabled={glassOpaqueSuspectedBroken}
           />
         </SettingsCard>
+        {/* 「右上に配置」「ハンバーガー式」は、いったん非表示(settingsStorage.jsのTAB_PLACEMENT_VARIANTS_ENABLED)。 */}
+        {TAB_PLACEMENT_VARIANTS_ENABLED && (
+          <>
         <SettingsCard>
           <SettingsToggleRow
             label="タブボタンをフローティングの右上に配置"
@@ -837,6 +841,8 @@ export function SettingsBody({
             onChange={() => onChangeTabPlacement(tabPlacement === "hamburger" ? "slide" : "hamburger")}
           />
         </SettingsCard>
+          </>
+        )}
         <SettingsCard>
           <div style={{ padding: "12px 16px" }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>表示領域</div>

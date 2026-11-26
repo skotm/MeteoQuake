@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 // @ts-expect-error JSモジュール
 import { detectNewActiveEew } from "../src/app/hamburgerLayout.js";
 // @ts-expect-error JSモジュール
-import { loadStoredTabPlacement, normalizeTabPlacement, saveTabPlacement } from "../src/app/settingsStorage.js";
+import { TAB_PLACEMENT_VARIANTS_ENABLED, loadStoredTabPlacement, normalizeTabPlacement, resolveTabPlacement } from "../src/app/settingsStorage.js";
 
 const eew = (eventId: string, extra = {}) => ({ eventId, cancelled: false, ...extra });
 
@@ -33,14 +33,23 @@ test("過去の速報の再生(isReplay)では切り替えない。試験配信�
   assert.equal(detectNewActiveEew(prev, [eew("s", { isSimulation: true })]).arrived, true);
 });
 
-test("タブ配置: hamburger を保存・読み込みでき、不正な値は slide にする", () => {
+test("タブ配置: 右上配置・ハンバーガー式は、いったん無効(常に slide)。保存済みの値は消さない", () => {
   const store = new Map<string, string>();
   (globalThis as any).localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+  assert.equal(TAB_PLACEMENT_VARIANTS_ENABLED, false);
   assert.equal(loadStoredTabPlacement(), "slide");
-  saveTabPlacement("hamburger");
-  assert.equal(loadStoredTabPlacement(), "hamburger");
-  saveTabPlacement("corner");
-  assert.equal(loadStoredTabPlacement(), "corner");
-  assert.equal(normalizeTabPlacement("xyz"), "slide");
-  assert.equal(normalizeTabPlacement(null), "slide");
+  // 以前に保存していた値があっても、今は slide で読み込む(値そのものは残る)
+  store.set("tabPlacement", "hamburger");
+  assert.equal(loadStoredTabPlacement(), "slide");
+  assert.equal(store.get("tabPlacement"), "hamburger");
+  assert.equal(resolveTabPlacement("corner"), "slide");
+});
+
+test("タブ配置: 有効にすれば、corner / hamburger が元どおり使える。不正な値は slide", () => {
+  assert.equal(resolveTabPlacement("hamburger", true), "hamburger");
+  assert.equal(resolveTabPlacement("corner", true), "corner");
+  assert.equal(resolveTabPlacement("slide", true), "slide");
+  assert.equal(resolveTabPlacement("xyz", true), "slide");
+  assert.equal(resolveTabPlacement(null, true), "slide");
+  assert.equal(normalizeTabPlacement("hamburger"), "hamburger");
 });
